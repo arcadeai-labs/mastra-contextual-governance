@@ -22,6 +22,10 @@
  *   3. On `OK`, the tool runs — which for `tools/loan` is one HTTP call to
  *      `apps/loan-app` carrying the persona's bearer, exactly what the deployed
  *      Python toolkit does (`tools/loan/loan/__init__.py::_call`).
+ *   4. `POST /post` on the same control plane with what the tool returned, and
+ *      **the model is handed `override.output` when the hook sends one** (#16).
+ *      `CHECK_FAILED` there withholds the output entirely, in the same
+ *      `isError` envelope a `/pre` denial arrives in.
  *
  * So a denial a person sees in the chat is produced by the real pre-hook
  * against the real policy in `governance.db`, and an approval is a real row in
@@ -34,7 +38,10 @@
  *   stand-in that silently returned the whole catalogue *and* claimed to
  *   implement visibility would be the "control that does nothing" this repo is
  *   organised against. It returns the catalogue and says here that it does.
- * - **`/post` is not called.** Layer 4 is #16.
+ *
+ * `/post` was on that list until #16. It was the reason the local tracer was
+ * *more hostile* than production — the model saw act 4's injected note here and
+ * would not have seen it through real Arcade (#91) — so the two now agree.
  * - **Layer 2 is a switch, not a flow.** Arcade evaluates tool auth
  *   requirements before `/pre` and, on a first use, answers with an
  *   `authorization_url` for the persona to visit. There is no OAuth here to
@@ -215,7 +222,14 @@ export interface GatewayStandInOptions {
    */
   tokenForActor?: (email: string) => string;
   /** Every `tools/call`, in order, whatever the outcome. The suite asserts on this. */
-  onCall?: (call: { user_id: string; tool: string; inputs: Record<string, unknown>; outcome: "denied" | "ran" | "authorization_required" }) => void;
+  onCall?: (call: {
+    user_id: string;
+    tool: string;
+    inputs: Record<string, unknown>;
+    outcome: "denied" | "ran" | "authorization_required" | "withheld";
+    /** Whether `/post` rewrote what the tool returned. Only set on `ran`. */
+    redacted?: boolean;
+  }) => void;
 }
 
 export interface GatewayStandIn {
@@ -342,11 +356,16 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
         return rpc(message.id, toolError(`"${wire}" is not a fully-qualified tool name.`));
       }
 
+      // One id for both hooks on one call: `execution_id` is what correlates
+      // `/pre` with `/post` in the audit log (`DESIGN.md` → Event contract), and
+      // a stand-in that minted two would break the panel's join.
+      const executionId = `tc_${crypto.randomUUID().slice(0, 8)}`;
+
       const pre = await fetch(`${hooks}/pre`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${options.hookSigningSecret}` },
         body: JSON.stringify({
-          execution_id: `tc_${crypto.randomUUID().slice(0, 8)}`,
+          execution_id: executionId,
           tool: { name, toolkit: calledToolkit, version: "1.0.0" },
           inputs,
           context: { authorization: [{}], user_id: actor },
@@ -379,7 +398,6 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
         );
       }
 
-      options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "ran" });
       const call = spec.run(inputs);
       const target = new URL(loanApp + call.path);
       for (const [key, value] of Object.entries(call.query ?? {})) target.searchParams.set(key, value);
@@ -398,9 +416,52 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
       }
       const payload = (await ran.json().catch(() => null)) as { error?: string } | null;
       if (!ran.ok) {
+        options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "ran" });
         return rpc(message.id, toolError(payload?.error ?? `the loan origination system answered ${ran.status}`));
       }
-      return rpc(message.id, toolOk(payload));
+
+      // Layer 4. What the tool returned is not yet what the model gets: the
+      // post-hook may hand back an `override.output`, and Arcade substitutes it
+      // for the tool's own. So does this, because the whole claim of act 3 is
+      // that the identifiers never enter the model's context, and a stand-in
+      // that called `/post` and then forwarded the original payload anyway
+      // would be the control that does nothing.
+      const post = await fetch(`${hooks}/post`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${options.hookSigningSecret}` },
+        body: JSON.stringify({
+          execution_id: executionId,
+          tool: { name, toolkit: calledToolkit, version: "1.0.0" },
+          inputs,
+          success: true,
+          output: payload,
+          context: { authorization: [{}], user_id: actor },
+        }),
+      }).catch((cause: unknown) => cause as Error);
+
+      if (post instanceof Error) {
+        // Unreachable control plane at `/post` is the same fail-closed question
+        // as at `/pre`, and the answer has to be the same: the output does not
+        // reach the model on the strength of a hook nobody could ask.
+        options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "withheld" });
+        return rpc(message.id, toolError(`the control plane at ${hooks} could not be reached: ${post.message}`));
+      }
+      const released = (await post.json().catch(() => ({}))) as {
+        code?: string;
+        error_message?: string;
+        override?: { output?: unknown };
+      };
+      if (released.code !== "OK") {
+        options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "withheld" });
+        return rpc(
+          message.id,
+          toolError(DENIAL_PREFIX + (released.error_message ?? "output withheld by an extension policy")),
+        );
+      }
+
+      const overridden = released.override !== undefined && "output" in released.override;
+      options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "ran", redacted: overridden });
+      return rpc(message.id, toolOk(overridden ? released.override?.output : payload));
     },
   });
 
@@ -522,7 +583,8 @@ if (import.meta.main) {
   console.log(`[gateway-stand-in] point apps/web at it with ARCADE_API_URL=http://localhost:${standIn.port}`);
   console.log(
     `[gateway-stand-in] every tools/call asks ${env.HOOKS_PUBLIC_HOST ?? "localhost:8081"}/pre first and runs ` +
-      `nothing when the answer is not OK. /access and /post are NOT called — those are #15 and #16.`,
+      `nothing when the answer is not OK, then asks /post and forwards its override.output when there is one. ` +
+      `/access is NOT called — that is #15.`,
   );
 
   // A token per persona, printed, because offline there is no hop 1 to mint

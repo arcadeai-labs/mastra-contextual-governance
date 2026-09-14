@@ -46,6 +46,8 @@ export const LOAN_TOOLKIT = "Loan";
 export const DANA = "dana.okafor@bank.example";
 export const SAM = "sam.reyes@bank.example";
 export const RILEY = "riley.chen@bank.example";
+/** Chief Credit Officer, clearance $5,000,000 — above act 3's redaction bar (#16). */
+export const MORGAN = "morgan.ellis@bank.example";
 
 /** The $95K application. Dana's authority is $50,000. */
 export const OVER_LIMIT_LOAN = "LN-2291";
