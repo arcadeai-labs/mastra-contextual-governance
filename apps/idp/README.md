@@ -253,6 +253,37 @@ authenticates the client. Reproducing a client-auth failure by hand with a place
 returns `invalid_grant: invalid code` and never reaches the check. Use a real code, or ask
 `/oauth2/introspect`, which authenticates the client first.
 
+### A replayed code is named as one
+
+When the rejection is `invalid_grant "invalid code"`, the line carries one more field:
+
+```
+[idp] POST /oauth2/token rejected: status=400 error=invalid_grant \
+  error_description="invalid code" client_auth="client_secret_basic" client_id=<id> code=already_consumed
+[idp] that code had already been exchanged — the tokens its first exchange minted have just
+  been revoked (revokeTokensIssuedForAuthorizationCode). Something is fetching the
+  authorization callback twice.
+```
+
+Better Auth answers a code it redeemed a moment ago and a code it never issued with the
+same four words, and the difference is the whole diagnosis. `code=already_consumed` is a
+**replay**, and it is not a harmless refusal: `checkVerificationValue` calls
+`revokeTokensIssuedForAuthorizationCode` on the way out, deleting the access and refresh
+tokens the first, *successful* exchange minted. The relying party keeps a grant that has
+been emptied, and the failure surfaces somewhere else entirely — for this demo,
+`apps/loan-app` getting a 401 from `/oauth2/userinfo` and reporting "The identity provider
+rejected the token." That is #100, and it went unread for three sittings because the log
+said only `invalid_grant "invalid code"`.
+
+`code=unknown` is everything else: expired, from another deployment, or a guess. It is not
+called "expired" — a code whose tokens have since been revoked or rotated away also lands
+there, because the rows this reads are gone by then, and this field exists precisely
+because a previous line guessed.
+
+The distinction is not on the wire. It is read from the token tables before the request is
+forwarded, because the revocation the replay triggers is what erases the evidence. The code
+itself is never printed: it is a credential until it is spent.
+
 ### ⚠️ The secret is printed exactly once
 
 The secret is stored **hashed**, so it can be read only by whichever run produced it —
