@@ -438,7 +438,7 @@ function detailOf(detail: unknown): string {
  * Exported because it is the unit #22's acceptance criterion is about — "renders
  * denials without looking like an error state" is a property of this function
  * and of nothing else, and asserting it needs neither a socket nor a DOM.
- * `test/split-screen.test.tsx` renders each of the eight kinds through it.
+ * `test/split-screen.test.tsx` renders each of the ten kinds through it.
  */
 export function EventView({ event }: { event: ChatEvent }) {
   switch (event.kind) {

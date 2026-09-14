@@ -413,6 +413,52 @@ describe("a denial is a decision, not an error", () => {
     expect(background(authorization)).not.toBe(background(denied));
   });
 
+  test("a turn that ended waiting is neither: nothing refused, nothing broken", () => {
+    // #20. Amber, like layer 2, because the claim about the world is the same:
+    // no rule ran, nothing was refused, and what happens next belongs to a
+    // person. A `waiting` card in the denial's colours would read as the demo
+    // having been stopped, when what it is is the demo working.
+    const waiting = renderToStaticMarkup(
+      <EventView
+        event={{
+          kind: "waiting",
+          tool: "Approvals_RequestApproval",
+          request_id: "apr_0m4xq7bd91kz",
+          approver: "Riley Chen",
+        }}
+      />,
+    );
+
+    expect(waiting).toContain("Riley Chen");
+    expect(waiting).toContain("apr_0m4xq7bd91kz");
+    expect(waiting).not.toContain(`role="alert"`);
+    expect(background(waiting)).not.toBe(background(denied));
+    expect(background(waiting)).not.toBe(background(fault));
+  });
+
+  test("a resume shows the message it injected, verbatim", () => {
+    // The one thing an audience can check about a resume is whether the agent
+    // was told what to do or told what had happened. Hiding the injected
+    // message would be asking them to take it on trust.
+    const message =
+      "Approval request apr_0m4xq7bd91kz — approve_loan on LN-2291 for 95000 — was approved " +
+      "by Riley Chen (riley.chen@bank.example) at 2026-09-14T10:00:00.000Z.";
+    const resumed = renderToStaticMarkup(
+      <EventView
+        event={{
+          kind: "resumed",
+          request_id: "apr_0m4xq7bd91kz",
+          decision: "approved",
+          decided_by: "riley.chen@bank.example",
+          message,
+        }}
+      />,
+    );
+
+    expect(resumed).toContain(message);
+    expect(resumed).not.toContain(`role="alert"`);
+  });
+
   test("tool calls are shown as they happen, with their inputs", () => {
     const call = renderToStaticMarkup(
       <EventView

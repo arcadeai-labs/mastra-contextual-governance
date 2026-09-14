@@ -763,8 +763,8 @@ the same reason: an empty list asks about the bearer before it names `/access`.
 
 ### The stream
 
-NDJSON, one object per line, seven kinds: `text`, `tool-call`, `tool-result`, `denied`,
-`authorization`, `error`, `done`. Not the AI SDK's UI message stream — three of these are
+NDJSON, one object per line, ten kinds: `text`, `tool-call`, `tool-result`, `waiting`,
+`resumed`, `denied`, `authorization`, `fault`, `error`, `done`. Not the AI SDK's UI message stream — three of these are
 not text, and a plain text stream would flatten a hook denial, a tool call and an
 authorization link into prose the page would have to parse as English. `lib/agent/events.ts`
 is the whole vocabulary and both sides import it.
@@ -829,6 +829,99 @@ this is #56's fix, the same one `apps/loan-app/scripts/dev-idp.ts` uses. Leave
 sealed session, which means hop 1's authorization server, and the only stand-in for that
 lives in `test/identity-harness.ts`. Folding the two stand-ins together so the chat runs
 offline end to end is worth doing and is filed as #87, not done here.
+
+## Act 2's second half — the turn that ends, and the turn that follows (#20)
+
+`Approvals_RequestApproval` routes the escalation, records it, messages the approver, and
+returns. **The agent then ends its turn.** There is no poll here, no long-poll inside a
+tool call and no socket held open by the turn — `DESIGN.md` → The wait, and the issue is
+explicit about why twice over: a visibly spinning agent contradicts the "won't spin and
+waste your tokens" line the demo is built on, and a long-polling tool call would hit
+gateway timeouts in the least debuggable way possible, live. It also gives the presenter a
+beat to narrate the Slack moment, which is the point of the pause.
+
+What starts the next turn is the control plane. `POST /approvals/{id}/decision` publishes
+`event: approval` on `GET /events` after its transaction commits — the same transaction
+that turns the pre-hook's pending grant on — and `components/chat/Chat.tsx` is subscribed
+to that stream for as long as it is mounted. On a notice naming **this browser's** request
+*and* the persona signed in here, it POSTs one more turn.
+
+Four things about the mechanism, in the order they would go wrong:
+
+1. **The resume names an id, not an outcome.** The request body is
+   `{ resume: { request_id, prompt, reply } }`: the id, and the previous turn as context.
+   The route reads `GET /approvals/{id}` itself, with this service's own bearer, and every
+   word of the injected message is built from that record (`lib/agent/resume.ts`). Nothing
+   typed, stored or streamed into the browser can change what is asserted about an
+   approval — `DESIGN.md` rule 1, one layer up from the persona.
+2. **The injected message states a fact and gives no instruction.** *"Approval request
+   apr_… — approve_loan on LN-2291 for 95000 — was approved by Riley Chen at …"*. No
+   "retry", no "proceed", nothing in the system prompt. The agent already holds the hook's
+   own remediation sentence from the turn it was refused on; if it does not act on that,
+   the policy row is what is wrong (`DESIGN.md` → Determinism). The message is rendered on
+   screen verbatim, because a control surface that puts a message into a conversation and
+   hides it is asking to be trusted about the one thing an audience can check.
+3. **The retry passes because a grant exists**, and the audit row says so: an `allow` on
+   `Loan.ApproveLoan` carrying `pre.approve-within-clearance` — the rule that would have
+   denied it — with `Covered by an active grant (grn_…)` and the approval request id in
+   its reason. A policy that had simply stopped matching would have written `rule_id: null`
+   and looked identical on screen. The grant is single-use, so the next attempt is denied
+   again.
+4. **A denial resumes too**, with the approver's note, and the agent does not retry.
+
+A request that does not read back as decided, or whose requester is not the persona signed
+in on this browser, is a `fault` — grey, and worded as plumbing. Nothing decided anything,
+so nothing on screen says it did.
+
+### The frame is live-only, and that gap is closed
+
+An approval notice carries no `id:`. `Last-Event-ID` on `/events` is defined over
+`audit_log`, and a store write has no row there — see `apps/hooks/README.md` for the whole
+argument. So a browser whose socket is down at the moment of the decision never sees that
+frame, and the issue names the conditions (conference wifi). Every reconnect therefore asks
+`GET /api/approvals/{id}/status` about the one request it is holding. That route is a read
+and adds no authority; it answers only for the signed-in requester's own request, and gives
+an unknown id and somebody else's the same `404`.
+
+### Running act 2 offline
+
+The whole beat runs under `bun test`, against the real control plane, the real loan book
+and the real `/approvals` endpoints:
+
+```sh
+bun test --cwd apps/web test/act2-resume.test.ts
+```
+
+Prompt → denial → escalation → the turn ends → `Approvals.Decide` governed at `/pre` →
+`event: approval` on the real stream → resume → the loan is approved in a real `loans.db`
+→ the grant is spent and the next retry is refused. The stream is read the way the browser
+reads it, over HTTP, filtering on the event name.
+
+The browser half is its own suite, driving the real component in a real DOM:
+
+```sh
+bun test --cwd apps/web test/chat-resume.test.tsx
+```
+
+**The one thing offline cannot do is Slack.** `Approvals_RequestApproval` in
+`scripts/gateway-stand-in.ts` routes by #9's real rule and records against the real store,
+and then says in its own result that no message was sent rather than reporting a
+`slack_message_ts` it invented — an agent that believes it has escalated something nobody
+will see is the failure `tools/approvals` spends a comment block on.
+
+To drive it by hand, the gateway stand-in advertises the approvals toolkit as soon as it
+has a store token to reach `/approvals` with:
+
+```sh
+ARCADE_API_URL=http://localhost:4405 HOOKS_PUBLIC_HOST=localhost:4401 \
+  LOAN_APP_PUBLIC_HOST=localhost:4402 APPROVALS_STORE_TOKEN=dev-store \
+  PERSONA_DANA_EMAIL=dana.okafor@bank.example \
+  bun run --cwd apps/web gateway-stand-in
+```
+
+Without `APPROVALS_STORE_TOKEN` it advertises the loan toolkit alone and act 2 stops at
+the denial — an approvals tool the agent is offered and then refused by reads as the
+control plane misbehaving.
 
 ## Act 1 — the tool an analyst cannot see
 
