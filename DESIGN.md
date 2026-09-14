@@ -70,7 +70,7 @@ as the wire spells it (#89). No prompt steering is an acceptable fix for either.
 | **Readiness** | **Each Render service answers `/health` with one field per capability and `status: ok|degraded`, HTTP 200 either way so Render deploys and a human can read it. cg-web: `signin, gateway, verifier, agent, panel_stream`. A missing capability is named; the home page and panel show it; nothing falls back silently. Decided across #81, #82, #14.** |
 | Redaction | Declarative per-tool field rules + regex over free text |
 | Database | `bun:sqlite`, three files: `loans.db` (domain), `governance.db` (policy + audit), `idp.db` (people) |
-| Durability | Data persists; resetting is something you deliberately run. Both databases sit on Render disks and seed from their fixture only when empty. Reset is a script (#23), never a redeploy. Decided on #29 |
+| Durability | Data persists; resetting is something you deliberately run. Both databases sit on Render disks and seed from their fixture only when empty. Reset is a script (#23), never a redeploy. Decided on #29. **Consequence measured 2026-09-14 (#106): a fixture change does not reach a live disk, and acts 3 and 4 were not live while `/health` said armed. Amended: `/health` reports `fixture_drift` as degraded whenever on-disk policy differs from the shipped fixture, and a presenter-only Reset control in the panel runs the reset. Policy stays durable; the silence does not.** |
 | Visualization | Hook server → SSE → live three-lane Access/Pre/Post panel |
 | Design | Left half deliberately boring enterprise app; right half Arcade-branded control plane |
 | **Hosting** | **Render (`render.yaml` blueprint) for `web`, `hooks`, `loan-app`, `idp`. `arcade deploy` for `tools/loan` and `tools/approvals`.** |
