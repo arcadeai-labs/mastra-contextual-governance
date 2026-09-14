@@ -15,7 +15,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { count as auditCount, newEventId, record } from "../src/audit-log.ts";
+import { count as auditCount, newEventId, record, recent } from "../src/audit-log.ts";
 import {
   SCHEMA_VERSION,
   counts,
@@ -196,6 +196,60 @@ describe("a database written before a table existed", () => {
       }
     });
   });
+  test("gains audit_log.redactions, which no CREATE IF NOT EXISTS could have added", () => {
+    // The first *column* this schema has ever added (#16, version 2). Replaying
+    // `SCHEMA` cannot do it — the table already exists, so `CREATE TABLE IF NOT
+    // EXISTS` is a no-op and the disk would open green and fail on the first
+    // `/post` that redacts anything. `MIGRATIONS` is what makes it happen.
+    withPath("redactions-column", (path) => {
+      writeOldDisk(path);
+
+      const db = openGovernance(path, OPTIONS);
+      try {
+        const columns = db
+          .query<{ name: string }, []>("PRAGMA table_info(audit_log)")
+          .all()
+          .map((row) => row.name);
+        expect(columns).toContain("redactions");
+
+        // And the column is usable: a /post modify row round-trips through it.
+        record(db, [
+          {
+            id: newEventId(),
+            ts: new Date().toISOString(),
+            execution_id: "tc_post",
+            hook: "post",
+            user_id: "dana.okafor@bank.example",
+            tool: "Loan.GetLoan",
+            decision: "modify",
+            reason: "redacted",
+            rule_id: "post.redact-borrower-identifiers",
+            redactions: [
+              {
+                path: "$.bank_account_number",
+                rule_id: "post.redact-borrower-identifiers",
+                pattern_id: null,
+                kind: "mask",
+              },
+            ],
+          },
+        ]);
+        const [row] = recent(db, 1);
+        expect(row?.redactions).toEqual([
+          {
+            path: "$.bank_account_number",
+            rule_id: "post.redact-borrower-identifiers",
+            pattern_id: null,
+            kind: "mask",
+          },
+        ]);
+        // The old disk's own row is still there and still has no redactions.
+        expect(auditCount(db)).toBe(2);
+      } finally {
+        db.close();
+      }
+    });
+  });
 });
 
 describe("a fresh database", () => {
@@ -207,7 +261,7 @@ describe("a fresh database", () => {
           subjects: 4,
           catalogue: 6,
           policy_rules: 6,
-          output_rules: 1,
+          output_rules: 2,
           grants: 0,
           approval_requests: 0,
           audit_log: 0,

@@ -266,6 +266,109 @@ describe("a modification shows a diff, and never the value it removed", () => {
   });
 });
 
+/**
+ * The shape a real `/post` redaction arrives in, which is the shape this panel
+ * got wrong until #16's review: `redactions[]` and **no payload at all**, so
+ * the payload diff had two `undefined`s to compare, produced no rows, and
+ * printed "the payload came back unchanged" over act 3.
+ *
+ * A redaction event is a `modify` and the lane has to show it as one — the rule
+ * that fired, every path it took, and the mask that stands where the value was.
+ */
+describe("a redaction event, which carries no payload to diff", () => {
+  const redaction = aGovernanceEvent({
+    id: "evt_payloadless",
+    hook: "post",
+    decision: "modify",
+    tool: "Loan.GetLoan",
+    // Null because two rules fired, which is the ordinary case for LN-2291: the
+    // per-leaf ids are on the records, and rendering them is the point.
+    rule_id: null,
+    reason: "Output rewritten before it reached the model; 3 redaction(s) by 2 rule(s).",
+    redactions: [
+      { path: "$.bank_account_number", rule_id: "post.redact-borrower-identifiers", pattern_id: null, kind: "mask" },
+      { path: "$.tax_id", rule_id: "post.redact-borrower-identifiers", pattern_id: null, kind: "mask" },
+      {
+        path: "$.underwriter_notes",
+        rule_id: "post.strip-injected-instructions",
+        pattern_id: "pattern.injected-instruction",
+        kind: "remove",
+      },
+    ],
+  });
+
+  /** The card's diff, so a lane's chrome cannot satisfy an assertion about it. */
+  const diffOf = (markup: string): string => markup.slice(markup.indexOf('class="cg-diff"'));
+
+  test("every redacted path is named", () => {
+    const diff = diffOf(render([redaction]));
+
+    expect(diff).toContain("$.bank_account_number");
+    expect(diff).toContain("$.tax_id");
+    expect(diff).toContain("$.underwriter_notes");
+  });
+
+  test("each path shows a mask where the value was", () => {
+    const diff = diffOf(render([redaction]));
+
+    // Three rows, each with the hatched mask and the word that makes it
+    // unmistakably an absence rather than a value in a masked font.
+    expect(diff.split('class="cg-mask"').length - 1).toBe(3);
+    expect(diff).toContain("value withheld");
+    // And what the model received in its place, per kind.
+    expect(diff).toContain(">masked<");
+    expect(diff).toContain("removed entirely");
+  });
+
+  test("both rules that fired are named, per leaf", () => {
+    const diff = diffOf(render([redaction]));
+
+    expect(diff).toContain('class="cg-diff-rule">post.redact-borrower-identifiers');
+    // The pattern sweep names the scanner as well as the rule, because "which
+    // regex found this" is what act 4 gets asked from the audience.
+    expect(diff).toContain("post.strip-injected-instructions · pattern.injected-instruction");
+  });
+
+  test("it is not described as unchanged", () => {
+    // The regression this describe exists for. The word must not appear on the
+    // card at all: an event carrying an account of what it removed is never
+    // unchanged, whatever the renderer failed to read.
+    expect(render([redaction])).not.toContain("unchanged");
+  });
+
+  test("and it still reads as a modification", () => {
+    const markup = render([redaction]);
+
+    expect(markup).toContain('data-decision="modify"');
+    expect(markup).toContain("Modified");
+  });
+
+  test("no value reaches the markup, because the event never carried one", () => {
+    const markup = render([redaction]);
+
+    expect(markup).not.toContain("6011329948175302");
+    expect(markup).not.toContain("47-3389012");
+  });
+
+  test("a /post event that removed nothing still says so", () => {
+    // The other half of the rule: the placeholder is reserved for an event with
+    // an empty account and no payload. `/post` does produce that — a tool no
+    // output rule names — and it belongs on the panel, because a lane that only
+    // ever draws when something was taken cannot be told from a broken one.
+    const markup = render([
+      aGovernanceEvent({
+        id: "evt_untouched",
+        hook: "post",
+        decision: "modify",
+        tool: "Loan.SearchLoans",
+        redactions: [],
+      }),
+    ]);
+
+    expect(markup).toContain("The payload came back unchanged.");
+  });
+});
+
 describe("nothing is hidden behind a hover", () => {
   test("every card's rule, reason, tool and user are in the markup as text", () => {
     const markup = render([

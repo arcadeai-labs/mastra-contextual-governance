@@ -94,6 +94,15 @@ export interface ModelOptions {
   modelId: string;
   /** `ANTHROPIC_API_KEY`. */
   apiKey: string;
+  /**
+   * The `fetch` the provider makes its HTTP calls with. Unset in the product,
+   * which is the whole point of it being here: #16 has to prove that a redacted
+   * field is absent from **the request body that leaves this process**, and the
+   * only honest place to read that is the socket. A test passes a wrapper that
+   * records the body and delegates; reading the code instead, or reading the
+   * rendered chat, would be assuming.
+   */
+  fetch?: typeof globalThis.fetch;
 }
 
 /**
@@ -111,7 +120,10 @@ export function anthropicModel(options: ModelOptions) {
   // `createAnthropic` rather than the default `anthropic` export: the default
   // reads `ANTHROPIC_API_KEY` off `process.env` at call time, and this service
   // reads its environment in exactly one place (`lib/config.ts`).
-  return createAnthropic({ apiKey: options.apiKey })(options.modelId);
+  return createAnthropic({
+    apiKey: options.apiKey,
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+  })(options.modelId);
 }
 
 /** Stable across turns and processes, so a trace names the same agent every time. */

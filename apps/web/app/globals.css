@@ -662,6 +662,20 @@ body {
   font-style: italic;
 }
 
+/*
+ * Which rule took this leaf. The same chrome colour as the card's own rule chip
+ * (`.cg-rule`) and deliberately quieter than it: the card names the rule that
+ * decided, and a redaction commonly has two rules acting on one payload, so
+ * each row says which one without competing with the heading above it.
+ */
+.cg-diff-rule {
+  margin: 0.25em 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  color: var(--chartreuse);
+  word-break: break-word;
+}
+
 .cg-diff-empty {
   margin: 0;
   font-size: 0.88em;

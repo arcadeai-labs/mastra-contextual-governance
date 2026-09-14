@@ -75,13 +75,12 @@
  * change. Today every field of a `GovernanceEvent` is safe to project: ids,
  * timestamps, persona emails, tool names, decisions, reasons, `rule_id`.
  *
- * ⚠️ **`before` is the exception, and it is not populated yet.** When #16 wires
- * `RedactionEngine` into `/post`, the `before` payload of a redaction event
- * will hold the unredacted output — `bank_account_number`, `tax_id` — and this
- * endpoint would then serve it to anyone who can reach the host. The panel
- * masks every `before` at render time (`apps/web/lib/governance/diff.ts`), but
- * that is the renderer, not the wire. #16 has to decide between proxying the
- * stream through `apps/web` and keeping `before` off it; see `README.md`.
+ * A `/post` redaction event is safe by construction rather than by the
+ * renderer's good manners: it carries `redactions[]` (path, `rule_id`,
+ * `pattern_id`, kind) and no payload — no `before`, no `after`, nothing a rule
+ * removed. That was #16's choice, made because this endpoint has no bearer and
+ * `audit_log` is durable; see `GovernanceEvent`'s docstring for why `after`
+ * was ruled out along with `before`.
  */
 import type { Database } from "bun:sqlite";
 

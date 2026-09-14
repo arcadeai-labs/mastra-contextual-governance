@@ -308,7 +308,11 @@ const SCHEMA = `
     reason       TEXT    NOT NULL,
     rule_id      TEXT,
     before       TEXT,
-    after        TEXT
+    after        TEXT,
+    -- What a /post modify removed: a JSON array of RedactionRecord — path,
+    -- rule_id, pattern_id, kind — and never a removed value. NULL on every
+    -- other row. Added at schema version 2 (#16); see MIGRATIONS.
+    redactions   TEXT
   );
   -- seq already orders rows by time, so no index on ts: a whole-project
   -- /access appends ~10k rows in one transaction, and every index is paid
@@ -332,8 +336,15 @@ const SCHEMA = `
   INSERT OR IGNORE INTO policy_revision (id, revision) VALUES (1, 1);
 `;
 
-/** Triggers bumping `policy_revision` for every write to the cached tables. */
-const REVISION_TRIGGERS = ["subjects", "catalogue", "policy_rules"]
+/**
+ * Triggers bumping `policy_revision` for every write to the cached tables.
+ *
+ * `output_rules` joined the list on #16, when `/post` started evaluating them:
+ * before that they were stored and never read, so an edit had nothing to
+ * invalidate. A redaction rule edited on stage is live within one poll, exactly
+ * as an `/access` or `/pre` rule is.
+ */
+const REVISION_TRIGGERS = ["subjects", "catalogue", "policy_rules", "output_rules"]
   .flatMap((table) =>
     ["INSERT", "UPDATE", "DELETE"].map(
       (op) =>
@@ -351,21 +362,53 @@ const REVISION_TRIGGERS = ["subjects", "catalogue", "policy_rules"]
  * The schema revision this build writes, recorded in `PRAGMA user_version`.
  * Bump it in the same commit as any change to `SCHEMA`.
  *
- * **This buys new tables, and nothing else.** The upgrade path replays the
- * idempotent `SCHEMA` against an existing database, so a table (or index, or
- * trigger) added after a disk exists appears on the next boot. An added
- * *column*, a widened `CHECK`, a renamed index: none of those are expressible
- * as `CREATE ... IF NOT EXISTS`, none of them happen here, and shipping one
- * without a real migration leaves a disk that opens green and fails on the
- * first query naming the change. `governance.db` sits on a Render disk
- * (decided on #29), so every schema change after the first meets a database
- * that predates it.
+ * Replaying the idempotent `SCHEMA` buys new tables, indexes and triggers, and
+ * nothing else. Anything not expressible as `CREATE ... IF NOT EXISTS` — an
+ * added column, a widened `CHECK`, a renamed index — needs a statement of its
+ * own in {@link MIGRATIONS}, because shipping one without it leaves a disk that
+ * opens green and fails on the first query naming the change. `governance.db`
+ * sits on a Render disk (decided on #29), so every schema change after the
+ * first meets a database that predates it.
  *
  * Version 1 is the schema at #60. Databases written before this existed read
  * back 0 — the SQLite default — which is exactly the "needs the upgrade path"
  * answer, so no disk has to be touched by hand to adopt this.
+ *
+ * Version 2 is #16: `audit_log.redactions`, the first added *column* this
+ * schema has had, which is what {@link MIGRATIONS} exists for.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
+
+/**
+ * What each version needs beyond a replay of `SCHEMA`, keyed by the version it
+ * brings the database *to*. Applied in ascending order, inside the same
+ * transaction as the version bump, and only for versions above the one on disk.
+ *
+ * Each statement is written to be safe against a database that already has the
+ * change — `columnExists` guards the `ALTER`s — so a disk at version 0, which
+ * predates the recorded version and may be anywhere, is brought forward rather
+ * than crashed on.
+ */
+const MIGRATIONS: ReadonlyArray<{ to: number; apply: (db: Database) => void }> = [
+  {
+    to: 2,
+    apply: (db) => {
+      // #16: /post now records what it removed. Path and rule id, never the
+      // value — see GovernanceEvent's docstring for why the payload itself is
+      // not persisted.
+      if (!columnExists(db, "audit_log", "redactions")) {
+        db.exec("ALTER TABLE audit_log ADD COLUMN redactions TEXT");
+      }
+    },
+  },
+];
+
+function columnExists(db: Database, table: string, column: string): boolean {
+  return db
+    .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+    .all()
+    .some((row) => row.name === column);
+}
 
 /**
  * Opens `governance.db`: seeds it from the fixture when it has no schema, and
@@ -463,6 +506,9 @@ function upgradeSchema(db: Database, path: string): void {
   db.transaction(() => {
     db.exec(SCHEMA);
     db.exec(REVISION_TRIGGERS);
+    for (const migration of MIGRATIONS) {
+      if (migration.to > found) migration.apply(db);
+    }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
 }
@@ -562,6 +608,8 @@ export interface PolicySnapshot {
   catalogue: ToolCatalogue;
   subjects: Subject[];
   rules: PolicyRule[];
+  /** The `/post` rules, read in the same transaction as everything else (#16). */
+  output_rules: OutputRule[];
 }
 
 /** The one integer the cache polls. Microseconds; one indexed row. */
@@ -640,11 +688,14 @@ export function readPolicy(db: Database): PolicySnapshot {
         return PolicyRule.parse(input);
       });
 
-    return { revision, catalogue, subjects, rules };
+    return { revision, catalogue, subjects, rules, output_rules: readOutputRules(db) };
   })();
 }
 
-/** Every `/post` rule, parsed. Not cached yet: nothing evaluates them until #16. */
+/**
+ * Every `/post` rule, parsed. Read by `readPolicy` into the same snapshot the
+ * cache compiles, so a redaction rule is as live as an `/access` one.
+ */
 export function readOutputRules(db: Database): OutputRule[] {
   interface Row extends Omit<RuleRow, "hook" | "effect" | "conditions"> {
     fields: string;

@@ -111,12 +111,17 @@ describe("seeding", () => {
       subjects: 4,
       catalogue: 6,
       policy_rules: 6,
-      output_rules: 1,
+      output_rules: 2,
       grants: 0,
       approval_requests: 0,
       audit_log: 0,
     });
-    expect(readOutputRules(db)).toHaveLength(1);
+    // Two since #16: the borrower-identifier fields, conditioned on clearance,
+    // and the injected-instruction sweep, which is conditioned on nobody.
+    expect(readOutputRules(db).map((rule) => rule.id)).toEqual([
+      "post.redact-borrower-identifiers",
+      "post.strip-injected-instructions",
+    ]);
   });
 
   test("a seed that fails leaves no schema, so the next boot retries", () => {

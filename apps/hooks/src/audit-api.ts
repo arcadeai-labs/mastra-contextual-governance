@@ -33,10 +33,11 @@
  *
  * The hook secret, the same one Arcade signs `/access`, `/pre` and `/post`
  * with — not the approvals store's. Rows carry decision reasons, which say
- * more than the model was told, and from #16 they will carry `before`
- * payloads holding an unredacted account number. That is why this endpoint has
- * a bearer where `/events` deliberately does not: nothing here is fetched from
- * a browser, so nothing here has to ship a token to one.
+ * more than the model was told. They never carry a redacted value — a `/post`
+ * row names the paths it removed and the rule that removed them, and nothing
+ * else (#16) — so the bearer is about the reasons, not about secrets in the
+ * rows. `/events` deliberately has none: it is fetched from a browser, and a
+ * token shipped to a browser is not a token.
  */
 import type { Database } from "bun:sqlite";
 

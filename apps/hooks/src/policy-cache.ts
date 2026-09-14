@@ -13,7 +13,8 @@
  * act 1 and expects act 3 to honour it; a rule the cache never picks up is the
  * same failure as losing the edit to a restart. So a background poller reads
  * one integer, `policy_revision` — bumped by triggers on every write to
- * `subjects`, `catalogue` or `policy_rules`, from any connection — every
+ * `subjects`, `catalogue`, `policy_rules` or `output_rules`, from any
+ * connection — every
  * `pollMs` (default 250 ms) and reloads when it has moved. An edit made with a
  * `sqlite3` shell on the Render disk is live within a quarter of a second, the
  * reload is logged, and `/health` reports `revision`, `loaded_at` and
@@ -44,8 +45,14 @@
  */
 import type { Database } from "bun:sqlite";
 
-import { compilePolicy, type CompiledPolicy, type ToolCatalogue } from "@cg/governance-core";
-import type { Subject } from "@cg/policy-schema";
+import {
+  compileOutputPolicy,
+  compilePolicy,
+  type CompiledOutputPolicy,
+  type CompiledPolicy,
+  type ToolCatalogue,
+} from "@cg/governance-core";
+import type { OutputRule, Subject } from "@cg/policy-schema";
 
 import { readPolicy, readRevision } from "./policy-store.ts";
 
@@ -56,6 +63,19 @@ export type CacheState =
       revision: number;
       loaded_at: string;
       policy: CompiledPolicy;
+      /**
+       * The `/post` rules, compiled (#16). In the same state as `policy` and
+       * loaded by the same reload, so a redaction rule that no longer compiles
+       * fails the whole cache closed rather than leaving `/pre` serving a
+       * policy while `/post` quietly redacts nothing.
+       */
+      outputPolicy: CompiledOutputPolicy;
+      /**
+       * The same `/post` rules before compilation, kept for one reason: a
+       * compiled rule drops its `reason`, and that sentence is what the audit
+       * row and the panel say when the rule fires. Read by id, never evaluated.
+       */
+      outputRules: ReadonlyMap<string, OutputRule>;
       catalogue: ToolCatalogue;
       /** Keyed by lower-cased `user_id`; see `findSubject`. */
       subjects: ReadonlyMap<string, Subject>;
@@ -116,18 +136,25 @@ export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}
       const snapshot = readPolicy(db);
       revision = snapshot.revision;
       const policy = compilePolicy({ catalogue: snapshot.catalogue, rules: snapshot.rules });
+      const outputPolicy = compileOutputPolicy({
+        catalogue: snapshot.catalogue,
+        rules: snapshot.output_rules,
+      });
       const subjects = new Map(snapshot.subjects.map((s) => [subjectKey(s.user_id), s] as const));
       state = {
         status: "ready",
         revision,
         loaded_at: new Date().toISOString(),
         policy,
+        outputPolicy,
+        outputRules: new Map(snapshot.output_rules.map((rule) => [rule.id, rule] as const)),
         catalogue: snapshot.catalogue,
         subjects,
       };
       log(
         `policy loaded: revision ${revision}, ${subjects.size} subjects, ` +
-          `${snapshot.rules.length} rules, ${Object.keys(snapshot.catalogue).length} toolkits`,
+          `${snapshot.rules.length} rules, ${snapshot.output_rules.length} output rules, ` +
+          `${Object.keys(snapshot.catalogue).length} toolkits`,
       );
     } catch (cause) {
       const error = cause instanceof Error ? cause.message : String(cause);

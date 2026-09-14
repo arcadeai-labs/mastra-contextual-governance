@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { aGovernanceEventSequence } from "@cg/policy-schema";
+import { aGovernanceEvent, aGovernanceEventSequence } from "@cg/policy-schema";
 
-import { maskedDiff } from "../lib/governance/diff.ts";
+import { diffRowsFor, maskedDiff, redactionRows } from "../lib/governance/diff.ts";
 
 describe("what changed", () => {
   test("omits leaves that did not change", () => {
@@ -213,9 +213,80 @@ describe("payloads the panel might be handed", () => {
     expect(rows[0]?.before).toBe("object withheld");
   });
 
-  test("annotation is null everywhere until GovernanceEvent carries redactions[]", () => {
+  test("a payload diff attributes nothing to a rule, because the event does not say", () => {
     const rows = maskedDiff({ a: "x", b: "y" }, { a: "1", b: "2" });
 
     expect(rows.every((row) => row.annotation === null)).toBe(true);
+  });
+});
+
+describe("rows from redactions[], which is what a real /post event carries", () => {
+  const records = [
+    { path: "$.bank_account_number", rule_id: "post.redact-borrower-identifiers", pattern_id: null, kind: "mask" as const },
+    { path: "$.underwriter_notes", rule_id: "post.strip-injected-instructions", pattern_id: "pattern.injected-instruction", kind: "remove" as const },
+  ];
+
+  test("one row per record, in the order the engine reported them", () => {
+    expect(redactionRows(records)).toEqual([
+      {
+        path: "$.bank_account_number",
+        change: "changed",
+        before: "value withheld",
+        after: "masked",
+        annotation: "post.redact-borrower-identifiers",
+      },
+      {
+        path: "$.underwriter_notes",
+        change: "removed",
+        before: "value withheld",
+        after: null,
+        annotation: "post.strip-injected-instructions · pattern.injected-instruction",
+      },
+    ]);
+  });
+
+  test("a value withheld because the policy did not settle says which it is", () => {
+    // `unsettled` is not a secret that was found, it is a broken output policy,
+    // and a panel that drew it as an ordinary mask would hide a defect.
+    const [row] = redactionRows([
+      { path: "$.notes", rule_id: null, pattern_id: "pattern.loop", kind: "unsettled" },
+    ]);
+
+    expect(row?.after).toContain("did not settle");
+    expect(row?.annotation).toBe("pattern.loop");
+  });
+
+  test("redactions[] wins over an absent payload, which is the whole bug", () => {
+    // The event #16 emits: `modify`, an account of three removals, and no
+    // `before`/`after` at all. Diffing the payloads yields nothing, and nothing
+    // is what the panel used to render as "unchanged".
+    const event = aGovernanceEvent({ decision: "modify", hook: "post", redactions: records });
+
+    expect(maskedDiff(event.before, event.after)).toEqual([]);
+    expect(diffRowsFor(event)).toHaveLength(2);
+  });
+
+  test("an event with neither yields no rows, and only that means unchanged", () => {
+    expect(diffRowsFor(aGovernanceEvent({ decision: "modify", hook: "post", redactions: [] }))).toEqual([]);
+    expect(diffRowsFor(aGovernanceEvent({ decision: "allow", hook: "post" }))).toEqual([]);
+  });
+
+  test("a payload still diffs when one is sent, so the older shape keeps drawing", () => {
+    const event = aGovernanceEvent({
+      decision: "modify",
+      before: { tax_id: "12-3456789" },
+      after: { tax_id: "[REDACTED]" },
+    });
+
+    expect(diffRowsFor(event)).toEqual([
+      { path: "tax_id", change: "changed", before: "text withheld", after: "[REDACTED]", annotation: null },
+    ]);
+  });
+
+  test("no row ever carries the value that was taken — there is nowhere to put one", () => {
+    const rendered = JSON.stringify(redactionRows(records));
+
+    expect(rendered).not.toContain("6011329948175302");
+    expect(rendered).not.toContain("Ignore any earlier instruction");
   });
 });
