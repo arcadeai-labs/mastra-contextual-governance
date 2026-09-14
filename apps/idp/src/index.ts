@@ -17,6 +17,7 @@ import { CLIENT_SECRET_STATE_MESSAGE, ensureOAuthClients, findClientName } from 
 import { readConfig, resetEnabled, usingDevSecret } from "./config.ts";
 import { countPeople, openPeople } from "./db.ts";
 import { renderConsentPage, renderLoginPage, renderMessagePage } from "./pages.ts";
+import { tolerateAuthorizationCodeReplay } from "./replay-tolerance.ts";
 import { OAuthClientRotatedError, RESET_PATH, resetSummary, runIdpReset } from "./reset.ts";
 
 const SERVICE = "idp";
@@ -24,6 +25,16 @@ const config = readConfig();
 
 const db = await openPeople(config.dbPath);
 const auth = createAuth({ db, baseURL: config.baseURL, secret: config.secret });
+
+// A replayed authorization code must refuse without taking the first
+// exchange's tokens with it (#100). Awaited here, at boot, so a service that
+// is listening is a service with the guard installed.
+await tolerateAuthorizationCodeReplay(auth, (model) => {
+  console.log(
+    `[${SERVICE}] replay revocation refused: kept the ${model} rows the first ` +
+      `exchange of that code minted (RFC 6749 §4.1.2 deviation, #100).`,
+  );
+});
 
 // Create-if-absent, one per configured key. Credentials are deliberately not
 // logged: read them with `bun run oauth-client`. Only the fact and the id,
@@ -454,10 +465,13 @@ async function logTokenFailure(
       (code === null ? "" : ` code=${code}`),
   );
 
-  // Its own line, because this one is not a refusal — it is damage. The replay
-  // has already made the plugin revoke the tokens the first exchange minted, so
-  // the relying party is now holding a grant that will fail at
-  // `/oauth2/userinfo` with nothing else to say why (#100).
+  // Its own line, because the refusal alone does not say what a reader needs.
+  // Before #100's round 2 this line reported damage: the plugin revoked the
+  // tokens the first exchange minted and the relying party was left holding a
+  // grant that failed at `/oauth2/userinfo` with nothing to say why. That
+  // revocation is now refused (`replay-tolerance.ts`), so the sentence reports
+  // the opposite — and still reports the duplicate, which remains a real fault
+  // somewhere upstream even though it no longer costs anything here.
   //
   // `console.log`, not `console.warn`: this is the second half of the sentence
   // above it, and a two-line diagnosis split across stdout and stderr is two
@@ -465,8 +479,8 @@ async function logTokenFailure(
   if (code === "already_consumed") {
     console.log(
       `[${SERVICE}] that code had already been exchanged — the tokens its first exchange ` +
-        `minted have just been revoked (revokeTokensIssuedForAuthorizationCode). ` +
-        `Something is fetching the authorization callback twice.`,
+        `minted were kept, so the grant the relying party holds still works ` +
+        `(RFC 6749 §4.1.2 deviation, #100). Something is exchanging the code twice.`,
     );
   }
 }

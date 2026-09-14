@@ -18,7 +18,7 @@ plugin as an OAuth 2.1 authorization server, owning `idp.db` on its own disk.
 | Path | What |
 |---|---|
 | `GET /oauth2/authorize` | Authorization endpoint. Sends the browser to `/login`, then `/consent`, then back to the client with a code. |
-| `POST /oauth2/token` | Token endpoint. `client_secret_basic` (HTTP Basic), PKCE `S256` required. Tolerates Arcade's duplicated credentials — see below. Access tokens are opaque; the ID token is an RS256 JWT. Rejections are logged. |
+| `POST /oauth2/token` | Token endpoint. `client_secret_basic` (HTTP Basic), PKCE `S256` required. Tolerates Arcade's duplicated credentials — see below. Access tokens are opaque; the ID token is an RS256 JWT. Rejections are logged; a replayed code is refused without revoking the first exchange's tokens. |
 | `GET /oauth2/userinfo` | The persona's identity. `email` is the claim Arcade extracts. |
 | `GET /jwks` | The key set the ID token is verified against. One RSA key, `alg: RS256`. |
 | `POST /oauth2/introspect`, `POST /oauth2/revoke` | For a resource server that needs to validate or revoke an opaque token. |
@@ -254,36 +254,61 @@ authenticates the client. Reproducing a client-auth failure by hand with a place
 returns `invalid_grant: invalid code` and never reaches the check. Use a real code, or ask
 `/oauth2/introspect`, which authenticates the client first.
 
-### A replayed code is named as one
+### A replayed code is named as one, and no longer costs anything
 
-When the rejection is `invalid_grant "invalid code"`, the line carries one more field:
+When the rejection is `invalid_grant "invalid code"`, the `rejected:` line carries one more
+field:
 
 ```
 [idp] POST /oauth2/token rejected: status=400 error=invalid_grant \
   error_description="invalid code" client_auth="client_secret_basic" client_id=<id> code=already_consumed
-[idp] that code had already been exchanged — the tokens its first exchange minted have just
-  been revoked (revokeTokensIssuedForAuthorizationCode). Something is fetching the
-  authorization callback twice.
+[idp] that code had already been exchanged — the tokens its first exchange minted were kept,
+  so the grant the relying party holds still works (RFC 6749 §4.1.2 deviation, #100).
+  Something is exchanging the code twice.
+[idp] replay revocation refused: kept the oauthAccessToken rows the first exchange of that
+  code minted (RFC 6749 §4.1.2 deviation, #100).
 ```
 
 Better Auth answers a code it redeemed a moment ago and a code it never issued with the
-same four words, and the difference is the whole diagnosis. `code=already_consumed` is a
-**replay**, and it is not a harmless refusal: `checkVerificationValue` calls
+same four words, and the difference is the whole diagnosis. `code=unknown` is everything
+else: expired, from another deployment, or a guess. It is not called "expired" — a code
+whose tokens have since been revoked or rotated away also lands there, because the rows
+this reads are gone by then, and this field exists precisely because a previous line
+guessed.
+
+#### The deviation
+
+Out of the box a replay is **not** a harmless refusal. `checkVerificationValue` calls
 `revokeTokensIssuedForAuthorizationCode` on the way out, deleting the access and refresh
 tokens the first, *successful* exchange minted. The relying party keeps a grant that has
 been emptied, and the failure surfaces somewhere else entirely — for this demo,
 `apps/loan-app` getting a 401 from `/oauth2/userinfo` and reporting "The identity provider
-rejected the token." That is #100, and it went unread for three sittings because the log
-said only `invalid_grant "invalid code"`.
+rejected the token."
 
-`code=unknown` is everything else: expired, from another deployment, or a guess. It is not
-called "expired" — a code whose tokens have since been revoked or rotated away also lands
-there, because the rows this reads are gone by then, and this field exists precisely
-because a previous line guessed.
+That is #100. Measured on Render on 2026-09-14: cg-web fetched `next_uri` exactly once
+(`21:05:28.094Z [verifier] next_uri answered 200, location (none)`) and cg-idp rejected a
+second `authorization_code` exchange 290 ms later. The second hit came from neither cg-web
+nor the browser — it is Arcade's, and the standing decision of 2026-09-11 is that the
+Arcade provider configuration is never edited and **the IdP adapts**.
 
-The distinction is not on the wire. It is read from the token tables before the request is
-forwarded, because the revocation the replay triggers is what erases the evidence. The code
-itself is never printed: it is a credential until it is spent.
+So `src/replay-tolerance.ts` refuses that one revocation. **This is a deliberate deviation
+from RFC 6749 §4.1.2**, which says an authorization server SHOULD revoke the tokens
+previously issued for a code it sees replayed. That advice assumes a replay is evidence of
+a leaked code; here it is a measured property of one relying party, arriving with the same
+client credentials milliseconds after a legitimate exchange. **The refusal is unchanged —
+a replayed code still answers `invalid_grant`** — only the collateral is dropped.
+
+The guard is deliberately exact rather than broad. The plugin makes four `deleteMany` calls
+against the token tables; three key on `clientId`+`userId` or on `refreshId` and are real
+revocations a user or client asked for. Only `revokeTokensIssuedForAuthorizationCode`
+deletes by a lone `authorizationCodeId` equality, so that is the whole predicate. A wider
+guard would disarm `/oauth2/revoke` and sign-out too, and a token that cannot be revoked is
+a worse bug than the one being fixed — `flow.test.ts` asserts that boundary from outside by
+revoking a refresh token and checking the paired access token really dies.
+
+The `already_consumed` / `unknown` distinction is not on the wire. It is read from the token
+tables before the request is forwarded, because it was the revocation that erased the
+evidence. The code itself is never printed in full: it is a credential until it is spent.
 
 ### ⚠️ The secret is printed exactly once
 

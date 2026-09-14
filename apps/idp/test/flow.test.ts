@@ -40,6 +40,10 @@ const riley = people.find((p) => p.persona === "riley")!;
 // and outlives a cookie jar — so a test that walks the flow as someone else's
 // persona silently changes whether *their* test sees the consent page.
 const morgan = people.find((p) => p.persona === "morgan")!;
+// Only the revocation test signs in as Sam, which keeps that test's consent
+// screen predictable: consent is recorded per person per client and outlives a
+// cookie jar, so sharing a persona would make one test depend on another.
+const sam = people.find((p) => p.persona === "sam")!;
 
 let child: Subprocess;
 let baseUrl: string;
@@ -1248,9 +1252,12 @@ describe("a replayed authorization code is named as one", () => {
     // and this line is written the moment somebody else may be holding it.
     expect(line).not.toContain(code);
 
-    // And the consequence, on its own line, because "rejected" undersells it.
-    const damage = await waitForLogLine(/had already been exchanged/, from);
-    expect(damage).toContain("revoked");
+    // And the consequence, on its own line. Before round 2 of #100 this said
+    // the tokens had just been revoked; it now says they were kept, which is
+    // the behaviour change this slice is.
+    const consequence = await waitForLogLine(/had already been exchanged/, from);
+    expect(consequence).toContain("were kept");
+    expect(consequence).toContain("still works");
   });
 
   test("a code this service never issued is logged as unknown, not as a replay", async () => {
@@ -1271,31 +1278,124 @@ describe("a replayed authorization code is named as one", () => {
     expect(line).not.toContain("already_consumed");
   });
 
-  test("the tokens the first exchange minted really are revoked by the replay", async () => {
-    // Not an assertion about the log. Without this the two lines above are a
-    // label on a thing nobody measured, and #100 was expensive precisely
-    // because everyone believed the refusal was harmless.
+  test("the replay refuses, and the first exchange's tokens survive it", async () => {
+    // The slice, as one assertion. Until round 2 of #100 the last hop of this
+    // test was a 401: `checkVerificationValue` called
+    // `revokeTokensIssuedForAuthorizationCode` on the way to its refusal and
+    // deleted the tokens the *first* exchange minted, so a duplicate nobody
+    // asked for killed a working grant. The refusal below is unchanged; the
+    // collateral is gone.
     const { code, verifier } = await mintCode(morgan);
 
     const first = await exchange(code, verifier);
     expect(first.status).toBe(200);
-    const { access_token } = (await first.json()) as { access_token: string };
+    const { access_token, refresh_token } = (await first.json()) as {
+      access_token: string;
+      refresh_token?: string;
+    };
+    expect(refresh_token).toBeTruthy();
 
     const working = await fetch(`${baseUrl}/oauth2/userinfo`, {
       headers: { authorization: `Bearer ${access_token}` },
     });
     expect(working.status).toBe(200);
+    const identity = (await working.json()) as { email: string };
+    expect(identity.email).toBe(morgan.email.toLowerCase());
 
+    // Still `invalid_grant`. A replayed code is still refused — this slice does
+    // not make the second exchange succeed, which would be a far worse bug than
+    // the one it fixes.
     const replay = await exchange(code, verifier);
     expect(replay.status).toBe(400);
+    expect(await replay.json()).toMatchObject({
+      error: "invalid_grant",
+      error_description: "invalid code",
+    });
 
-    // The same token, the same endpoint, one replay later. This is the exact
-    // 401 `apps/loan-app` turned into "The identity provider rejected the
-    // token." on 2026-09-14.
-    const dead = await fetch(`${baseUrl}/oauth2/userinfo`, {
+    // The same token, the same endpoint, one replay later. This is the 401 that
+    // `apps/loan-app` turned into "The identity provider rejected the token."
+    // on 2026-09-14, and it must not happen again.
+    const alive = await fetch(`${baseUrl}/oauth2/userinfo`, {
       headers: { authorization: `Bearer ${access_token}` },
     });
-    expect(dead.status).toBe(401);
+    expect(alive.status).toBe(200);
+    expect(((await alive.json()) as { email: string }).email).toBe(morgan.email.toLowerCase());
+
+    // The refresh token the same exchange minted is a separate row, deleted by
+    // the same revocation, and the one Arcade actually leans on when the access
+    // token ages out. Asserted by using it, not by reading the table.
+    const refreshed = await fetch(`${baseUrl}/oauth2/token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: basicAuth(creds.client_id, creds.client_secret!),
+      },
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refresh_token! }),
+    });
+    expect(refreshed.status).toBe(200);
+    expect((await refreshed.json()) as { access_token: string }).toHaveProperty("access_token");
+  });
+
+  test("a revocation somebody actually asked for still deletes tokens", async () => {
+    // The dangerous way to fix #100 is a guard that is too wide. "Never delete
+    // an `oauthAccessToken` row" would stop the replay *and* disarm every real
+    // revocation, and a token that cannot be revoked is a worse bug than the one
+    // being fixed. So the guard keys on the one `deleteMany` shape the replay
+    // path uses — a lone `authorizationCodeId` equality — and this test stands
+    // on the other side of that line.
+    //
+    // Revoking the **refresh** token is what exercises it: `revokeRefreshToken`
+    // marks the refresh row revoked and then issues
+    // `deleteMany({ model: "oauthAccessToken", where: [{ field: "refreshId" }] })`
+    // (`authorize-BmTe2VYG.mjs:3539`) — the same guarded model, a different
+    // where-shape, which must pass straight through. Revoking the access token
+    // instead would not reach `deleteMany` at all, and the test would pass
+    // whatever the guard did.
+    const { accessToken, refreshToken } = await authorizeAs(new Browser(), creds, sam, {
+      expectConsent: true,
+    });
+    expect(refreshToken).toBeTruthy();
+
+    const before = await fetch(`${baseUrl}/oauth2/userinfo`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(before.status).toBe(200);
+
+    const revoke = await fetch(`${baseUrl}/oauth2/revoke`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: basicAuth(creds.client_id, creds.client_secret!),
+      },
+      body: new URLSearchParams({
+        token: refreshToken!,
+        token_type_hint: "refresh_token",
+      }),
+    });
+    expect(revoke.status).toBe(200);
+
+    // The access token the same exchange minted is gone with it. If this is a
+    // 200, the guard is swallowing a revocation a client asked for.
+    const after = await fetch(`${baseUrl}/oauth2/userinfo`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(after.status).toBe(401);
+  });
+
+  test("the guard says so, rather than silently matching nothing", async () => {
+    // A control that does nothing looks exactly like a control that permits.
+    // The refused revocation is a database call that did not happen, so the
+    // only evidence it was ever reached is the line it writes.
+    const { code, verifier } = await mintCode(riley);
+    expect((await exchange(code, verifier)).status).toBe(200);
+
+    const from = await logLength();
+    expect((await exchange(code, verifier)).status).toBe(400);
+
+    const blocked = await waitForLogLine(/replay revocation refused/, from);
+    expect(blocked).toContain("oauthAccessToken");
+    // Both models the plugin tries to sweep, not just the first.
+    await waitForLogLine(/replay revocation refused.*oauthRefreshToken/, from);
   });
 
   test("a rejection that is not about the code carries no code field", async () => {
