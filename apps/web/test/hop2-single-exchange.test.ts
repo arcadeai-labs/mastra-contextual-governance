@@ -109,7 +109,10 @@ describe("the browser ends on this app's Authorized page", () => {
     // Named, because binding the grant to the wrong persona is the failure hop
     // 2 exists to prevent, and a page that does not say who is no evidence.
     expect(html).toContain(PEOPLE.dana.email);
-    expect(html).toContain('href="/chat"');
+    // The one link on it is this app's chat, which is `/` since #22 and not the
+    // `/chat` scaffold the pre-#118 page pointed at.
+    expect(html).toContain('href="/"');
+    expect(html).not.toContain('href="/chat"');
     expect(harness.arcade.nextUriHits).toEqual([flowId]);
     expect(harness.arcade.confirmations).toEqual([
       { flow_id: flowId, user_id: PEOPLE.dana.email, authorized: true },
@@ -180,6 +183,7 @@ describe("the browser ends on this app's Authorized page", () => {
     expect(ended.response.status).toBe(200);
     expect(ended.html).toContain("Authorized");
     expect(ended.html).toContain(PEOPLE.morgan.email);
+    expect(ended.html).toContain('href="/"');
     expect(harness.arcade.nextUriHits).toEqual([flowId]);
     expect(harness.arcade.confirmations).toEqual([
       { flow_id: flowId, user_id: PEOPLE.morgan.email, authorized: true },
@@ -223,7 +227,7 @@ describe("the browser ends on this app's Authorized page", () => {
     const html = await verified.text();
     expect(html).toContain("Authorized");
     expect(html).toContain(PEOPLE.riley.email);
-    expect(html).toContain('href="/chat"');
+    expect(html).toContain('href="/"');
     // Still exactly one, and still authorized.
     expect(harness.arcade.nextUriHits).toEqual([flowId]);
     expect(harness.arcade.confirmations.at(-1)?.authorized).toBe(true);

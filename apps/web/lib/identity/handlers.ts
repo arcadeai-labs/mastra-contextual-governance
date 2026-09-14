@@ -73,6 +73,22 @@ export function safeNext(value: string | null, fallback: string): string {
   return value;
 }
 
+/**
+ * The chat, as a page a person can be sent to.
+ *
+ * `/` and not `/chat`: since #22 the demo's chat is the left half of the split
+ * screen, and `/chat` says so about itself — *"the tracer bullet's bare
+ * scaffold"*. Both hops end here now (#118). Hop 1's re-authorization card had
+ * its own copy of this string pointing at `/chat`, which meant the two hops put
+ * a person on two different screens after doing the same kind of thing; one
+ * constant, exported, is the fix and the reason it is exported.
+ *
+ * The page, never `CHAT_PATH` — that is the route the browser POSTs to, and
+ * sending somebody there answers them with a JSON refusal about a missing
+ * prompt.
+ */
+export const CHAT_PAGE = "/";
+
 function redirectUri(config: IdentitySurface, path: string): string {
   return `${config.identity.publicUrl}${path}`;
 }
@@ -598,7 +614,7 @@ export async function completeVerification(
       "Verified",
       `<p>Confirmed <code>${escapeHtml(email)}</code>, but Arcade returned no <code>next_uri</code>, ` +
         "so there is nothing to finalise the grant against.</p>" +
-        `<p><a href="/chat">Back to the chat</a>.</p>`,
+        `<p><a href="${CHAT_PAGE}">Back to the chat</a>.</p>`,
       200,
       headers,
     );
@@ -649,17 +665,17 @@ export async function completeVerification(
  * whether the authorization worked. It names the persona, because binding the
  * grant to the wrong one is the failure mode hop 2 exists to prevent.
  *
- * The link is a constant, and not a return path read off this request: Arcade
- * calls this route with `flow_id` and nothing else (measured, #75), so anything
- * on the query string claiming to be a return target did not come from Arcade.
- * The demo has one chat page, which is what makes a constant the whole answer
- * rather than a simplification.
+ * The link is `CHAT_PAGE`, a constant, and not a return path read off this
+ * request: Arcade calls this route with `flow_id` and nothing else (measured,
+ * #75), so anything on the query string claiming to be a return target did not
+ * come from Arcade. The demo has one chat page, which is what makes a constant
+ * the whole answer rather than a simplification.
  */
 function verifiedPage(email: string, headers: Headers): Response {
   return page(
     "Authorized",
     `<p>This tool is now authorized as <code>${escapeHtml(email)}</code>.</p>` +
-      `<p><a href="/chat">Back to the chat</a> — ask the agent for the same thing again.</p>`,
+      `<p><a href="${CHAT_PAGE}">Back to the chat</a> — ask the agent for the same thing again.</p>`,
     200,
     headers,
   );
