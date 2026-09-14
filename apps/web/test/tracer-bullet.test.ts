@@ -441,7 +441,17 @@ describe("layer 2, which fires no hook at all", () => {
     // DESIGN.md open risk 2, measured here rather than asserted: a layer-2
     // refusal writes no audit row and shows nothing on the panel. That is why
     // no beat the demo wants to *show* may be staged as one.
-    expect((await harness.audit()).length).toBe(auditBefore);
+    //
+    // Narrowed by #15, which put `/access` in front of every `tools/list`: the
+    // turn now legitimately appends one row per tool the gateway was about to
+    // advertise, before the model chose anything. Those are layer 1 deciding
+    // visibility. The claim here is about the *call*, so what must not exist is
+    // a `/pre` or `/post` row — an assertion on the total would have quietly
+    // become an assertion about how many tools the catalogue holds.
+    const after = await harness.audit();
+    const appended = after.slice(0, after.length - auditBefore);
+    expect(appended.length).toBeGreaterThan(0);
+    expect(appended.filter((row) => row.hook !== "access")).toEqual([]);
   }, TURN_TIMEOUT_MS);
 });
 

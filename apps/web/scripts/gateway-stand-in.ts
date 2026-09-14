@@ -32,22 +32,36 @@
  * `loans.db` attributed to the real actor. **The fiction is the transport and
  * the Python worker, and nothing else.**
  *
+ * Real, on every `tools/list` (added by #15):
+ *
+ *   1. `POST /access` on the actual control plane, with the bearer's `user_id`
+ *      and the project's own toolkit in the nested `Toolkits` shape the request
+ *      type takes.
+ *   2. Every tool named in the response's `deny` map is **removed from the
+ *      answer**. It is absent, not present-and-refused, which is act 1's whole
+ *      claim: there is nothing there for the model to reason around.
+ *   3. An `/access` that cannot be reached, or that answers anything but 2xx,
+ *      hides **everything**. Fail closed — spike #2 measured real Arcade doing
+ *      the equivalent (every tool in the project fails when the deny map is the
+ *      wrong shape), and a stand-in that fell back to the whole catalogue would
+ *      turn a dead control plane into an open one.
+ *
  * Not real, and deliberately so:
  *
- * - **`/access` is not called.** Layer 1 is act 1 and belongs to #15; a
- *   stand-in that silently returned the whole catalogue *and* claimed to
- *   implement visibility would be the "control that does nothing" this repo is
- *   organised against. It returns the catalogue and says here that it does.
- *
- * `/post` was on that list until #16. It was the reason the local tracer was
- * *more hostile* than production — the model saw act 4's injected note here and
- * would not have seen it through real Arcade (#91) — so the two now agree.
  * - **Layer 2 is a switch, not a flow.** Arcade evaluates tool auth
  *   requirements before `/pre` and, on a first use, answers with an
  *   `authorization_url` for the persona to visit. There is no OAuth here to
  *   drive, so `requireAuthorizationFor` makes a named tool answer in that
  *   measured shape once. It exists because the chat has to render that link and
  *   stop, and because that path must have a test.
+ *
+ * Layer 2 is the only one left on that list. `/access` was on it until #15 and
+ * `/post` until #16, and both absences cost something specific: without
+ * `/access` act 1 could not be shown here at all, and without `/post` the local
+ * tracer was *more hostile* than production — the model read act 4's injected
+ * note here and would not have read it through real Arcade (#91). Both hooks
+ * are called now, so the stand-in and the deployed system agree on every layer
+ * that fires one.
  *
  * ## Tokens are how a persona reaches the hooks
  *
@@ -71,6 +85,16 @@
 
 /** Arcade's fixed prefix ahead of the hook's own message. Measured, spike #2. */
 export const DENIAL_PREFIX = "Tool execution was denied by an extension policy: ";
+
+/**
+ * The version every payload here names a tool at.
+ *
+ * One constant rather than three literals: `/access` copies the request's own
+ * version array into its `deny` map, so a `/pre` payload and an `/access`
+ * payload that disagreed about the version would describe two different tools
+ * to the same policy.
+ */
+const TOOL_VERSION = "1.0.0";
 
 /**
  * The two tools the live gateway advertises on top of a project's own —
@@ -230,6 +254,15 @@ export interface GatewayStandInOptions {
     /** Whether `/post` rewrote what the tool returned. Only set on `ran`. */
     redacted?: boolean;
   }) => void;
+  /**
+   * Every `tools/list`, with what `/access` took away.
+   *
+   * Separate from `onCall` because a hidden tool is the opposite of a call: it
+   * is the absence of one. A suite that could only see calls could not tell
+   * "the analyst never tried" from "the analyst tried and we did not record
+   * it", and act 1 is precisely the first of those.
+   */
+  onList?: (list: { user_id: string; advertised: string[]; hidden: string[] }) => void;
 }
 
 export interface GatewayStandIn {
@@ -263,6 +296,51 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
   const loanApp = base(options.loanAppHost);
 
   const mcpPath = `/mcp/${options.gatewayId}`;
+
+  /**
+   * Layer 1: which of this toolkit's tools may `actor` see at all.
+   *
+   * The request is the nested `Toolkits` shape `AccessHookRequest` takes, down
+   * to the innermost array of versions — spike #2 measured what any other shape
+   * does, and `apps/hooks` copies the request's own entry across into `deny`,
+   * so the two have to agree exactly. The version string is the one every other
+   * payload in this file carries.
+   *
+   * Returns wire names (`Loan_ApproveLoan`), because that is what `tools/list`
+   * answers in; `/access` speaks tool-and-toolkit, and this is the join.
+   */
+  async function hiddenFor(actor: string): Promise<{ ok: true; tools: Set<string> } | { ok: false; reason: string }> {
+    const versions = Object.fromEntries(
+      tools.map((tool) => [qualifiedToolName(tool.name).name, [{ version: TOOL_VERSION }]]),
+    );
+
+    const access = await fetch(`${hooks}/access`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${options.hookSigningSecret}` },
+      body: JSON.stringify({ user_id: actor, toolkits: { [toolkit]: { tools: versions } } }),
+    }).catch((cause: unknown) => cause as Error);
+
+    if (access instanceof Error) {
+      return { ok: false, reason: `the control plane at ${hooks} could not be reached for /access: ${access.message}` };
+    }
+    if (access.status === 401) {
+      return { ok: false, reason: "the control plane refused the stand-in's hook bearer on /access; set ARCADE_HOOK_SIGNING_SECRET on both." };
+    }
+    if (!access.ok) {
+      return { ok: false, reason: `the control plane answered ${access.status} to /access, so no tool is listed.` };
+    }
+
+    const verdict = (await access.json().catch(() => null)) as { deny?: Record<string, { tools?: Record<string, unknown> }> } | null;
+    if (verdict === null) {
+      return { ok: false, reason: "the control plane answered /access with something that was not JSON." };
+    }
+
+    const hidden = new Set<string>();
+    for (const [deniedToolkit, info] of Object.entries(verdict.deny ?? {})) {
+      for (const name of Object.keys(info?.tools ?? {})) hidden.add(`${deniedToolkit}_${name}`);
+    }
+    return { ok: true, tools: hidden };
+  }
 
   /** A JSON-RPC result. The MCP client reads `result`; a tool failure is in-band. */
   const rpc = (id: unknown, result: unknown) => Response.json({ jsonrpc: "2.0", id, result });
@@ -322,11 +400,34 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
       if (message.method.startsWith("notifications/")) return new Response(null, { status: 202 });
 
       if (message.method === "tools/list") {
+        const hidden = await hiddenFor(actor);
+        if (!hidden.ok) {
+          // Fail closed, loudly. Not an empty list: an empty catalogue is what
+          // "everything is denied" and "the control plane is down" would both
+          // look like, and the agent's own 502 would then name the wrong
+          // variable. An error says which of the two happened.
+          return rpcError(message.id, -32603, hidden.reason);
+        }
+        const visible = tools.filter((tool) => !hidden.tools.has(tool.name));
+        options.onList?.({
+          user_id: actor,
+          advertised: [...visible.map((tool) => tool.name), ...GATEWAY_BUILTINS],
+          hidden: [...hidden.tools],
+        });
         return rpc(message.id, {
           tools: [
-            ...tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+            ...visible.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
             // The gateway's own, advertised to every client. Not loan tools,
             // and `lib/agent/tools.ts` is what keeps them away from the agent.
+            //
+            // They are *not* submitted to `/access` and never hidden by it. That
+            // is a measurement, not a shortcut: a live `tools/list` for a
+            // signed-in persona carries eight entries — the project's six plus
+            // these two — and that list is what Arcade answered *after* our
+            // access hook ran (#82, DESIGN.md → Tool surface). Whatever Arcade
+            // does with its own built-ins, it does not let our deny map reach
+            // them, so a stand-in that hid them would advertise a surface the
+            // real gateway never returns.
             ...GATEWAY_BUILTINS.map((name) => ({
               name,
               description: `Arcade gateway built-in (${name}).`,
@@ -366,7 +467,7 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
         headers: { "content-type": "application/json", authorization: `Bearer ${options.hookSigningSecret}` },
         body: JSON.stringify({
           execution_id: executionId,
-          tool: { name, toolkit: calledToolkit, version: "1.0.0" },
+          tool: { name, toolkit: calledToolkit, version: TOOL_VERSION },
           inputs,
           context: { authorization: [{}], user_id: actor },
         }),
@@ -431,7 +532,7 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
         headers: { "content-type": "application/json", authorization: `Bearer ${options.hookSigningSecret}` },
         body: JSON.stringify({
           execution_id: executionId,
-          tool: { name, toolkit: calledToolkit, version: "1.0.0" },
+          tool: { name, toolkit: calledToolkit, version: TOOL_VERSION },
           inputs,
           success: true,
           output: payload,
@@ -564,14 +665,20 @@ if (import.meta.main) {
   }
 
   const gatewayId = env.ARCADE_GATEWAY_ID?.trim() || "cg-demo-us";
+  const hooksHost = env.HOOKS_PUBLIC_HOST?.trim() || "localhost:8081";
   const standIn = createGatewayStandIn({
     gatewayId,
-    hooksHost: env.HOOKS_PUBLIC_HOST?.trim() || "localhost:8081",
+    hooksHost,
     hookSigningSecret: env.ARCADE_HOOK_SIGNING_SECRET?.trim() || "cg-hooks-dev-secret-not-for-production",
     loanAppHost: env.LOAN_APP_PUBLIC_HOST?.trim() || "localhost:8082",
     loanToolkit: env.ARCADE_LOAN_TOOLKIT?.trim() || "Loan",
     port,
     onCall: ({ user_id, tool, outcome }) => console.log(`[gateway-stand-in] ${outcome} ${tool} as ${user_id}`),
+    onList: ({ user_id, advertised, hidden }) =>
+      console.log(
+        `[gateway-stand-in] tools/list as ${user_id}: ${advertised.length} advertised` +
+          (hidden.length === 0 ? ", none hidden by /access" : `, hidden by /access: ${hidden.join(", ")}`),
+      ),
   });
 
   // Said on every boot, because a fixture that looks like the product is how a
@@ -582,9 +689,9 @@ if (import.meta.main) {
   );
   console.log(`[gateway-stand-in] point apps/web at it with ARCADE_API_URL=http://localhost:${standIn.port}`);
   console.log(
-    `[gateway-stand-in] every tools/call asks ${env.HOOKS_PUBLIC_HOST ?? "localhost:8081"}/pre first and runs ` +
-      `nothing when the answer is not OK, then asks /post and forwards its override.output when there is one. ` +
-      `/access is NOT called — that is #15.`,
+    `[gateway-stand-in] every tools/call asks ${hooksHost}/pre first and runs nothing when the answer ` +
+      `is not OK, then asks ${hooksHost}/post and forwards its override.output when there is one; ` +
+      `every tools/list asks ${hooksHost}/access first and omits what comes back denied.`,
   );
 
   // A token per persona, printed, because offline there is no hop 1 to mint
