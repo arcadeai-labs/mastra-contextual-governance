@@ -38,6 +38,13 @@
  * collapse is stated on the record rather than done quietly, which is the only
  * version of it worth having.
  *
+ * The summary's wording says where the line was drawn, never why each tool was
+ * refused. The same collapse runs on the fail-closed path, where the reason is
+ * not "outside the catalogue" but "the control plane could not evaluate this" —
+ * and the governed rows immediately above it say so, at length, per tool. A
+ * summary that borrowed one of its members' reasons would be asserting a cause
+ * for 1,199 decisions it did not look at.
+ *
  * The summary row uses `tool: "*"`, the same spelling `server.ts`'s fail-closed
  * path already writes when it cannot read a payload well enough to name one.
  * No schema change, no wire change: `AccessHookResult` is built from the same
@@ -147,8 +154,8 @@ function summaryRow(summarised: readonly DecidedTool[], ctx: AccessAuditContext)
     decision: hidden > 0 ? "deny" : "allow",
     reason:
       `SUMMARY: ${summarised.length} tool${summarised.length === 1 ? "" : "s"} in ` +
-      `${toolkits.length} toolkit${toolkits.length === 1 ? "" : "s"} this control plane does not ` +
-      `govern were decided in this call and are recorded as this one row — ${hidden} hidden, ` +
+      `${toolkits.length} toolkit${toolkits.length === 1 ? "" : "s"} outside this control plane's ` +
+      `catalogue were decided in this call and are recorded as this one row — ${hidden} hidden, ` +
       `${allowed} allowed. Toolkits: ${named}${rest > 0 ? `, and ${rest} more` : ""}. ` +
       `Tools in the governed toolkits (${governedList(ctx.governed)}) are recorded one row each, ` +
       `above.`,

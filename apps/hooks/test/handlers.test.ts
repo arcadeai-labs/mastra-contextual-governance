@@ -158,7 +158,7 @@ describe("/access — act 1", () => {
     const summary = events.at(-1)!;
     expect(summary).toMatchObject({ decision: "deny", rule_id: null, user_id: DANA });
     // The collapse is stated, with the counts that make it auditable.
-    expect(summary.reason).toMatch(/^SUMMARY: 2 tools in 1 toolkit /);
+    expect(summary.reason).toMatch(/^SUMMARY: 2 tools in 1 toolkit outside/);
     expect(summary.reason).toMatch(/2 hidden, 0 allowed/);
     expect(summary.reason).toMatch(/Toolkits: Github\./);
   });
