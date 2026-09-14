@@ -649,6 +649,25 @@ export function hiddenTools(
   );
 }
 
+/**
+ * The toolkits this policy governs at all.
+ *
+ * The catalogue's own keys — the `ARCADE_*_TOOLKIT` values, read from the
+ * `catalogue` table rather than written down anywhere. A toolkit outside this
+ * set is refused wholesale by {@link resolveVisibility} and
+ * {@link evaluatePermission}: no rule can reach it and none was ever written
+ * for it.
+ *
+ * It is here because `/access` is asked about the *whole Arcade project
+ * catalogue* — thousands of tools, of which a handful are ours — and a caller
+ * has to be able to tell the two apart without knowing a single toolkit name.
+ * What `apps/hooks` does with the distinction is #107 and its business; this
+ * module only says where the line is.
+ */
+export function governedToolkits(policy: CompiledPolicy): ReadonlySet<string> {
+  return new Set(policy.catalogue.keys());
+}
+
 // ---------------------------------------------------------------------------
 // Permission — the /pre question
 // ---------------------------------------------------------------------------
