@@ -196,6 +196,33 @@ export function panelStreamHealth(
   }
 }
 
+/**
+ * Where the chat watches for `approval.granted`, or `null` when there is
+ * nowhere to watch (#20).
+ *
+ * The live control plane only. A fixture replay carries #5's governance
+ * sequence and no approval frames at all, and an unconfigured panel has no
+ * address — in both cases a turn that ends waiting stays ended, the card on
+ * screen says so, and nothing polls. Silently resuming off a replay would be
+ * the panel's own failure mode (#81) in the chat.
+ *
+ * Derived from `resolvePanelStream` rather than read separately, so the two
+ * surfaces can never describe different deployments.
+ */
+export function approvalStreamUrl(
+  env: Readonly<Record<string, string | undefined>>,
+): string | null {
+  try {
+    const stream = resolvePanelStream(env);
+    return stream.mode === "hooks" ? stream.url : null;
+  } catch {
+    // A bare service name in `HOOKS_PUBLIC_HOST`. The page throws on it loudly
+    // where a developer sees it; this is asked from the same page and must not
+    // throw twice.
+    return null;
+  }
+}
+
 /** The knobs the fixture stream understands. See its route for what they do. */
 const FIXTURE_PARAMS = ["delayMs", "repeat", "fanout"] as const;
 

@@ -58,6 +58,8 @@ export interface BankPaneProps {
   toolList?: ReactNode;
   onChatEvent?: (event: ChatEvent) => void;
   onTurnStart?: () => void;
+  /** Where the chat watches for an approval decision (#20). Passed through, not read. */
+  approvalStreamUrl?: string | null;
 }
 
 export function BankPane({
@@ -66,6 +68,7 @@ export function BankPane({
   toolList,
   onChatEvent,
   onTurnStart,
+  approvalStreamUrl = null,
 }: BankPaneProps) {
   return (
     <div className="bank">
@@ -109,7 +112,12 @@ export function BankPane({
         <section className="bank-panel bank-chat" aria-label="Assistant">
           <h2 className="bank-panel-title">Assistant</h2>
           <div className="bank-panel-body">
-            <Chat signedInAs={signedInAs} {...(onChatEvent ? { onEvent: onChatEvent } : {})} {...(onTurnStart ? { onTurnStart } : {})} />
+            <Chat
+              signedInAs={signedInAs}
+              approvalStreamUrl={approvalStreamUrl}
+              {...(onChatEvent ? { onEvent: onChatEvent } : {})}
+              {...(onTurnStart ? { onTurnStart } : {})}
+            />
           </div>
         </section>
 

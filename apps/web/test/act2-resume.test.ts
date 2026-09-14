@@ -42,6 +42,7 @@ import {
   type AgentHarness,
 } from "./agent-harness.ts";
 import { anthropicModel } from "../lib/agent/agent.ts";
+import { approvalStatus } from "../lib/agent/approval-status.ts";
 import { chat, CHAT_PATH } from "../lib/agent/handlers.ts";
 import { decodeEvents, replyText, type ChatEvent } from "../lib/agent/events.ts";
 import { liveModelKey, scriptedModel, type Turn } from "./model.ts";
@@ -66,15 +67,18 @@ beforeAll(async () => {
   web = Bun.serve({
     port: 0,
     idleTimeout: 120,
-    fetch: (request) =>
-      new URL(request.url).pathname === CHAT_PATH
-        ? chat(request, {
-            config: harness.config,
-            model: currentModel,
-            // The store this harness's control plane serves, on its own port.
-            store: { hooksHost: harness.hooksHost, approvalsStoreToken: STORE_TOKEN },
-          })
-        : new Response(null, { status: 404 }),
+    fetch: (request) => {
+      const store = { hooksHost: harness.hooksHost, approvalsStoreToken: STORE_TOKEN };
+      const { pathname } = new URL(request.url);
+      // The store this harness's control plane serves, on its own port.
+      if (pathname === CHAT_PATH) {
+        return chat(request, { config: harness.config, model: currentModel, store });
+      }
+      if (pathname.startsWith("/api/approvals/")) {
+        return approvalStatus(request, { config: harness.config, store });
+      }
+      return new Response(null, { status: 404 });
+    },
   });
   console.log(
     `[act2-resume] model: ${LIVE_KEY ? `LIVE ${harness.config.agent.modelId} at temperature 0` : "SCRIPTED (ANTHROPIC_API_KEY is not set)"}`,
@@ -531,6 +535,80 @@ describe("a denied approval resumes the agent with the denial", () => {
 // ---------------------------------------------------------------------------
 // What a resume may not do
 // ---------------------------------------------------------------------------
+
+describe("the catch-up read, for a browser whose stream was down", () => {
+  /** What the page asks on every reconnect, over real HTTP with a cookie jar. */
+  const status = (id: string, cookie: string) =>
+    fetch(`http://localhost:${web.port}/api/approvals/${encodeURIComponent(id)}/status`, {
+      headers: { cookie, accept: "application/json" },
+    });
+
+  test("it answers the requester with the status, and nothing else", async () => {
+    const created = await store("POST", "/approvals", {
+      requester_id: DANA,
+      action: "approve_loan",
+      resource_id: "LN-2292",
+      amount: 15_500,
+      justification: "Within authority; recorded for the audit trail.",
+      approver_id: RILEY,
+      candidate_approver_ids: [RILEY],
+      required_clearance: 15_500,
+    });
+    const request = ((await created.json()) as { request: ApprovalRecord }).request;
+    const cookie = await browserFor(DANA);
+
+    const pending = await status(request.id, cookie);
+    expect(pending.status).toBe(200);
+    expect(await pending.json()).toEqual({ request_id: request.id, status: "pending" });
+
+    await store("POST", `/approvals/${request.id}/decision`, {
+      decision: "approved",
+      note: null,
+      decided_by: RILEY,
+    });
+    const decided = await status(request.id, cookie);
+    // A status, not a record: everything the resume asserts is read from the
+    // store by the resume itself, and this says only whether there is now
+    // something to resume on.
+    expect(await decided.json()).toEqual({ request_id: request.id, status: "approved" });
+  });
+
+  test("somebody else's request is a 404, the same answer an unknown id gets", async () => {
+    const created = await store("POST", "/approvals", {
+      requester_id: DANA,
+      action: "approve_loan",
+      resource_id: "LN-2292",
+      amount: 15_500,
+      justification: "Within authority; recorded for the audit trail.",
+      approver_id: RILEY,
+      candidate_approver_ids: [RILEY],
+      required_clearance: 15_500,
+    });
+    const request = ((await created.json()) as { request: ApprovalRecord }).request;
+
+    const mine = await status(request.id, await browserFor("morgan.ellis@bank.example"));
+    const nobodys = await status("apr_doesnotexist", await browserFor("morgan.ellis@bank.example"));
+    expect(mine.status).toBe(404);
+    expect(nobodys.status).toBe(404);
+    // One answer for both — the same status and the same sentence, differing
+    // only in the id the caller itself supplied. A caller cannot learn which
+    // ids exist from the difference between them.
+    expect(await mine.json()).toEqual({
+      error: `No approval request ${request.id} for this browser.`,
+    });
+    expect(await nobodys.json()).toEqual({
+      error: "No approval request apr_doesnotexist for this browser.",
+    });
+  });
+
+  test("an unsigned-in browser gets 401", async () => {
+    const response = await fetch(
+      `http://localhost:${web.port}/api/approvals/apr_anything/status`,
+      { headers: { accept: "application/json" } },
+    );
+    expect(response.status).toBe(401);
+  });
+});
 
 describe("a resume asserts nothing the store does not say", () => {
   test("a request that is still pending is a fault, not a turn", async () => {

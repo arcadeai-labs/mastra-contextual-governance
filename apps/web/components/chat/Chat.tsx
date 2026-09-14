@@ -59,13 +59,35 @@
  * `[ref evt_…]` token the control plane embedded. That token is what #21's panel
  * joins on, and a UI that tidied it away would make the two screens describe
  * different events.
+ *
+ * ## The resume (#20)
+ *
+ * A turn that ends after `Approvals_RequestApproval` ends. There is no polling
+ * here, no timer and no socket held open by the turn — `DESIGN.md` → The wait,
+ * and the issue is explicit that a visibly spinning agent contradicts the line
+ * the demo is built on.
+ *
+ * What this component does instead is subscribe to the control plane's own
+ * stream for the whole time it is mounted, and when an `approval.granted` for
+ * *this browser's* request arrives, POST a new turn carrying the id. Two
+ * properties are load-bearing:
+ *
+ * - **The transcript continues rather than clearing.** A resume appends. The
+ *   denial, the escalation and the agent's "waiting for Riley" stay on screen
+ *   while the thing they caused happens underneath them.
+ * - **This side names no outcome.** The resume request carries an id and the
+ *   previous turn as context; the server reads `GET /approvals/{id}` itself and
+ *   builds what the agent is told from that record (`lib/agent/resume.ts`).
+ *   Nothing typed, stored or streamed into this browser can change what is
+ *   asserted about an approval.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Both from `events.ts`, which depends on nothing. Importing `CHAT_PATH` from
 // `lib/agent/handlers.ts` instead pulls `@mastra/mcp` — and its stdio
 // transport's `fs` import — into the browser bundle, and `next build` fails.
-import { CHAT_PATH, type ChatEvent } from "../../lib/agent/events.ts";
+import { CHAT_PATH, replyText, type ChatEvent } from "../../lib/agent/events.ts";
+import { noticeIsFor, subscribeToApprovalNotices } from "../../lib/governance/approval-stream.ts";
 import { Markdown } from "./Markdown.tsx";
 import { transcript } from "./transcript.ts";
 
@@ -126,33 +148,94 @@ export interface ChatProps {
   onEvent?: (event: ChatEvent) => void;
   /** A new turn has started and the transcript has been cleared. */
   onTurnStart?: () => void;
+  /**
+   * The governance stream, resolved on the server and handed down as an
+   * address (#20). `null` when this deployment has no live stream, in which
+   * case a turn that ends waiting stays ended: the card says so, and nothing
+   * here retries or polls.
+   *
+   * The same URL the panel watches, and for the same reason it is a prop:
+   * `NEXT_PUBLIC_*` is inlined at build time while Render supplies the
+   * environment at runtime, so a client component that read it itself would be
+   * `undefined` in the deployed browser and fine under `next dev`
+   * (`lib/governance/stream-url.ts`).
+   */
+  approvalStreamUrl?: string | null;
 }
 
-export function Chat({ signedInAs, onEvent, onTurnStart }: ChatProps) {
+/** The approval a turn ended on, and what it would resume. */
+interface Waiting {
+  request_id: string;
+  approver: string;
+  /** The prompt that opened the turn, handed back as context on the resume. */
+  prompt: string;
+  /** What the agent said, as this page received it. Context, never authority. */
+  reply: string;
+}
+
+export function Chat({
+  signedInAs,
+  onEvent,
+  onTurnStart,
+  approvalStreamUrl = null,
+}: ChatProps) {
   const [prompt, setPrompt] = useState(
     "Approve the loan for $95K and double-check your work so you don't make any mistakes.",
   );
   const [events, setEvents] = useState<ChatEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  /**
+   * The approval this transcript is holding, or `null`.
+   *
+   * A ref as well as state: the stream subscription is set up once and its
+   * callback would otherwise close over the value this browser had when the
+   * socket opened, which is `null` — the turn that produces a `Waiting` has not
+   * run yet. The state is what the card renders; the ref is what the callback
+   * reads.
+   */
+  const [waiting, setWaiting] = useState<Waiting | null>(null);
+  const waitingRef = useRef<Waiting | null>(null);
   // A turn in flight, so a second Send cannot interleave two streams into one
-  // transcript — which would read as the agent contradicting itself.
+  // transcript — which would read as the agent contradicting itself. A resume
+  // is a turn and takes the same lock.
   const inFlight = useRef(false);
 
-  async function send(event: React.FormEvent) {
-    event.preventDefault();
-    if (inFlight.current || prompt.trim() === "") return;
+  /**
+   * One turn, streamed into the transcript.
+   *
+   * `append` is the whole difference between a question and a resume: a
+   * question clears the transcript, a resume continues it. A resume that
+   * cleared would take the denial, the escalation and the agent's *"waiting for
+   * Riley"* off the screen at the exact moment the audience is being shown that
+   * they caused what happens next.
+   */
+  async function run(body: unknown, options: { append: boolean }): Promise<void> {
+    if (inFlight.current) return;
     inFlight.current = true;
     setRunning(true);
     setFailure(null);
-    setEvents([]);
-    onTurnStart?.();
+    if (!options.append) {
+      setEvents([]);
+      setWaiting(null);
+      waitingRef.current = null;
+      onTurnStart?.();
+    }
+
+    // Collected alongside the transcript, because a resume has to hand back
+    // what the agent said on the turn that ended waiting, and reading it out of
+    // React state inside this loop would race the setter.
+    const turnEvents: ChatEvent[] = [];
+    let prompted = "";
+    if (typeof body === "object" && body !== null && "prompt" in body) {
+      prompted = String((body as { prompt: unknown }).prompt);
+    }
 
     try {
       const response = await fetch(CHAT_PATH, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok || !response.body) {
@@ -185,9 +268,27 @@ export function Chat({ signedInAs, onEvent, onTurnStart }: ChatProps) {
           } catch {
             continue;
           }
+          turnEvents.push(parsed);
           setEvents((seen) => [...seen, parsed]);
           onEvent?.(parsed);
         }
+      }
+
+      // The turn ended holding an approval. Nothing is polled and nothing is
+      // retried: this records the id so that `approval.granted`, when it
+      // arrives on the stream, can be recognised as this browser's.
+      const ended = turnEvents.find(
+        (event): event is Extract<ChatEvent, { kind: "waiting" }> => event.kind === "waiting",
+      );
+      if (ended) {
+        const held: Waiting = {
+          request_id: ended.request_id,
+          approver: ended.approver,
+          prompt: prompted,
+          reply: replyText(turnEvents),
+        };
+        waitingRef.current = held;
+        setWaiting(held);
       }
     } catch (cause) {
       setFailure(cause instanceof Error ? cause.message : String(cause));
@@ -196,6 +297,82 @@ export function Chat({ signedInAs, onEvent, onTurnStart }: ChatProps) {
       setRunning(false);
     }
   }
+
+  function send(event: React.FormEvent) {
+    event.preventDefault();
+    if (prompt.trim() === "") return;
+    void run({ prompt }, { append: false });
+  }
+
+  /**
+   * Resume, once, on a decision this browser is waiting for.
+   *
+   * The request is an id and the previous turn as context. It names no
+   * outcome, no approver and no amount: the server reads the record itself and
+   * builds what the agent is told from that (`lib/agent/resume.ts`). What this
+   * side decides is only *whether* to ask.
+   */
+  async function resume(requestId: string): Promise<void> {
+    const held = waitingRef.current;
+    if (held === null || held.request_id !== requestId) return;
+    // Cleared before the turn, not after: a second notice for the same request
+    // — a reconnect racing the live frame — must not start a second turn.
+    waitingRef.current = null;
+    setWaiting(null);
+    await run(
+      { resume: { request_id: requestId, prompt: held.prompt, reply: held.reply } },
+      { append: true },
+    );
+  }
+
+  /**
+   * The stream, for as long as this component is mounted.
+   *
+   * Opened once rather than when a turn starts waiting, so the socket is
+   * already up when the decision lands — on stage the gap between the
+   * escalation and Riley's click is where the presenter talks, and a
+   * subscription that started then would be racing it.
+   *
+   * `onConnected` fires on every successful connect, including reconnects, and
+   * is where a notice missed while the socket was down is picked up: the server
+   * is asked what the store now says about the request this browser is holding.
+   * The frame is live-only by construction (`approval-stream.ts`), so this is
+   * not belt and braces — it is the other half of the mechanism.
+   */
+  useEffect(() => {
+    if (approvalStreamUrl === null || signedInAs === null) return;
+    const controller = new AbortController();
+
+    void subscribeToApprovalNotices(approvalStreamUrl, {
+      signal: controller.signal,
+      onNotice: (notice) => {
+        const held = waitingRef.current;
+        if (held === null) return;
+        if (!noticeIsFor(notice, { request_id: held.request_id, signedInAs })) return;
+        void resume(notice.request_id);
+      },
+      onConnected: () => {
+        const held = waitingRef.current;
+        if (held === null) return;
+        void (async () => {
+          const response = await fetch(
+            `/api/approvals/${encodeURIComponent(held.request_id)}/status`,
+            { headers: { accept: "application/json" } },
+          ).catch(() => null);
+          if (response === null || !response.ok) return;
+          const body = (await response.json().catch(() => null)) as { status?: string } | null;
+          if (body?.status === "approved" || body?.status === "denied") {
+            void resume(held.request_id);
+          }
+        })();
+      },
+    });
+
+    return () => controller.abort();
+    // `resume` closes over refs and setters only, so the subscription is set up
+    // once per stream and per persona rather than torn down on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approvalStreamUrl, signedInAs]);
 
   return (
     <section style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -362,6 +539,42 @@ export function EventView({ event }: { event: ChatEvent }) {
           <p style={{ margin: "0.4em 0 0", whiteSpace: "pre-wrap" }}>{event.message}</p>
           <p style={{ margin: "0.4em 0 0", color: "var(--muted)" }}>
             No policy decision was made and nothing was recorded.
+          </p>
+        </div>
+      );
+
+    case "waiting":
+      return (
+        // Amber, like layer 2, and for the same reason: nothing was refused
+        // here and nothing was decided. The turn ended, and what happens next
+        // belongs to a person — this one is just not the person reading it.
+        <div style={pending} data-kind="waiting">
+          <strong style={label}>Approval requested — the turn has ended</strong>
+          <p style={{ margin: "0.4em 0 0" }}>
+            Routed to <strong>{event.approver}</strong>. This turn is over: nothing is polling and
+            nothing is waiting on a socket. When the decision is recorded it arrives on the control
+            plane&apos;s own stream and the agent is asked again.
+          </p>
+          <p style={{ margin: "0.4em 0 0", fontFamily: mono, fontSize: "0.85em", color: "var(--muted)" }}>
+            {event.request_id}
+          </p>
+        </div>
+      );
+
+    case "resumed":
+      return (
+        // The injected message, on screen, verbatim. A control surface that
+        // put a message into the conversation and did not show it would be
+        // asking to be trusted about the one thing an audience can check —
+        // whether the agent was told what to do, or told what had happened.
+        <div style={pending} data-kind="resumed">
+          <strong style={label}>
+            Resumed — approval {event.decision} by {event.decided_by}
+          </strong>
+          <p style={{ margin: "0.4em 0 0", whiteSpace: "pre-wrap" }}>{event.message}</p>
+          <p style={{ margin: "0.4em 0 0", color: "var(--muted)" }}>
+            Sent to the agent as a new turn. It states what was decided and nothing about what to
+            do next.
           </p>
         </div>
       );

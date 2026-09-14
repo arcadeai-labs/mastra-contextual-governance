@@ -21,6 +21,7 @@ import { Chat } from "../../components/chat/Chat.tsx";
 import { configurationProblems, readIdentitySurface } from "../../lib/config.ts";
 import { ConfigurationBanner } from "../../components/identity/SignInPanel.tsx";
 import { PersonaToolList } from "../../components/identity/PersonaToolList.tsx";
+import { approvalStreamUrl } from "../../lib/governance/stream-url.ts";
 import { sessionTools } from "../../lib/agent/tool-list.ts";
 import { readSessionFromCookies } from "../../lib/identity/session.ts";
 import { SIGNIN_PATH, GATEWAY_START_PATH } from "../../lib/identity/handlers.ts";
@@ -66,7 +67,10 @@ export default async function ChatPage() {
 
       <PersonaToolList session={session} tools={tools} />
 
-      <Chat signedInAs={session?.email ?? null} />
+      {/* Resolved on the server: `NEXT_PUBLIC_*` is inlined at build time and
+          Render supplies the environment at runtime, so the browser is handed
+          the address rather than working it out (#81, #20). */}
+      <Chat signedInAs={session?.email ?? null} approvalStreamUrl={approvalStreamUrl(process.env)} />
     </main>
   );
 }
