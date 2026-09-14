@@ -1,0 +1,428 @@
+/*
+ * The left half: the bank's loan origination system.
+ *
+ * **This file is the fork seam.** Everything the enterprise side of the split
+ * screen looks like is here, and nothing here names a `cg-` class or a
+ * governance component. Replacing the left half with a real product's UI is
+ * replacing this file and `components/bank/*` — the control plane on the right
+ * keeps working, because the two halves share nothing but the grid in
+ * `components/shell/shell.css` and the brand tokens in `app/globals.css`.
+ * `test/split-screen.test.tsx` fails if that stops being true.
+ *
+ * ## Boring on purpose
+ *
+ * Square corners, hairline rules, uppercase field labels, tabular figures, a
+ * navy chrome bar, a release number nobody has bumped in a while. It is meant
+ * to read as a system of record that predates the agent by fifteen years,
+ * because the claim the demo is making is that *this* is what agents are being
+ * connected to. A pretty left half argues against the thesis: it makes the
+ * governed system look like part of the same product as the thing governing it.
+ *
+ * The one thing it is not allowed to be is illegible. Type is sized in `em` off
+ * `.bank`'s own `clamp()`, exactly as `.cg-panel` is (`app/globals.css`), so a
+ * half-width column on a projector scales from one root rather than from thirty
+ * rules. Measured at 1920x1080: base 20px, the borrower line 30px, the smallest
+ * label 15px.
+ *
+ * ## Colour
+ *
+ * A light, slightly warm greyscale — the opposite of the panel's black, which
+ * is the point: two systems, visibly not the same software. All body text is
+ * at least 7:1 on its own background and the chrome bar is 10.9:1; the
+ * measurements are in the PR for #22.
+ *
+ * Decision colour is used **once**, on a control-plane denial in the chat, and
+ * it is a dated maroon rather than an alert red. An audience reads a red crash
+ * banner as "the demo broke" — and a denial is the demo working. See
+ * `.bank-chat-denied` at the bottom.
+ */
+
+.bank {
+  /* One root. Everything below is `em` off this. */
+  font-size: clamp(15px, 1.05vw, 21px);
+
+  --bank-paper: #f6f5f1;
+  --bank-desk: #e4e2db;
+  --bank-ink: #17171a;
+  --bank-ink-soft: #4a4841;
+  --bank-rule: #b6b2a7;
+  --bank-rule-soft: #d4d1c7;
+  --bank-chrome: #1b3a5c;
+  --bank-chrome-ink: #ffffff;
+
+  /* The only decision colours the left half owns: a denial in the chat, and a
+     masked-out field. Both deliberately unlike the panel's bright status
+     palette — the bank's software has never heard of Arcade. */
+  --bank-decision: #8a2733;
+  --bank-decision-paper: #f9efe4;
+
+  /* `--line` and `--muted` are the scaffold aliases `components/chat` and
+     `components/identity` size their inline styles with. Overridden here rather
+     than edited there: a hairline tuned for white-on-black is invisible on
+     paper, and this is how the left half restyles components it does not own
+     without touching them. */
+  --line: var(--bank-rule);
+  --muted: var(--bank-ink-soft);
+
+  /* Light, explicitly. `:root` declares `color-scheme: dark` for the panel, and
+     a browser honours that by drawing every native control dark — so the chat's
+     textarea and the sign-in buttons came out as dark slabs on paper-coloured
+     chrome. The left half is a light application and says so. */
+  color-scheme: light;
+
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--bank-desk);
+  color: var(--bank-ink);
+  font-family: Arial, Helvetica, "Helvetica Neue", sans-serif;
+  line-height: 1.45;
+}
+
+/* --- chrome --------------------------------------------------------------- */
+
+.bank-chrome {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8em;
+  flex-wrap: wrap;
+  padding: 0.5em 0.9em;
+  background: var(--bank-chrome);
+  color: var(--bank-chrome-ink);
+}
+
+.bank-chrome-name {
+  margin: 0;
+  font-size: 1.05em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.bank-chrome-division {
+  font-size: 0.82em;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+
+.bank-chrome-release {
+  margin-left: auto;
+  font-size: 0.78em;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+/* Five tabs, four of them dead. A real internal tool has more screens than the
+   one you are looking at, and an audience reads a single-screen app as a demo
+   toy. They are not links and are not focusable — there is nothing behind them,
+   and a tab that navigates nowhere is worse than one that plainly cannot. */
+.bank-tabs {
+  display: flex;
+  gap: 0.15em;
+  padding: 0 0.6em;
+  background: #12283f;
+  border-bottom: 1px solid var(--bank-rule);
+}
+
+.bank-tab {
+  padding: 0.32em 0.85em 0.28em;
+  font-size: 0.8em;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #c8d3df;
+}
+
+.bank-tab[aria-current="page"] {
+  background: var(--bank-desk);
+  color: var(--bank-ink);
+  font-weight: 700;
+}
+
+/* --- the signed-in person ------------------------------------------------- */
+
+/* The one line the room has to be able to read from the back: who the system
+   thinks is using it. Every tool call on both halves of the screen is made as
+   this person, and when the panel shows a denial the first question asked is
+   "denied for whom". */
+.bank-user {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  flex-wrap: wrap;
+  padding: 0.45em 0.9em;
+  background: var(--bank-paper);
+  border-bottom: 1px solid var(--bank-rule);
+}
+
+.bank-user-label {
+  font-size: 0.78em;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--bank-ink-soft);
+}
+
+.bank-user-value {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 1.15em;
+  font-weight: 700;
+}
+
+.bank-user-value[data-signed-in="false"] {
+  color: var(--bank-decision);
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* --- the scrolling body --------------------------------------------------- */
+
+.bank-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.7em 0.9em 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7em;
+}
+
+/* Nothing in here shrinks. This column is the one that scrolls, and a flex
+   child that gives way instead collapses to nothing — which is what happened
+   to the chat on the first run of the projector check: the transcript became a
+   two-pixel sliver between the tool list and the sign-in panel. */
+.bank-body > * {
+  flex: none;
+}
+
+.bank-panel {
+  background: var(--bank-paper);
+  border: 1px solid var(--bank-rule);
+}
+
+.bank-panel-title {
+  margin: 0;
+  padding: 0.3em 0.7em 0.25em;
+  font-size: 0.82em;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--bank-ink);
+  background: var(--bank-desk);
+  border-bottom: 1px solid var(--bank-rule);
+}
+
+.bank-panel-body {
+  padding: 0.6em 0.7em 0.7em;
+}
+
+/* --- loan files ----------------------------------------------------------- */
+
+.bank-files {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15em, 1fr));
+  gap: 0.6em;
+}
+
+.bank-file {
+  border: 1px solid var(--bank-rule);
+  background: #fff;
+  padding: 0.5em 0.65em 0.6em;
+  min-width: 0;
+}
+
+.bank-file-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5em;
+  border-bottom: 1px solid var(--bank-rule-soft);
+  padding-bottom: 0.25em;
+}
+
+.bank-file-id {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.95em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Square, not a pill. A rounded badge is a 2020s idiom and this application
+   shipped in 2009. */
+.bank-status {
+  font-size: 0.72em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.1em 0.45em;
+  border: 1px solid var(--bank-rule);
+  background: var(--bank-desk);
+  color: var(--bank-ink);
+  white-space: nowrap;
+}
+
+.bank-status[data-status="pending"] {
+  background: #f6e7bb;
+  border-color: #b99b3f;
+  color: #4d3b02;
+}
+
+.bank-status[data-status="approved"] {
+  background: #dfeadd;
+  border-color: #7ca17a;
+  color: #1e3d1c;
+}
+
+.bank-status[data-status="denied"] {
+  background: #f2dcdd;
+  border-color: #b4777d;
+  color: #5c1b22;
+}
+
+.bank-file-borrower {
+  margin: 0.3em 0 0;
+  font-size: 1.5em;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.bank-file-amount {
+  margin: 0.05em 0 0.35em;
+  font-size: 1.5em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.bank-file-purpose {
+  margin: 0 0 0.45em;
+  font-size: 0.9em;
+  color: var(--bank-ink-soft);
+}
+
+/* Label above value, ruled — the shape of a printed credit memo. */
+.bank-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.5em, 1fr));
+  gap: 0.35em 0.8em;
+  margin: 0;
+}
+
+.bank-field {
+  border-top: 1px solid var(--bank-rule-soft);
+  padding-top: 0.2em;
+  min-width: 0;
+}
+
+.bank-field-label {
+  display: block;
+  font-size: 0.72em;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--bank-ink-soft);
+}
+
+.bank-field-value {
+  display: block;
+  margin: 0;
+  font-size: 1em;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.bank-notes {
+  margin: 0.5em 0 0;
+  border-top: 1px solid var(--bank-rule-soft);
+  padding-top: 0.3em;
+}
+
+.bank-notes-body {
+  margin: 0.15em 0 0;
+  font-size: 0.85em;
+  line-height: 1.4;
+  color: var(--bank-ink);
+  /* Capped and scrollable. The file's notes are part of the context and act 4 is
+     hidden in them, but they are the longest thing on the card and pushing the
+     chat below the fold costs more than they are worth. */
+  max-height: 3.3em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+/* A file that did not load. Three different reasons, three different words,
+   never merged: the control plane refused, a credential is missing, or the
+   plumbing broke. `LoanFileCard` picks; this only colours. */
+.bank-file[data-outcome="denied"] {
+  border-left: 0.35em solid var(--bank-decision);
+  background: var(--bank-decision-paper);
+}
+
+.bank-file[data-outcome="fault"],
+.bank-file[data-outcome="authorization"] {
+  border-left: 0.35em solid var(--bank-rule);
+  background: var(--bank-paper);
+}
+
+.bank-file-note {
+  margin: 0.35em 0 0;
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
+.bank-file-note code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.95em;
+}
+
+.bank-quiet {
+  margin: 0;
+  font-size: 0.9em;
+  color: var(--bank-ink-soft);
+}
+
+/* --- the slot #15 fills --------------------------------------------------- */
+
+/* #15's `PersonaToolList` arrives with its own card — a rounded box with a 2rem
+   top margin, sized for the scaffold page it was born on — and keeps it. Its
+   border and its muted text pick up `--line` and `--muted` from `.bank` above,
+   which is as far as this stylesheet reaches: the card's frame is set inline, so
+   flattening it would mean `!important` against another slice's component, and a
+   nested box is a smaller price than that.
+
+   Its type is sized in `rem` and so does not scale with `.bank`'s root: 14px
+   body against this column's 20px, measured at 1920x1080. That is the same size
+   as this half's own field labels, so it is left alone rather than fought with
+   from outside. */
+
+
+/* Drawn as an outline rather than hidden. An empty region a reviewer can see is
+   how the next slice knows where its widget goes, and how anybody watching
+   knows the tool list is missing rather than empty. */
+.bank-slot {
+  border: 1px dashed var(--bank-rule);
+  padding: 0.5em 0.7em;
+  font-size: 0.85em;
+  color: var(--bank-ink-soft);
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.015) 0,
+    rgba(0, 0, 0, 0.015) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+
+/* --- the chat ------------------------------------------------------------- */
+
+/* `components/chat/Chat.tsx` is #14's and carries its own inline styles. What
+   the left half sets is the frame it sits in and the two variables above. */
+.bank-chat {
+  display: flex;
+  flex-direction: column;
+  /* Tall enough that a turn's first few events are on screen without scrolling.
+     The transcript grows below this and the column scrolls to follow it. */
+  min-height: 17em;
+}
+
+.bank-chat .bank-panel-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
