@@ -41,6 +41,7 @@ export const STORE_TOKEN = "store-token-for-agent-tests";
 export const SESSION_SECRET = "agent-suite-session-secret-0123456789";
 export const GATEWAY_ID = "cg-demo-us";
 export const LOAN_TOOLKIT = "Loan";
+export const APPROVALS_TOOLKIT = "Approvals";
 
 /** The four, as both fixtures seed them. Lower case — the join key (#58). */
 export const DANA = "dana.okafor@bank.example";
@@ -180,7 +181,7 @@ export async function startAgentHarness(
       ARCADE_HOOK_SIGNING_SECRET: HOOK_SECRET,
       APPROVALS_STORE_TOKEN: STORE_TOKEN,
       ARCADE_LOAN_TOOLKIT: LOAN_TOOLKIT,
-      ARCADE_APPROVALS_TOOLKIT: "Approvals",
+      ARCADE_APPROVALS_TOOLKIT: APPROVALS_TOOLKIT,
       LOAN_APP_PUBLIC_HOST: "localhost:1",
       NODE_ENV: "test",
       ...options.hooksEnv,
@@ -215,6 +216,7 @@ export async function startAgentHarness(
     hookSigningSecret: HOOK_SECRET,
     loanAppHost,
     loanToolkit: LOAN_TOOLKIT,
+    approvalsToolkit: APPROVALS_TOOLKIT,
     onCall: (call) => calls.push(call),
     onList: (list) => lists.push(list),
   });
@@ -226,6 +228,7 @@ export async function startAgentHarness(
     ARCADE_API_KEY: "arcade-key-for-agent-tests",
     ARCADE_GATEWAY_ID: GATEWAY_ID,
     ARCADE_LOAN_TOOLKIT: LOAN_TOOLKIT,
+    ARCADE_APPROVALS_TOOLKIT: APPROVALS_TOOLKIT,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY?.trim() || "anthropic-key-for-agent-tests",
     MODEL_ID: process.env.MODEL_ID?.trim() || "claude-sonnet-5",
     SESSION_SECRET,

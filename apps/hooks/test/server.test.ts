@@ -133,11 +133,17 @@ describe("the hooks over HTTP", () => {
     expect(res.status).toBe(200);
     const body = PreHookResult.parse(await res.json());
     expect(body.code).toBe("CHECK_FAILED");
-    expect(body.error_message).toContain("Approvals.RequestApproval");
+    expect(body.error_message).toContain("Approvals_RequestApproval");
     expect(body.error_message).toMatch(CORRELATION_TOKEN);
 
     const [row] = recent(db, 1);
     expect(row).toMatchObject({ hook: "pre", execution_id: "tc_act2", decision: "deny", rule_id: "pre.approve-within-clearance" });
+    // Both spellings, on the same denial, one hop apart: the audit row names
+    // the tool the way every hook payload does, and the sentence handed to the
+    // model names it the way MCP advertises it. #89 is the claim that these are
+    // two different jobs and neither spelling does the other's.
+    expect(row!.tool).toBe("Loan.ApproveLoan");
+    expect(body.error_message).toContain("Loan_ApproveLoan");
     expect(body.error_message).toContain(row!.id);
   });
 
