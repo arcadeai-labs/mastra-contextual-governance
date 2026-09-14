@@ -141,13 +141,24 @@ describe("the files on the left half", () => {
     expect(calls.map((call) => call.inputs.loan_id)).toEqual([...DEMO_LOAN_IDS]);
   });
 
-  test("the control plane recorded both reads", async () => {
+  /**
+   * Both layers, named separately.
+   *
+   * Since #15 the gateway stand-in asks `/access` before it answers
+   * `tools/list`, so a page load now leaves `access` rows for `Loan.GetLoan`
+   * as well as the `pre` rows the call itself produces. That is the left half's
+   * read passing layer 1 and layer 3, and the two are counted apart rather than
+   * together: a filter that accepted either would keep passing if the `/pre`
+   * rows stopped being written, which is the row that says the call was allowed
+   * to happen at all.
+   */
+  test("the control plane recorded both reads, at both layers", async () => {
     await read(await browserFor(DANA));
     const rows = await harness.audit();
+    const forThisTool = rows.filter((row) => row.tool === "Loan.GetLoan" && row.user_id === DANA);
 
-    const reads = rows.filter((row) => row.tool === "Loan.GetLoan" && row.user_id === DANA);
-    expect(reads.length).toBeGreaterThanOrEqual(2);
-    expect(reads.every((row) => row.hook === "pre")).toBe(true);
+    expect(forThisTool.filter((row) => row.hook === "pre").length).toBeGreaterThanOrEqual(2);
+    expect(forThisTool.filter((row) => row.hook === "access").length).toBeGreaterThanOrEqual(1);
   });
 
   /**

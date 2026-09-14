@@ -8,7 +8,16 @@ chat with the agent (#14), the control-plane panel (#21) and the approval page (
 bun run --cwd apps/web dev               # then open / — or /panel, /chat, /approvals/<id>
 bun test apps/web
 bun run --cwd apps/web build
+bun run --cwd apps/web verify:standalone # drives the Docker image, not `next start`
 ```
+
+The last one needs a Docker daemon and takes about a minute. It is not a nicety:
+`next start` resolves imports against a full `node_modules` and the deployed image
+resolves them against whatever Next's file tracing carried, and #92 is what lives in
+that gap — `POST /api/chat` answered 500 on Render, with `Cannot find module 'ws'`,
+after passing the tracer bullet locally and three reviewers. Anything that changes
+`apps/web`'s runtime dependencies should be run past it. `-- --image <tag>` drives an
+image that already exists instead of building one, which is how you watch it fail.
 
 `PORT` comes from this directory's own `.env.local`, the way it does for the three Bun
 services: `dev` and `start` go through `scripts/next.ts`, which is a process Bun runs
@@ -135,6 +144,42 @@ words and says plainly that nothing was authorized. Nothing fails quietly.
 parked in a sealed, ten-minute cookie, the browser is sent to sign in, and the same two
 calls run from the sign-in callback. A parked flow that expires renders a page saying
 so and what to do — it is never dropped in silence.
+
+### The identity seam a forker replaces
+
+One seam, and it is named so that "replace it with your own auth" is a specific
+instruction rather than a gesture.
+
+| | |
+|---|---|
+| **the seam** | `lib/identity/session.ts` — `readSession(request)` and `readSessionFromCookies(jar)` |
+| **what it returns** | `Session { email, gateway?, signed_in_at }`, or `null` |
+| **who calls it** | every route handler and every server component that needs to know who is acting: `lib/agent/handlers.ts`, `lib/agent/tool-list.ts`, `app/chat/page.tsx`, `app/page.tsx`, `lib/identity/verifier.ts` |
+| **what a forker keeps** | the two functions, their signatures, and `email` being the join key |
+| **what a forker deletes** | `apps/idp`, `lib/identity/oidc.ts`, `lib/identity/personas.ts`, `lib/identity/roster.ts`, `components/identity/SignInPanel.tsx` |
+
+Point `readSession` at your own session store — Okta, Auth0, a NextAuth cookie,
+an enterprise header a trusted proxy sets — and return a `Session` whose `email`
+is the address your directory knows the person by. Everything downstream is
+unchanged, because nothing downstream reads an identity from anywhere else.
+
+**Nothing else may resolve identity, and that is checkable rather than polite.**
+There is no branch in `lib/agent/handlers.ts` or `lib/identity/verifier.ts` that
+reads a persona from a body, a query string or a header — the verifier refuses a
+request carrying one with `400`. `lib/identity/roster.ts` runs only in the
+label direction, email → name and role, and deliberately offers no
+`emailFor(persona)`: a caller holding one would be one refactor away from
+signing somebody in as a persona the *browser* named.
+
+The `gateway` field is the one thing a forker has to think about rather than
+swap. It holds this persona's Arcade gateway token, which is how the tool call
+reaches Arcade as that person; a real IdP replaces how the session is
+established, not hop 1. `lib/identity/handlers.ts::liveGatewayToken` stays.
+
+`/approvals/{id}` carries a second, narrower "acting as" cookie
+(`lib/persona.ts`) that predates this and is not a sign-in — it chooses which
+roster member presses a button on that page, which is what makes the
+self-approval refusal demonstrable. It never touches the agent's persona.
 
 ### Configuration, and what `/health` says
 
@@ -402,10 +447,31 @@ rather than negotiating a new one, so the two halves have never had to be reconc
 nothing embedded in anything: the layout is the argument, because the claim is that the
 controls live *outside* the system being controlled.
 
-It **composes**. The sign-in panel is #82's, the chat is #14's, the panel is #21's, and
-#15's tool list has a named slot (`data-slot="tool-list"`) rather than a second
-implementation — a client-side tool list that merely hid a tool would look exactly like
-one the access hook shortened, which is the failure this project keeps naming.
+It **composes**, and every piece of it was built by another slice. `app/page.tsx` is the
+one file where they meet:
+
+| region | component | slice |
+|---|---|---|
+| left · chrome, tabs, the signed-in email | `components/bank/BankPane.tsx` | #22 |
+| left · applications under review | `components/bank/LoanFiles.tsx` | #22 |
+| left · assistant | `components/chat/Chat.tsx` | #14 |
+| left · user access (`data-slot="tool-list"`) | `components/identity/PersonaToolList.tsx` | #15 |
+| left · user session | `components/identity/SignInPanel.tsx` | #82 |
+| right | `components/governance/ControlPlanePanel.tsx` | #21, #81 |
+
+The tool list is #15's, hosted rather than reimplemented, and the slot exists so that it
+can be: a client-side list that merely hid a tool would look exactly like one the access
+hook shortened, which is the failure this project keeps naming. `sessionTools` is called
+in this server component so the persona's bearer never leaves the process, and the result
+arrives at the widget as data — the arrangement `PersonaToolList`'s own docstring asks
+for. Act 1 survives the layout: as Sam, `Loan_ApproveLoan` is absent from the list, and
+nothing in the shell draws it as hidden (`test/split-screen.test.tsx`, *"the shell hosts
+#15's gateway-sourced list, and act 1's absence survives it"*).
+
+The widget keeps its own card and is drawn in the left half's colours, because `--line`
+and `--muted` reach it from `.bank`. That is as far as this stylesheet goes: the card's
+frame is set inline, and flattening it would mean `!important` against another slice's
+component. `components/bank/bank.css` says so where the rule would have gone.
 
 The one thing the shell adds is a join: when the chat shows a denial, the panel outlines
 the audit rows it came from. #6 built that seam and #21 wired the panel to accept a key;
@@ -422,8 +488,10 @@ system of record sitting inches from a panel claiming there is only one would be
 screen that lies, and once `/post` redaction lands (#16) the chat would show a masked
 account number beside a file that never had one masked.
 
-The honest cost: opening `/` makes two real governed tool calls, and two `Loan.GetLoan`
-rows appear on the panel before the presenter has said anything.
+The honest cost: opening `/` makes two real governed tool calls plus the two `tools/list`
+requests behind #15's widget and this route's own tool lookup, so `access` rows and two
+`Loan.GetLoan` `pre` rows land on the panel before the presenter has said anything. That
+is what reading a loan file costs when reading one is governed.
 
 A read that does not produce a file is classified exactly as a failed tool call in the
 chat is, by importing that judgement rather than repeating it: a denial needs positive
@@ -609,7 +677,14 @@ exactly why it has a test: the first person it breaks for is a forker on their f
 | the environment is not configured | `503`, naming the variables |
 | nobody is signed in | `401`, pointing at `/api/auth/signin` |
 | signed in, no gateway token | `401`, pointing at `/api/arcade/start` |
+| the gateway listed nothing at all | `502`, naming the control plane |
 | the toolkit name matched nothing | `502`, naming `ARCADE_LOAN_TOOLKIT` |
+
+The last two are one symptom with two causes and are told apart on a measured
+fact: a live `tools/list` always carries the gateway's own two built-ins, even
+when policy hides every project tool. **Zero** entries is the list failing to
+come back, and saying "check `ARCADE_LOAN_TOOLKIT`" about a control plane that
+is down sends somebody a long way in the wrong direction.
 
 ### The stream
 
@@ -679,6 +754,89 @@ this is #56's fix, the same one `apps/loan-app/scripts/dev-idp.ts` uses. Leave
 sealed session, which means hop 1's authorization server, and the only stand-in for that
 lives in `test/identity-harness.ts`. Folding the two stand-ins together so the chat runs
 offline end to end is worth doing and is filed as #87, not done here.
+
+## Act 1 — the tool an analyst cannot see
+
+`/chat` shows who is signed in, with the role and authority `DESIGN.md`'s cast gives
+them, and the tools the **gateway** answered `tools/list` with for that person's bearer.
+
+```
+Sam Reyes  sam.reyes@…            Dana Okafor  dana.okafor@…
+Credit Analyst · $0                Loan Officer · $50,000
+
+Loan_SearchLoans                   Loan_SearchLoans
+Loan_GetLoan                       Loan_GetLoan
+Loan_DenyLoan                      Loan_ApproveLoan
+                                   Loan_DenyLoan
+```
+
+`Loan_ApproveLoan` is **absent** from Sam's list. Not greyed out, not struck through,
+not rendered with a padlock — absent, because `access.analysts-cannot-see-approve`
+removed it from the deny map before the gateway answered. Ask Sam's agent to approve the
+$95K loan and it explains it has no such capability, and **no denied tool call appears in
+the audit log**, because no call was attempted. That negative is the easy one to skip and
+it is the one worth checking: a `/pre` denial as Sam would mean the access hook did not
+do its job and something else produced that event.
+
+### The list is the gateway's, and the page says so
+
+`lib/agent/tool-list.ts` makes one real `tools/list` over MCP with the signed-in
+persona's gateway token — the same call `lib/agent/handlers.ts` makes to build the
+agent's toolset. There is no catalogue in `apps/web` and no client-side filter on tool
+names. A UI that filtered a full catalogue would render exactly the same three rows while
+proving the opposite thing, so the page prints where the list came from.
+
+`components/identity/PersonaToolList.tsx` holds no tool names at all, which is the
+structural half of the same guarantee: there is no version of that component that could
+show Sam a crossed-out approval tool.
+
+The two gateway built-ins are dropped by the same allow-list the agent uses, and they are
+**named on screen** — "2 further entries were advertised by the gateway and are not the
+agent's to call". Eight became six is an arithmetic nobody should take on trust.
+
+### The authority figure is the seeded one, and says so
+
+`PERSONAS` in `lib/identity/personas.ts` carries each persona's `roleKey` and `clearance`,
+the same values `apps/hooks` seeds `governance.db` with. They are copied rather than
+imported — `apps/web` does not depend on `apps/hooks` in the package graph and should not
+start to — and `test/persona-roster.test.ts` reads the other service's fixture and fails
+if the two disagree.
+
+What that cannot catch is a clearance a presenter raises live on stage, which
+`DESIGN.md` explicitly allows. So the card labels the number *as seeded in the policy*,
+and the audit row on the panel is what says what the control plane actually decided.
+
+The addresses are never in this repo: `PERSONA_DANA_EMAIL`, `PERSONA_SAM_EMAIL`,
+`PERSONA_RILEY_EMAIL`, `PERSONA_MORGAN_EMAIL`. An address none of them names renders with
+the email and no role — the card says the deployment names nobody there rather than
+borrowing a label.
+
+### A list that did not come back is not an empty list
+
+Measured while building this, and it is the sort of thing that would have shipped:
+`MCPClient.listToolsets()` does **not** throw when the gateway answers a JSON-RPC error.
+It logs and returns `{}`. So a control plane whose `/access` cannot be reached — which
+makes the gateway hide everything and say so — arrived looking exactly like a persona the
+policy permits nothing.
+
+Those are opposite facts and only one of them is about governance. A live answer always
+carries the gateway's own two built-ins, even when policy hides every project tool, so
+zero advertised entries is reported as the list failing to come back — by the page, and
+by `/api/chat` as a 502 that names the control plane rather than sending somebody to check
+a toolkit variable.
+
+### Running it
+
+```sh
+bun test --cwd apps/web test/act1-tool-list.test.ts
+```
+
+Real `apps/hooks` with the real rule compiled, a real `POST /access` per `tools/list`, the
+real audit log read over `GET /audit`. The gateway's transport is the stand-in, and the
+model is scripted unless `ANTHROPIC_API_KEY` is set — the suite prints which, exactly as
+the tracer bullet does. **A green run that says `SCRIPTED` has not measured the sentence
+the agent says**; everything else in that file — the absence, the access rows, the rule
+id, the zero `/pre` denials — is mechanical and is measured either way.
 
 ## Driving the two beats locally
 

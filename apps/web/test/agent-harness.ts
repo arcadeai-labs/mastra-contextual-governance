@@ -76,6 +76,14 @@ export interface AgentHarness {
   loanAppHost: string;
   /** Every `tools/call` the gateway saw, in order, with what happened to it. */
   calls: Array<{ user_id: string; tool: string; inputs: Record<string, unknown>; outcome: string }>;
+  /**
+   * Every `tools/list` the gateway answered, with what `/access` took away.
+   *
+   * Act 1 is an absence, and an absence leaves no `calls` entry: "Sam never
+   * tried to approve" and "Sam tried and nobody wrote it down" are the same
+   * empty list. This is the record that tells them apart.
+   */
+  lists: Array<{ user_id: string; advertised: string[]; hidden: string[] }>;
   /** A gateway bearer for a persona, the way hop 1 would end. */
   tokenFor(email: string): string;
   /** The loan book's own view of an application. Read over HTTP, as anything else would. */
@@ -103,6 +111,16 @@ export interface AgentHarness {
    * so the test that uses it runs last in its file.
    */
   stopLoanApp(): Promise<void>;
+  /**
+   * Take the control plane away, for the one test that asks what a dead
+   * `/access` does to the tool list.
+   *
+   * Terminal in the same way `stopLoanApp` is: nothing restarts it, so the test
+   * that uses it runs last in its file. Killing the real process rather than
+   * pointing the stand-in at a closed port, because fail-closed has to hold for
+   * the failure a real outage produces.
+   */
+  stopHooks(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -164,6 +182,7 @@ export async function startAgentHarness(): Promise<AgentHarness> {
   const loanAppHost = `localhost:${loanPort}`;
 
   const calls: AgentHarness["calls"] = [];
+  const lists: AgentHarness["lists"] = [];
   const gateway = createGatewayStandIn({
     gatewayId: GATEWAY_ID,
     hooksHost,
@@ -171,6 +190,7 @@ export async function startAgentHarness(): Promise<AgentHarness> {
     loanAppHost,
     loanToolkit: LOAN_TOOLKIT,
     onCall: (call) => calls.push(call),
+    onList: (list) => lists.push(list),
   });
 
   // Read from an environment rather than written out field by field, so a new
@@ -196,6 +216,7 @@ export async function startAgentHarness(): Promise<AgentHarness> {
     loanAppHost,
     governanceDbPath: join(workspace, "governance.db"),
     calls,
+    lists,
     tokenFor: (email) => gateway.issueToken(email),
     async loan(loanId, asEmail) {
       const response = await fetch(`http://${loanAppHost}/loans/${loanId}`, {
@@ -219,6 +240,10 @@ export async function startAgentHarness(): Promise<AgentHarness> {
     async stopLoanApp() {
       loanApp.kill();
       await loanApp.exited;
+    },
+    async stopHooks() {
+      hooks.kill();
+      await hooks.exited;
     },
     async stop() {
       gateway.stop();

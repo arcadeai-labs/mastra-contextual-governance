@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { BankPane } from "../components/bank/BankPane.tsx";
+import { PersonaToolList } from "../components/identity/PersonaToolList.tsx";
 import { EventView } from "../components/chat/Chat.tsx";
 import { LoanFilesView } from "../components/bank/LoanFiles.tsx";
 import { LoanFileCard } from "../components/bank/LoanFileCard.tsx";
@@ -30,6 +31,8 @@ import { SplitScreen } from "../components/shell/SplitScreen.tsx";
 import { TOOL_LIST_SLOT } from "../components/bank/ToolListSlot.tsx";
 import { GATEWAY_START_PATH, SIGNIN_PATH } from "../lib/identity/handlers.ts";
 import type { LoanRead } from "../lib/loan-context/loans.ts";
+import type { Session } from "../lib/identity/session.ts";
+import type { SessionTools } from "../lib/agent/tool-list.ts";
 import type { PanelStream } from "../lib/governance/stream-url.ts";
 
 const HERE = import.meta.dir;
@@ -51,6 +54,32 @@ function shell(options: { stream?: PanelStream; signedInAs?: string | null } = {
     />,
   );
 }
+
+const SAM = "sam.reyes@bank.example";
+
+const samSession = (): Session => ({
+  email: SAM,
+  signed_in_at: 0,
+  gateway: { access_token: "tok", expires_at: 0, client_id: "c" },
+});
+
+/**
+ * What the gateway answers `tools/list` with for Sam — three tools, not four.
+ *
+ * `Loan_ApproveLoan` is missing because `access.analysts-cannot-see-approve`
+ * removed it before the gateway answered, which is act 1. It is measured
+ * end-to-end in `test/act1-tool-list.test.ts` (#15); here it is a fixture,
+ * because what this file is asserting is that #22's layout does not put it back.
+ */
+const SAM_TOOLS: SessionTools = {
+  ok: true,
+  tools: [
+    { name: "Loan_SearchLoans", description: "Find loan applications in the loan book." },
+    { name: "Loan_GetLoan", description: "Read one loan application's complete file by ID." },
+    { name: "Approvals_RequestApproval", description: "Ask a human for approval." },
+  ],
+  filtered: ["System_ManageAuthorization", "Arcade_ListApps"],
+};
 
 const NORTHWIND: LoanRead = {
   loan_id: "LN-2291",
@@ -95,6 +124,13 @@ describe("the split", () => {
     // It does not call itself a demo, a scaffold or a governance anything. The
     // bank's software has never heard of Arcade; the panel opposite is what
     // knows about governance.
+    //
+    // Scoped to the shell's **own** chrome, which is what `shell()` renders:
+    // both demo fixtures the left half hosts — #82's sign-in panel and #15's
+    // tool list — arrive as props and are stubbed here. Those two do name the
+    // gateway, and should: they are the demo's own furniture standing inside the
+    // bank's screen, in the same category as the persona switcher. What must not
+    // creep in is this file's chrome announcing itself.
     expect(leftHalf(markup)).not.toMatch(/demo|scaffold|Arcade/i);
   });
 
@@ -143,19 +179,19 @@ describe("the split", () => {
     expect(markup).toContain("Send");
   });
 
-  test("#15's tool list has a named slot, and the shell does not fill it with its own", () => {
+  test("the tool list has a named slot, and the shell does not fill it with its own", () => {
     const markup = renderToStaticMarkup(
       <BankPane signedInAs="dana.okafor@bank.example" identity={null} />,
     );
 
     expect(markup).toContain(`data-slot="${TOOL_LIST_SLOT}"`);
-    expect(markup).toContain("lands with #15");
+    expect(markup).toContain("No tool list was supplied");
     // No tool names invented here. A second, client-side tool list is exactly
     // the control-that-does-nothing this project is organised against.
     expect(markup).not.toContain("Loan_ApproveLoan");
   });
 
-  test("the slot renders what #15 gives it and drops the placeholder", () => {
+  test("the slot renders what it is given and drops the placeholder", () => {
     const markup = renderToStaticMarkup(
       <BankPane
         signedInAs="dana.okafor@bank.example"
@@ -165,7 +201,39 @@ describe("the split", () => {
     );
 
     expect(markup).toContain("four tools, from the gateway");
-    expect(markup).not.toContain("lands with #15");
+    expect(markup).not.toContain("No tool list was supplied");
+  });
+
+  /**
+   * The composition the merge with #15 exists to make.
+   *
+   * `app/page.tsx` asks the gateway what this session may see and hands
+   * `PersonaToolList` into the shell's slot. This is that arrangement rendered:
+   * act 1's absence — `Loan_ApproveLoan` missing from Sam's list — surviving
+   * inside #22's layout, with the list still saying where it came from.
+   *
+   * Both halves of the claim are checked, because only one of them is about
+   * governance: the tool is absent, **and** nothing in the shell draws it as
+   * hidden. A crossed-out approval tool is the single most tempting thing to add
+   * to this screen and it would be a picture of a control that does nothing.
+   */
+  test("the shell hosts #15's gateway-sourced list, and act 1's absence survives it", () => {
+    const markup = renderToStaticMarkup(
+      <BankPane
+        signedInAs={SAM}
+        identity={null}
+        toolList={<PersonaToolList session={samSession()} tools={SAM_TOOLS} />}
+      />,
+    );
+
+    expect(markup).toContain(`data-slot="${TOOL_LIST_SLOT}"`);
+    expect(markup).toContain("Loan_SearchLoans");
+    expect(markup).toContain("Loan_GetLoan");
+    expect(markup).not.toContain("Loan_ApproveLoan");
+    // #15's provenance line, still on screen inside the bank's chrome.
+    expect(markup).toContain("tools/list");
+    // And the built-in it filtered, named rather than quietly dropped.
+    expect(markup).toContain("System_ManageAuthorization");
   });
 });
 

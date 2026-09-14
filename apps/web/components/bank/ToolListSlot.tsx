@@ -1,19 +1,26 @@
 /**
- * Where #15's tool list goes.
+ * Where #15's tool list goes — and, since #15 landed, where it is.
  *
- * #15 is building the visible tool surface for the signed-in persona, sourced
- * from the gateway's own `tools/list` — the widget act 1 turns on, where
- * `Loan_ApproveLoan` is *absent* for Sam rather than present and refused. That
- * is its slice and this file does not build a version of it: a second tool list,
- * filtered client-side, is exactly the "control that silently does nothing" this
- * project is organised against, because a list that merely hides a tool looks
- * identical to a list the access hook shortened.
+ * #15 built the visible tool surface for the signed-in persona, sourced from the
+ * gateway's own `tools/list`: the widget act 1 turns on, where
+ * `Loan_ApproveLoan` is *absent* for Sam rather than present-and-refused. This
+ * file does not build a version of it and never did. A second tool list,
+ * filtered in the browser, is exactly the "control that silently does nothing"
+ * this project is organised against — it would render the same pixels while
+ * proving the opposite thing.
  *
- * So this is a hole with a name on it. Pass `children` and they are framed by
- * the left half's chrome; pass none and the region draws itself as an outline
- * that says what is missing. Drawn rather than hidden, because an empty region a
- * reviewer can see is how the next slice finds where its widget goes, and how
- * anybody watching can tell "not built yet" from "the persona can see nothing".
+ * So this is a hole with a name on it, and `app/page.tsx` fills it with
+ * `PersonaToolList`. Pass `children` and they are framed by the left half's
+ * chrome; pass none and the region draws itself as an outline that says what is
+ * missing. Drawn rather than hidden, because an empty region a reviewer can see
+ * is how anybody watching can tell "nothing was supplied" from "the persona can
+ * see nothing".
+ *
+ * What arrives keeps its own card. `--line` and `--muted` reach it from `.bank`
+ * so it is drawn in the left half's colours, but its frame is set inline and
+ * flattening that would mean `!important` against another slice's component —
+ * a nested box is the smaller price. `bank.css` says so where the rule would
+ * have gone.
  */
 import type { ReactNode } from "react";
 
@@ -22,14 +29,17 @@ export const TOOL_LIST_SLOT = "tool-list";
 
 export function ToolListSlot({ children }: { children?: ReactNode }) {
   return (
-    <section className="bank-panel" data-slot={TOOL_LIST_SLOT} aria-label="Actions available">
-      <h2 className="bank-panel-title">Actions available to this user</h2>
+    <section className="bank-panel" data-slot={TOOL_LIST_SLOT} aria-label="User access">
+      <h2 className="bank-panel-title">User access</h2>
       <div className="bank-panel-body">
-        {children ?? (
+        {children === undefined || children === null ? (
           <p className="bank-slot">
-            The tool list is not on this deployment yet. It is sourced from the gateway for the
-            signed-in person and lands with #15; until then this region is empty rather than short.
+            No tool list was supplied to this shell. This region shows what the signed-in person is
+            permitted to use, answered upstream rather than assembled here; rendered without one it
+            stays empty rather than short.
           </p>
+        ) : (
+          children
         )}
       </div>
     </section>

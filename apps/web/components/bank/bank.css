@@ -379,6 +379,19 @@
 
 /* --- the slot #15 fills --------------------------------------------------- */
 
+/* #15's `PersonaToolList` arrives with its own card — a rounded box with a 2rem
+   top margin, sized for the scaffold page it was born on — and keeps it. Its
+   border and its muted text pick up `--line` and `--muted` from `.bank` above,
+   which is as far as this stylesheet reaches: the card's frame is set inline, so
+   flattening it would mean `!important` against another slice's component, and a
+   nested box is a smaller price than that.
+
+   Its type is sized in `rem` and so does not scale with `.bank`'s root: 14px
+   body against this column's 20px, measured at 1920x1080. That is the same size
+   as this half's own field labels, so it is left alone rather than fought with
+   from outside. */
+
+
 /* Drawn as an outline rather than hidden. An empty region a reviewer can see is
    how the next slice knows where its widget goes, and how anybody watching
    knows the tool list is missing rather than empty. */
