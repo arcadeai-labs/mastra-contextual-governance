@@ -384,6 +384,7 @@ describe("the grant an approval buys", () => {
       now: () => later,
       newId: () => "evt_0000000001",
       approvals: createApprovalControl(db, { toolkit: "Approvals", grantTtlSeconds: 900 }),
+      configuredToolkits: new Set(["Loan", "Approvals"]),
     };
 
     const { response, events } = handlePre(

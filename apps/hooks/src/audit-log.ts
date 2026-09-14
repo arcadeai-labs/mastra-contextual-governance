@@ -287,9 +287,12 @@ export interface AuditPage {
  * One filtered page of the log, newest first.
  *
  * `total` is counted with the same predicate and *without* the limit, because
- * the question this endpoint exists to answer is "was that burst 8259 denials
+ * the question this endpoint exists to answer is "was that burst 8,278 denials
  * or a runaway loop" (#62) — and a page that stops at the bound with no count
- * beside it cannot tell the two apart.
+ * beside it cannot tell the two apart. 8,278 is the measured size of one live
+ * `tools/list`'s `/access` frames, across the four calls Arcade makes for it
+ * (`docs/spikes/05-custom-verifier.md` §11.3); #107 is what stopped one
+ * listing being that many rows.
  */
 export function search(db: Database, filter: AuditFilter): AuditPage {
   const where: string[] = [];
@@ -343,10 +346,22 @@ export function search(db: Database, filter: AuditFilter): AuditPage {
  * The table is append-only and nothing prunes it — the triggers in
  * `policy-store.ts` refuse a DELETE, and a compliance log that can be quietly
  * shortened is not one. So the bound is the disk, expressed in rows: measured
- * at **487 bytes a row** on disk (`bun run --cwd apps/hooks bench`, the
- * "audit_log on disk" section), the 1 GB Render volume holds ~2.2 M. Two
- * million is that rounded down — ~930 MB — and the warning fires at 80% of it,
- * ~744 MB, which leaves a quarter of the disk to notice it in.
+ * at **238 bytes a row** on disk (`bun run --cwd apps/hooks bench`, the
+ * "audit_log on disk" section, priced on a representative mix of 50,000 real
+ * rows), the 1 GB Render volume holds ~4.5 M.
+ *
+ * **Two million is now conservative, and deliberately left alone.** It was set
+ * on #62 against 487 bytes a row, which was the average when `/access` wrote
+ * one row per catalogue entry and most of the table was the 276-character
+ * "toolkit … is not governed by this control plane" reason, written once per
+ * entry. #107 stopped writing those, and the average halved. The bound is
+ * therefore ~455 MB rather than ~930 MB, and the warning fires at ~364 MB.
+ *
+ * The rate matters more than the bound and moved much further: one live
+ * `tools/list` wrote **8,278** rows and now writes about ten, so the table
+ * grows some three orders of magnitude more slowly for the same use. Raising
+ * the bound would buy headroom nothing is asking for; a demo that reaches two
+ * million audit rows has a story worth hearing either way.
  *
  * See "What the log costs, and the bound on it" in README.md.
  */

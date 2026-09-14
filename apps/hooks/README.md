@@ -230,17 +230,19 @@ nothing about the policy in memory, so the cache keeps serving it and retries ne
 when the revision has been unreadable for 20 consecutive ticks (~5 s) does it fail closed, because
 at that point it can no longer promise an edit would be noticed.
 
-Measured (`bun run --cwd apps/hooks bench`, M-series laptop, in-memory database, one audit row
-per tool decided):
+Measured (`bun run --cwd apps/hooks bench`, M-series laptop, in-memory database):
 
 | call | payload | audit rows | p50 | p95 |
 |---|---:|---:|---:|---:|
-| `/access`, whole-project catalogue (271 toolkits, 10,844 tools) | 1.5 MB | 10,844 | 159 ms | 197 ms |
-| `/access`, scoped to `Loan` | <1 KB | 4 | 0.1 ms | 0.2 ms |
-| `/pre`, denial with rendered remediation | <1 KB | 1 | 0.1 ms | 0.1 ms |
+| `/access`, whole-project catalogue (271 toolkits, 10,804 tools) | 1.5 MB | 5 | 34 ms | 50 ms |
+| `/access`, scoped to `Loan` | <1 KB | 4 | 0.2 ms | 0.3 ms |
+| `/pre`, denial with rendered remediation | <1 KB | 1 | 0.1 ms | 0.2 ms |
 
-The whole-project call is dominated by the audit insert, ~10 µs a row. The engine itself and
-the JSON are single-digit milliseconds.
+The whole-project call used to write 10,844 rows and take 159 ms p50, dominated by the audit
+insert at ~10 µs a row. #107 made it five — one per governed tool plus one summary row **per
+call** — and what is left is the JSON and the engine. The fixture above is local; the live
+figure is 8,278 frames per `tools/list` across four calls. See
+[How many rows an `/access` call is worth](#how-many-rows-an-access-call-is-worth).
 
 ## Fails closed, and the failure is audited
 
@@ -340,9 +342,12 @@ comment saying which end was dropped.
 ### The cap, and what it costs
 
 Both the replay and a live backlog are capped at **25,000 events**, one number for both. It
-is sized above the largest single decision the control plane can make: a whole-project
-`/access` writes one row per tool, measured at 10,844 (`bun run --cwd apps/hooks bench`). A
-cap under that would let one legitimate call truncate a resume.
+was sized above the largest single decision the control plane could make: a whole-project
+`/access` used to write one row per tool — 10,844 in the bench's 1.6 MB fixture, and 8,278
+across the four calls of one live `tools/list` — and a cap under that would let one legitimate
+call truncate a resume. Since #107 the same call writes five, so the cap is no longer anywhere
+near a single decision — it is left where it is because the reason it was chosen still holds
+and nothing is pressing on it.
 
 - **A client that falls further behind than the cap is disconnected, not trimmed.** It
   reconnects with its own last id and the replay makes it whole — and because the backlog
@@ -428,9 +433,9 @@ did — never sees one.
 ## Reading the log over HTTP (#62)
 
 `GET /audit` answers "what did the control plane decide, and why" without a shell on the
-Render disk. Before it existed, establishing that an `/access` burst was 8,259 denials for an
-org admin rather than a runaway loop meant hand-writing a `bun:sqlite` query against
-`/data/governance.db`.
+Render disk. Before it existed, establishing that an `/access` burst was one listing's 8,278
+denials rather than a runaway loop meant hand-writing a `bun:sqlite` query against
+`/data/governance.db`. That is #107's question, asked two months early.
 
 ```sh
 curl -fsS -H "authorization: Bearer $ARCADE_HOOK_SIGNING_SECRET" \
@@ -471,7 +476,8 @@ away here:
   and looks like an answer to the one they did. So is `hook=preflight` or
   `decision=denied`: a misspelled value must not come back as an empty page.
 - **`total` is counted without the limit**, so a page that stops at the bound still says how
-  many rows matched. That is the difference between 8,259 denials and a runaway loop.
+  many rows matched. That is the difference between one listing's 8,278 denials and a runaway
+  loop.
 
 The bearer is the **hook** secret, not the approvals store's. Reasons on these rows say more
 than the model was told — which grants were examined and rejected, who an escalation was
@@ -568,12 +574,87 @@ the approval request it came from.
 
 ## What the audit log is, and is not
 
-`audit_log` is every decision *this service* made — one row per tool at `/access` (allowed or
-hidden, governed toolkit or not), one per call at `/pre` and `/post`, and one per tool on every
-fail-closed path where the request could be read. A whole-project `/access` is thousands of
-rows; that is the price of a table from which a reviewer can reconstruct every decision with
-its acting user, tool, effect, reason and `rule_id`, and the bench prices it. Append-only,
-enforced by triggers, not convention.
+`audit_log` is every decision *this service* made — one row per tool in a **governed** toolkit
+at `/access` (allowed or hidden), one summary row for everything else the same call decided,
+one per call at `/pre` and `/post`, and the same accounting on every fail-closed path where
+the request could be read. A reviewer can reconstruct every decision the policy actually made,
+with its acting user, tool, effect, reason and `rule_id`. Append-only, enforced by triggers,
+not convention.
+
+### How many rows an `/access` call is worth
+
+**`/access` is not asked about the tools the agent is about to use.** It is asked about the
+whole Arcade project catalogue, and the shape of that takes two measurements:
+
+| | measured | where |
+|---|---|---|
+| `/access` **calls** per `tools/list` | **four** — one scoped to `Loan`, one enumerating every toolkit in the project, ~1.6 MB | [spike #2](../../docs/spikes/02-remote-mcp-hooks.md) |
+| `/access` **frames** per `tools/list`, on the deployed gateway | **8,278** — six `allow` (this project's six tools) and 8,272 `deny` | [spike #5 §11.3](../../docs/spikes/05-custom-verifier.md) |
+
+**Those two numbers divide, and the division is the thing to hold on to: 8,278 frames across
+four calls is a figure *per list*, and this service works *per call*.** A summary row is
+written once per `/access` call, so one listing costs at most four of them.
+
+This service used to append one row per tool named in the request, which for the enumerating
+call is one row per catalogue entry. That is #107: **413,832 rows** on the Render disk with
+nothing looping — `413,832 / 8,278 ≈ **50 listings**`, which is about twenty-five loads of `/`
+and a few turns. Every row is also an SSE frame, so the panel said DENIED **8,272 times per
+listing** before the presenter had said anything.
+
+Three ways to count were on the table, and the argument is in `src/access-audit.ts`:
+
+| | rows per live `tools/list` | what a reviewer can reconstruct |
+|---|---:|---|
+| **A** one row per tool | ~8,278 | every decision, including 8,272 about tools no rule reaches |
+| **B** one row per `/access` call | 4 | that a listing happened — nothing per tool |
+| **C** one row per governed tool + one summary **per call** | **~10** | every decision the policy made, and a counted statement that the rest was considered |
+
+**C is what runs**, and it is what the human chose on #107 after the numbers went on the issue.
+A tool whose toolkit the loaded catalogue lists gets its own row, exactly as before — act 1 is
+still `Loan.ApproveLoan`, `deny`, `access.analysts-cannot-see-approve`, with the three allows
+beside it, because a rule that matches nothing has to keep looking different from a rule that
+permits. Everything else collapses into one row per call:
+
+```
+tool      *
+decision  deny
+reason    SUMMARY: 10800 tools in 270 toolkits outside this control plane's catalogue were
+          decided in this call and are recorded as this one row — 10800 hidden, 0 allowed.
+          Toolkits: Toolkit0, Toolkit1, Toolkit10, Toolkit100, Toolkit101, and 265 more.
+          Tools in the governed toolkits (Approvals, Loan) are recorded one row each, above.
+```
+
+The collapse is **stated on the record**, with the counts, rather than done quietly. `tool: "*"`
+is the spelling the fail-closed path already used for a row that names no single tool, so
+nothing about the schema or the wire changed — and neither did the `deny` map Arcade gets back,
+which is built from the same decisions it always was.
+
+**A fail-closed listing still reads as fail-closed on every row it wrote, summary included.**
+When the policy is cold or will not compile, every tool in the call was refused because the
+control plane could not decide, and the summary carries that reason in the same words the
+per-tool rows use, with the group in the slot a tool name goes in:
+
+```
+FAIL-CLOSED: the control plane could not load its policy (Policy failed to compile: rule x),
+so 300 tools in 3 toolkits outside the catalogue are hidden. SUMMARY: 300 tools in 3 toolkits
+outside this control plane's catalogue were decided in this call and are recorded as this one
+row — 300 hidden, 0 allowed. …
+```
+
+Without it, `hook=access decision=deny` on the biggest row in the call cannot be told from a
+policy that hid things on purpose — which is the difference between a control plane that is
+working and one that is down. Round 1 of this PR's review is the record of it being missing.
+
+**What counts as governed is the catalogue**, the same table a presenter edits live on stage,
+never a toolkit name written down in code. A toolkit added to it is recorded per tool on the
+cache's next poll with nothing to redeploy. The configured `ARCADE_*_TOOLKIT` names are the
+fallback only while no policy has loaded — the one state in which there is no catalogue, and
+the one in which the enumerating call would otherwise write thousands of fail-closed rows.
+
+Measured against the running service: **1,204 tools in, 5 rows out**, with Sam's hidden tool
+and its rule id intact; and `bun run --cwd apps/hooks bench`, **10,804 tools in, 5 rows out**.
+The live per-listing figure needs a deploy to confirm. `test/access-audit.test.ts` is the only
+place this answer is asserted, so changing it is one file.
 
 A row's `reason` may say more than the model was told, and on the approval path it does: which
 grants were examined and rejected and why, who an escalation was routed to and who was
@@ -592,20 +673,29 @@ Nothing prunes `audit_log`. The DELETE trigger refuses one, and a compliance log
 quietly shortened is not one — so the bound is the disk, and it is stated rather than
 enforced at write time.
 
-Measured (`bun run --cwd apps/hooks bench`, the "audit_log on disk" section: 217,280 real
-rows written by the real handlers, vacuumed into a file and compared with an empty
-`governance.db`):
+Measured (`bun run --cwd apps/hooks bench`, the "audit_log on disk" section: 50,000 real rows
+written by the real handlers over the real socket, in the mix this service actually writes —
+allows, a rule-authored denial, a summary row and act 2's rendered remediation — vacuumed
+into a file and compared with an empty `governance.db`):
 
 | | |
 |---|---:|
-| bytes per row, on disk | **487** |
-| rows in the 1 GB Render volume | ~2,206,000 |
-| whole-project `/access` calls (10,844 rows each) | ~203 |
-| org-admin `tools/list` bursts (8,259 rows each) | ~267 |
+| bytes per row, on disk | **238** |
+| rows in the 1 GB Render volume | ~4,518,000 |
+| whole-project `/access` calls (5 rows each) | ~900,000 |
 
-**The stated bound is 2,000,000 rows** (`AUDIT_RETENTION_ROWS`, ~930 MB). At 80% of it —
-1.6 M rows, ~744 MB — the boot log says so, naming the count and the reset, which leaves a
-quarter of the disk to notice it in:
+The per-row figure halved on #107, and not because rows got smaller by accident: most of the
+old table was the 276-character *"toolkit … is not governed by this control plane
+(governed: …)"* reason, written once per catalogue entry. Those are one summary row now.
+
+**The rate moved much further than the size.** One live `tools/list` wrote 8,278 rows and now
+writes about ten, so for the same use the table grows some three orders of magnitude more
+slowly. Halving the bytes is the smaller half of this.
+
+**The stated bound is 2,000,000 rows** (`AUDIT_RETENTION_ROWS`), which was ~930 MB when it was
+set on #62 and is ~455 MB now. It is deliberately left alone: a demo that reaches two million
+audit rows has a story worth hearing regardless of how much disk is left. At 80% of it the
+boot log says so, naming the count and the reset:
 
 ```
 [hooks] RETENTION: audit_log holds 1,600,000 rows, 80% of the 2,000,000-row bound this disk
@@ -618,11 +708,13 @@ Three things follow, and the third is the one that bites:
   everything else. There is no truncation endpoint and no rolling window; either would let
   the log lose decisions without anybody deciding that it should.
 - `/health` reports `audit_rows`, so headroom is one unauthenticated `curl` away.
-- **Never drive the demo from an Arcade org admin.** One `tools/list` from an admin account
-  sent the entire org catalogue to `/access` — 8,259 tools, one audit row each, in a single
-  request (measured on #13). Two hundred of those fill the disk; a hundred of them make
-  `/audit` and the panel unreadable long before that. The demo personas see one gateway and
-  write four rows a call.
+- **Driving the demo from an Arcade org admin is no longer a disk problem, and still is not
+  a good idea.** One `tools/list` from an admin account sent the entire org catalogue to
+  `/access` — 8,259 tools in a single request, measured on #13, and the same order as the
+  8,278 frames one *persona's* listing produces across its four calls (spike #5 §11.3). That
+  used to be a row per tool; it is one summary row per call now, so the disk and the panel
+  survive it. What it still costs is a 1.6 MB payload against a 5 s budget on every listing,
+  for a catalogue with one governed toolkit in it.
 
 It is **not** a complete record of every refusal a persona met. Arcade evaluates a tool's auth
 requirements *before* `/pre`: a persona without a token for a tool is refused upstream of every

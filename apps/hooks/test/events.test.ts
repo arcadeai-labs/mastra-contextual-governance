@@ -542,9 +542,12 @@ describe("a burst", () => {
   });
 
   test("a batch larger than a whole-project /access does not trip the default cap", async () => {
-    // The cap has to sit above the largest single decision the control plane
-    // can make — 10,844 rows, measured by `bun run --cwd apps/hooks bench` —
-    // or one legitimate call would truncate a resume.
+    // The cap had to sit above the largest single decision the control plane
+    // could make — 10,844 rows in the bench's 1.6 MB fixture, and 8,278 across
+    // one live `tools/list`'s four `/access` calls (#5 §11.3) — or one
+    // legitimate call would truncate a resume. Since #107 the largest such
+    // decision is a few rows; the cap is left where it is because the reason
+    // it was chosen still holds and nothing is pressing on it.
     expect(STREAM_BACKLOG_LIMIT).toBeGreaterThan(10_844);
   });
 });

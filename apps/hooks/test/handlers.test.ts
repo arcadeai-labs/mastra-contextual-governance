@@ -33,6 +33,7 @@ const contextFor = (db: Database): HandlerContext => ({
   now: () => "2026-01-01T00:00:00.000Z",
   newId: () => `evt_${String(++n).padStart(10, "0")}`,
   approvals: createApprovalControl(db, { toolkit: "Approvals", grantTtlSeconds: 900 }),
+  configuredToolkits: new Set(["Loan", "Approvals"]),
 });
 
 const ready = (): CacheState => createPolicyCache(governance()).reload();
@@ -130,7 +131,7 @@ describe("/access — act 1", () => {
     expect(events[0]?.reason).toMatch(/no registered subject/);
   });
 
-  test("hides an ungoverned toolkit and audits every one of its tools, so each decision is reconstructible", () => {
+  test("hides an ungoverned toolkit, and records it as one summary row rather than one per tool", () => {
     const { response, events } = handleAccess(
       {
         user_id: DANA,
@@ -142,17 +143,24 @@ describe("/access — act 1", () => {
       ready(),
       ctx,
     );
+    // The answer Arcade gets is unchanged by #107: both Github tools hidden.
     expect(response.deny).toEqual({
       Github: { tools: { CreateIssue: [{ version: "2.0.0" }], ListRepos: [{ version: "2.0.0" }] } },
     });
-    const github = events.filter((e) => e.tool.startsWith("Github."));
-    expect(github.map((e) => e.tool).sort()).toEqual(["Github.CreateIssue", "Github.ListRepos"]);
-    for (const e of github) {
-      expect(e).toMatchObject({ decision: "deny", rule_id: null, user_id: DANA });
-      expect(e.reason).toMatch(/not governed/);
-    }
-    // And one row for every Loan tool too: six decisions, six rows.
-    expect(events).toHaveLength(6);
+    // Four Loan rows, one row for everything outside the catalogue.
+    expect(events.map((e) => e.tool)).toEqual([
+      "Loan.SearchLoans",
+      "Loan.GetLoan",
+      "Loan.ApproveLoan",
+      "Loan.DenyLoan",
+      "*",
+    ]);
+    const summary = events.at(-1)!;
+    expect(summary).toMatchObject({ decision: "deny", rule_id: null, user_id: DANA });
+    // The collapse is stated, with the counts that make it auditable.
+    expect(summary.reason).toMatch(/^SUMMARY: 2 tools in 1 toolkit outside/);
+    expect(summary.reason).toMatch(/2 hidden, 0 allowed/);
+    expect(summary.reason).toMatch(/Toolkits: Github\./);
   });
 
   test("fails closed when the policy is unavailable: denies everything named, one row per tool, says why", () => {

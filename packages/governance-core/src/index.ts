@@ -35,6 +35,7 @@ export {
   attestGrantValidated,
   compilePolicy,
   evaluatePermission,
+  governedToolkits,
   hiddenTools,
   NO_REMEDIATION,
   PolicyCompileError,

@@ -18,6 +18,7 @@
 import {
   consumeGrant,
   evaluatePermission,
+  governedToolkits,
   redact,
   resolveVisibility,
   routeApproval,
@@ -53,6 +54,7 @@ import {
   type ApprovalControl,
 } from "./approval-governance.ts";
 import type { StoredApproval } from "./approvals-store.ts";
+import { accessAuditRows, type DecidedTool } from "./access-audit.ts";
 import { withCorrelation } from "./correlation.ts";
 import { findSubject, type CacheState } from "./policy-cache.ts";
 
@@ -67,6 +69,14 @@ export interface HandlerContext {
    * is organised against.
    */
   approvals: ApprovalControl;
+  /**
+   * The toolkits `/access` records one audit row per tool for (#107).
+   *
+   * The fallback for a policy that has not loaded — see `access-audit.ts`. It
+   * is only consulted in that state; with a catalogue in hand the catalogue
+   * wins, so a toolkit added on stage takes effect on the next poll.
+   */
+  configuredToolkits: ReadonlySet<string>;
 }
 
 /** What a handler produces: the wire response and the rows to append. */
@@ -112,7 +122,13 @@ export function handleAccess(
 ): Outcome<AccessHookResult> {
   const ts = ctx.now();
   const deny: Toolkits = {};
-  const events: GovernanceEvent[] = [];
+  /**
+   * Every decision this call made, in the order it made them. The rows are
+   * built from it afterwards rather than inside the loop, because how many
+   * rows a decision is worth is a question about the whole call — see
+   * `access-audit.ts` and #107.
+   */
+  const decided: DecidedTool[] = [];
 
   const base = { ts, execution_id: "", hook: "access" as const, user_id: request.user_id };
   const subject = findSubject(state, request.user_id);
@@ -138,19 +154,43 @@ export function handleAccess(
     const hidden: NonNullable<ToolkitInfo["tools"]> = {};
     for (const { tool, decision } of decisions) {
       if (decision.effect === "deny") hidden[tool.name] = versionsByTool[tool.name] ?? [];
-      events.push({
-        ...base,
-        id: ctx.newId(),
-        tool: qualify(tool.toolkit, tool.name),
-        decision: decision.effect,
-        reason: decision.reason,
-        rule_id: decision.rule_id,
-      });
+      decided.push({ tool, decision });
     }
     if (Object.keys(hidden).length > 0) deny[toolkit] = { tools: hidden };
   }
 
-  return { response: { deny }, events };
+  // The response is built from the same decisions and is unchanged by #107:
+  // Arcade is told exactly what it was told before, whatever the rows do.
+  return {
+    response: { deny },
+    events: accessAuditRows(decided, {
+      governed: governedFor(state, ctx),
+      base,
+      newId: ctx.newId,
+      // With no policy loaded, every tool in the call — governed or not — was
+      // refused because the control plane could not decide, so the summary row
+      // says so in the same words the per-tool rows use. Otherwise the
+      // summarised tools really were refused for being outside the catalogue,
+      // and the module's own sentence is the accurate one.
+      ...(state.status === "ready"
+        ? {}
+        : { summaryReason: (what: string) => failClosedReason(state, what) }),
+    }),
+  };
+}
+
+/**
+ * Which toolkits get a row per tool.
+ *
+ * The loaded catalogue, which is a database table a presenter may edit live,
+ * and only when there is none — cold, or a policy that will not compile — the
+ * configured names. Two sources, in that order, because the fallback exists
+ * for the state in which the first does not exist at all; they agree by
+ * construction, since the catalogue is seeded from those same values.
+ */
+export function governedFor(state: CacheState, ctx: HandlerContext): ReadonlySet<string> {
+  if (state.status !== "ready") return ctx.configuredToolkits;
+  return governedToolkits(state.policy);
 }
 
 // ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@ import {
   type PreHookResult,
 } from "@cg/policy-schema";
 
+import { accessAuditRows, type DecidedTool } from "./access-audit.ts";
 import { createApprovalControl } from "./approval-governance.ts";
 import type { ApprovalNoticeBus } from "./approval-notices.ts";
 import { APPROVALS_PREFIX, handleApprovals } from "./approvals-api.ts";
@@ -47,7 +48,14 @@ import { count as auditCount, newEventId, record } from "./audit-log.ts";
 import type { HooksConfig } from "./config.ts";
 import { withCorrelation } from "./correlation.ts";
 import { EVENTS_PATH, handleEvents, preflight } from "./events.ts";
-import { handleAccess, handlePost, handlePre, type HandlerContext, type Outcome } from "./handlers.ts";
+import {
+  governedFor,
+  handleAccess,
+  handlePost,
+  handlePre,
+  type HandlerContext,
+  type Outcome,
+} from "./handlers.ts";
 import type { PolicyCache } from "./policy-cache.ts";
 import { counts } from "./policy-store.ts";
 
@@ -108,6 +116,9 @@ export function createServer(deps: ServerDeps) {
       toolkit: config.approvalsToolkit,
       grantTtlSeconds: config.grantTtlSeconds,
     }),
+    // Only reached while the policy is cold or will not compile — the loaded
+    // catalogue wins whenever there is one. See `access-audit.ts`.
+    configuredToolkits: new Set([config.loanToolkit, config.approvalsToolkit]),
   };
 
   /**
@@ -186,19 +197,35 @@ export function createServer(deps: ServerDeps) {
     };
 
     if (hook === "access") {
-      // Deny everything the request named, one row per tool, as the normal
-      // path would have written. If even that cannot be read, one row for the
-      // request and a 5xx: the one signal left, and Arcade's fail_closed mode
-      // makes it a denial.
+      // Deny everything the request named, audited the way the normal path
+      // audits it — one row per tool in a governed toolkit, one summary row
+      // for the rest (#107). A control plane that is failing closed is the
+      // last place that should be writing thousands of rows per call. If even that
+      // cannot be read, one row for the request and a 5xx: the one signal
+      // left, and Arcade's fail_closed mode makes it a denial.
       const parsed = AccessHookRequest.safeParse(body);
       if (parsed.success) {
-        const events: GovernanceEvent[] = [];
+        const decided: DecidedTool[] = [];
         for (const [toolkit, info] of Object.entries(parsed.data.toolkits)) {
           for (const name of Object.keys(info.tools ?? {})) {
-            events.push(row(events.length === 0 ? id : newEventId(), `${toolkit}.${name}`));
+            decided.push({
+              tool: { toolkit, name },
+              decision: { effect: "deny", reason: reasonFor(`${toolkit}.${name}`), rule_id: null },
+            });
           }
         }
-        audit(events);
+        audit(
+          accessAuditRows(decided, {
+            governed: governedFor(cache.current(), ctx),
+            base: { ts, execution_id: str(body.execution_id), hook, user_id: userId },
+            newId: newEventId,
+            // Everything in this call was refused for one reason, so the
+            // summary carries it too: a fail-closed listing must read as
+            // fail-closed on every row it wrote, or the log cannot tell one
+            // from a normal one.
+            summaryReason: reasonFor,
+          }),
+        );
         const response: AccessHookResult = { deny: parsed.data.toolkits };
         return json(response);
       }
