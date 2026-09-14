@@ -467,7 +467,7 @@ is read off the Render service page.** See the warning in step 1.
 | `IDP_CLIENT_ID` / `IDP_CLIENT_SECRET` **SECRET** | `apps/web` | Client C, printed once by `bun run oauth-client --client web --rotate` (step 2) |
 | `IDP_SCOPES` | `apps/web` | Default `openid email`. `email` is the join key — set it only to ask for *more* |
 | `SESSION_SECRET` **SECRET** | `apps/web` | `openssl rand -hex 32`. **At least 32 characters and 8 distinct ones**, enforced: below that, `/health` reports every identity capability `missing` and each route answers 503. No fallback — a default key is a key everybody has |
-| `PERSONA_DANA_EMAIL` and `_SAM_`, `_RILEY_`, `_MORGAN_` | `apps/web`, `apps/hooks`, `apps/idp` | The four real addresses from step 0, set in the Render dashboard. **Never written into this repo.** Read once, at first seed |
+| `PERSONA_DANA_EMAIL`, `PERSONA_SAM_EMAIL`, `PERSONA_RILEY_EMAIL`, `PERSONA_MORGAN_EMAIL` | `apps/web`, `apps/hooks`, `apps/idp` | The four real addresses from step 0, set in the Render dashboard. **Never written into this repo.** Read once, at first seed |
 
 ### Databases and reset
 
