@@ -55,7 +55,7 @@ as the wire spells it (#89). No prompt steering is an acceptable fix for either.
 | **Tool layer** | **Both toolkits are Python `arcade-mcp`, shipped with `arcade deploy` into one Arcade project and exposed through one gateway. `arcade-mcp` is the tool-authoring framework; it is Python-only, which is why the TS-everywhere rule does not reach the toolkits. Decided on #32, confirmed in session.** |
 | **Business system** | **`apps/loan-app` is a plain HTTP API — the bank's system of record. It is not an MCP server and knows nothing about Arcade. `tools/loan` is a stateless client of it. Decided on #32; splitting them is what makes "governance is outside the business system" literal rather than asserted.** |
 | **Identity** | **Every persona is a real person in `apps/idp` with a real email, and `apps/web` is a real sign-in against it (its own OAuth client, "client C"). The persona switcher is "Sign in as …": switching persona forces a fresh IdP login and never reuses the previous session. On stage each persona runs in its own Chrome profile, so switching is rare. `context.user_id` on every hook payload is that email, lowercase. Personas are *not* Arcade project members. Amended 2026-09-11 (#65, #75, #79).** |
-| **Two hops, two mechanisms** | **Hop 1, MCP client → gateway, is governed by the gateway's user mode: the User Source gateway `cg-demo-us` backed by `apps/idp`. Members mode is the fallback only. Arcade Headers is ruled out and is never proposed again. Hop 2, the tool-level OAuth against the `cg-idp` provider, is governed by a custom user verifier route in `apps/web`. Neither mechanism moves the other; measured on #75. Decided 2026-09-11.** |
+| **Two hops, two mechanisms** | **Hop 1, MCP client → gateway, is governed by the gateway's user mode: the User Source gateway `cg-demo-us` backed by `apps/idp`. Members mode is the fallback only. Arcade Headers is ruled out and is never proposed again. Hop 2, the tool-level OAuth against the `cg-idp` provider, is governed by a custom user verifier route in `apps/web`. Neither mechanism moves the other; measured on #75. Decided 2026-09-11. Hop 2's IdP tolerates Arcade's duplicate code exchange (open risk 9, #100).** |
 | **Gateway token storage** | **`apps/web` drives the gateway OAuth itself (Mastra's `MCPClient.authenticate()` refuses non-loopback redirects) and hands `MCPClient` a static token. The gateway access + refresh token and the persona email live in a sealed, HTTP-only, per-browser cookie (AES-GCM under `SESSION_SECRET`, chunked when over 4KB). One persona per browser. No fourth database. Refresh is server-side. Decided 2026-09-11.** |
 | **Arcade config is read-only** | **The `cg-idp` auth provider's advanced configuration is never edited; its `client_id`/`client_secret` request parameters stay. `apps/idp` adapts instead (#79: Basic header plus identical body credentials accepted). Read provider config back through `GET /v1/admin/auth_providers/<id>`, not off dashboard labels.** |
 | **Authorization** | **The loan tools require OAuth against our own provider, so they call `apps/loan-app` on behalf of the user rather than as a service account. The API derives the actor from the token, never from a parameter. OAuth carries *identity*; hooks carry *authority*. Provider is Better Auth in its own service, `apps/idp` (#36).** |
@@ -308,6 +308,20 @@ What each layer answers, as measured:
    sees `Approvals_RequestApproval`, and only if the approvals toolkit is in its surface.
    Claude refused the instruction in 2 of 5 runs on principle, which is the instinct this
    project wants. Decide the spelling on #19/#20 before act 2's second half is built.
+
+9. ~~**Hop 2's grant dies on a fresh authorization (#100).**~~ **Resolved in two rounds.** Measured 2026-09-14: the
+   authorization code was exchanged at `apps/idp` more than once per flow, and Better Auth's token endpoint revokes the
+   tokens the first exchange minted when a consumed code is replayed, so the grant Arcade stored was already dead.
+   PR #115 removed the browser's replay (the verifier fetches `next_uri` once, server-side, and the browser goes to the
+   app's own page, #118). A second exchange still arrived 290 ms after that single fetch
+   (`21:05:28.094Z [verifier] next_uri answered 200, location (none)` against
+   `21:05:28.383Z [idp] … code=already_consumed`), from Arcade's side. Per the standing decision the provider
+   configuration is never edited; **the IdP adapts (PR #127):** every `/oauth2/token` request is logged with UTC
+   millisecond arrival, grant, code prefix, outcome, User-Agent and first forwarded hop, and a replayed code still
+   answers `invalid_grant` but **no longer revokes the first exchange's tokens**. That is a deliberate deviation from
+   RFC 6749 §4.1.2, whose SHOULD assumes a replay is evidence of a leaked code; here it is a measured property of one
+   relying party using the same client credentials. The guard matches only the plugin's token delete keyed on a lone
+   `authorizationCodeId`; sign-out, `/oauth2/revoke` and the reset still delete, asserted by test.
 
 ## Sequence (~2.5 weeks)
 
