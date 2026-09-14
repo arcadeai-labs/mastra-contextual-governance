@@ -133,7 +133,16 @@ export interface Hooks {
   process: Subprocess<"ignore", "pipe", "pipe">;
 }
 
-export async function startHooks(): Promise<Hooks> {
+/**
+ * `env` is merged over the defaults, so a caller can hand the control plane a
+ * `RESET_TOKEN` or a database on disk without this function growing a
+ * parameter per variable. Everything a test overrides that way is a thing
+ * `render.yaml` also sets, which keeps the subprocess a deployment rather than
+ * a fixture.
+ */
+export async function startHooks(
+  env: Record<string, string> = {},
+): Promise<Hooks> {
   const child = spawn({
     cmd: ["bun", join(REPO_ROOT, "apps", "hooks", "src", "index.ts")],
     cwd: REPO_ROOT,
@@ -148,6 +157,7 @@ export async function startHooks(): Promise<Hooks> {
       ARCADE_LOAN_TOOLKIT: "Loan",
       ARCADE_APPROVALS_TOOLKIT: "Approvals",
       NODE_ENV: "test",
+      ...env,
     },
     stdout: "pipe",
     stderr: "pipe",

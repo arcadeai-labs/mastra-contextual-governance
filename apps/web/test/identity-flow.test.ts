@@ -574,6 +574,7 @@ describe("/health", () => {
         verifier: "configured",
         agent: "configured",
         panel_stream: "fixture",
+        reset: "disabled",
       });
     } finally {
       for (const key of ["IDP_ISSUER", "IDP_CLIENT_ID", "IDP_CLIENT_SECRET", "SESSION_SECRET", "PUBLIC_URL", "ARCADE_GATEWAY_ID", "ARCADE_API_KEY", "ANTHROPIC_API_KEY", "GOVERNANCE_STREAM"]) {
@@ -702,6 +703,7 @@ describe("a SESSION_SECRET that is set but too weak", () => {
         // four missing capabilities are. Both halves of the status expression
         // are exercised, one at a time.
         panel_stream: "fixture",
+        reset: "disabled",
       });
     } finally {
       restoreEnv(previous, [...Object.keys(FILLED), "NODE_ENV", "SESSION_SECRET", "GOVERNANCE_STREAM"]);

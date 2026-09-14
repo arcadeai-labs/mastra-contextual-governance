@@ -243,6 +243,120 @@ body {
   color: var(--chartreuse);
 }
 
+/* --- the control plane's own health (#106) --------------------------------- */
+
+/* Above the lanes, not instead of them. The distinction from `.cg-stream-error`
+   is deliberate: that one REPLACES the panel, because a panel watching nothing
+   must not show rows at all. This one sits over a panel that is working — the
+   lanes underneath are real decisions — and says something about the service
+   producing them, so it is a strip rather than a takeover.
+
+   Amber, never red. `--deny` means "a decision refused this" everywhere else on
+   this surface, and a caveat about the instrument must not be confusable with a
+   refusal by it. Unreachable is the exception and gets red: at that point the
+   lanes are not a live record of anything, which IS the `.cg-stream-error`
+   case arriving late. */
+.cg-control-plane {
+  margin: 0 0 1.4em;
+  padding: 0.9em 1.1em 1em;
+  border-left: 6px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cg-control-plane[data-state="degraded"] {
+  border-left-color: var(--modify);
+  background: var(--modify-tint);
+}
+
+.cg-control-plane[data-state="unreachable"] {
+  border-left-color: var(--deny);
+  background: var(--deny-tint);
+}
+
+.cg-control-plane-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.72em;
+  letter-spacing: 0.06em;
+  color: var(--neutral);
+  margin-bottom: 0.5em;
+}
+
+.cg-control-plane[data-state="degraded"] .cg-control-plane-badge {
+  color: var(--modify);
+}
+
+.cg-control-plane[data-state="unreachable"] .cg-control-plane-badge {
+  color: var(--deny);
+}
+
+.cg-control-plane-line {
+  margin: 0 0 0.5em;
+  font-size: 0.85em;
+  line-height: 1.5;
+  color: var(--white);
+}
+
+.cg-control-plane-detail,
+.cg-control-plane-outcome {
+  color: var(--neutral);
+}
+
+.cg-control-plane code {
+  font-family: var(--font-mono);
+  color: var(--chartreuse);
+}
+
+.cg-control-plane-ids {
+  margin: 0 0 0.6em;
+  padding-left: 1.2em;
+  font-size: 0.82em;
+  line-height: 1.6;
+}
+
+.cg-control-plane-actions {
+  display: flex;
+  gap: 0.6em;
+  flex-wrap: wrap;
+  margin-top: 0.6em;
+}
+
+.cg-control-plane-button {
+  font-family: var(--font-ui);
+  font-size: 0.8em;
+  letter-spacing: 0.03em;
+  padding: 0.45em 1em;
+  color: var(--white);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  cursor: pointer;
+}
+
+.cg-control-plane-button:hover:not(:disabled) {
+  border-color: var(--chartreuse);
+}
+
+.cg-control-plane-button[data-emphasis="primary"] {
+  color: var(--ink);
+  background: var(--chartreuse);
+  border-color: var(--chartreuse);
+}
+
+.cg-control-plane-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The confirm step. Inline rather than a modal on purpose: a dialog over a
+   projector hides the lanes it is about, and this control is pressed by the
+   person standing in front of them. */
+.cg-control-plane-confirm {
+  margin-top: 0.8em;
+  padding: 0.8em 0.9em;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
 /* --- the global tally ----------------------------------------------------- */
 
 .cg-tally {

@@ -444,6 +444,50 @@ back, and makes the whole path testable against a real server instead of a stub.
 `apps/hooks/src/events.ts` is the only file that writes it — #54 implemented that shape
 rather than negotiating a new one, so the two halves have never had to be reconciled.
 
+### The strip above the lanes, and the Reset control (#106)
+
+The lanes carry decisions. They say nothing about the service making them, which left
+three failures invisible on the surface whose whole job is making governance visible —
+and on 2026-09-14 all three were true at once while the panel looked entirely normal:
+
+- the policy no longer compiled, so the lanes were filling with denials meaning *"we
+  are broken"* rather than *"you may not"*;
+- the rules on `cg-hooks`' disk were not the rules the image shipped, so act 4's
+  injection strip had been running one pattern instead of six for a fortnight;
+- `cg-hooks` was unreachable behind a Render 502, and a quiet minute and a dead control
+  plane look identical in three empty lanes.
+
+So `<ControlPlaneStatus>` sits above them and reads `cg-hooks`' `/health` — through
+`GET /api/governance/control-plane` on **this** service, never from the browser. It
+renders in every state including the healthy one, because a strip that only appears
+when something is wrong is a strip whose absence has to be trusted. Amber for degraded,
+never `--deny` red: on this panel red means a decision refused something, and a caveat
+about the instrument must not be confusable with a refusal by it. Unreachable is the
+exception and does get red, because at that point the lanes are not a live record of
+anything.
+
+It is absent on a fixture replay, deliberately. A replay has no control plane behind
+it, and a health strip claiming one would be #81's failure wearing new clothes.
+
+**Reset.** `POST /api/governance/control-plane` runs `cg-hooks`' `/admin/reset`. The
+route exists to hold `RESET_TOKEN`: a presenter-only secret in the client bundle is not
+presenter-only, so the browser posts with no credential and this process presents the
+bearer. Unset, the control is not drawn at all and `GET /health` here reports
+`"reset": "disabled"`. Set here but not on `cg-hooks` and the strip says which service
+to fix, rather than letting the press 404.
+
+Every press confirms first, and the confirmation names **what survives** as well as
+what goes — the audit log in one mode and not the other, and `loans.db` in neither,
+because it belongs to `apps/loan-app` and is reset by that service (#23). A presenter
+who resets the demo and then finds LN-2291 still approved should read it here, not
+discover it in front of an audience.
+
+What this route does **not** do is authenticate its caller: anyone who can load
+`/panel` on a deployment with `RESET_TOKEN` set can press it. Narrowing that further
+needs a real admin identity, and no persona in this demo is an administrator
+(DESIGN.md) — inventing one for a button would be inventing an identity the four acts
+then have to explain. A deployment nobody is presenting from leaves the variable unset.
+
 ## The split screen — `/`
 
 `components/shell/SplitScreen.tsx`. Two halves, a chartreuse rule between them, and

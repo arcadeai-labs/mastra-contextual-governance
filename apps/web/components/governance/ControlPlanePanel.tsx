@@ -16,6 +16,7 @@ import type { WatchableStream } from "../../lib/governance/stream-url.ts";
 import { subscribeToGovernanceEvents, type StreamStatus } from "../../lib/governance/subscribe.ts";
 import { appendEvents, emptyTimeline } from "../../lib/governance/timeline.ts";
 import { ControlPlanePanelView } from "./ControlPlanePanelView.tsx";
+import { ControlPlaneStatus } from "./ControlPlaneStatus.tsx";
 
 export interface ControlPlanePanelProps {
   /**
@@ -60,6 +61,10 @@ export function ControlPlanePanel({ stream, correlationKey }: ControlPlanePanelP
       status={status}
       source={stream}
       correlationKey={correlationKey}
+      // Only over the live stream. A fixture replay has no control plane
+      // behind it, and a health strip claiming one would be the #81 failure
+      // wearing this slice's clothes.
+      controlPlane={stream.mode === "hooks" ? <ControlPlaneStatus /> : undefined}
     />
   );
 }
