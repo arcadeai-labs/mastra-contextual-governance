@@ -184,10 +184,52 @@ so a table added after the disk existed appears on the next boot without the liv
 reseeded. A database stamped *newer* than this build refuses to open, naming the file and the
 reset, rather than booting green and answering `no such table` from the first call that needs it.
 
-⚠️ **New tables only.** An added column, a widened `CHECK`, a renamed index: none of those are
-expressible as `CREATE ... IF NOT EXISTS`, and none of them happen at boot. Ship one of those and
-you still have to delete the file (or run `scripts/reset`, #23). Bump `SCHEMA_VERSION` in the same
-commit as any change to `SCHEMA`.
+⚠️ **A replay of `SCHEMA` buys new tables, indexes and triggers, and nothing else.** An added
+column, a dropped column, a widened `CHECK`, a renamed index: none of those are expressible as
+`CREATE ... IF NOT EXISTS`, so each one needs an entry in `MIGRATIONS`, keyed by the version it
+brings the database *to*. Bump `SCHEMA_VERSION` in the same commit as any change to `SCHEMA`.
+Ship a change without its migration and the disk opens green and fails on the first query that
+names it.
+
+A migration runs inside the same transaction as the `SCHEMA` replay and the version stamp, so a
+throw rolls the whole upgrade back to the version already on disk and the next boot retries.
+`VACUUM` is the one statement SQLite will not run inside a transaction, so a step that needs it
+is marked `outsideTransaction` and stamps its own version afterwards — which is what keeps *it*
+retried too. That is why #103 spends two versions on one change:
+
+| version | issue | change |
+|---:|---|---|
+| 1 | #60 | the schema as it stood when `user_version` was first recorded |
+| 2 | #16 | `audit_log.redactions` added |
+| 3 | #103 | `audit_log.before` and `audit_log.after` dropped |
+| 4 | #103 | `VACUUM`, so the payloads those columns held leave the file |
+
+**The `VACUUM` is not housekeeping.** `DROP COLUMN` rewrites every row and SQLite zeroes the gap
+it defragments *inside* a page, but the overflow pages a long payload spilled onto go to the
+freelist with their bytes intact. Measured at 1,000 rows, same account number, same 4KB of
+notes, only the order changed: with the number ahead of the notes, 0 of 1,000 were recoverable
+from the file after the drop; behind them, 998 were. Raw tool output is exactly the long kind.
+
+**It costs a boot, and the cost tracks the file size, not the row count.** Measured through
+`openGovernance` itself on synthetic 750,000-row databases at the pre-#103 schema, every row
+carrying a payload, on an M-series laptop:
+
+| pre-migration file | DDL | `VACUUM` | whole `openGovernance` | after |
+|---:|---:|---:|---:|---:|
+| 473 MB | 9.0s | 0.7s | **9.7s** | 158 MB |
+| 1,573 MB | 42.8s | 5.6s | **48.5s** | 158 MB |
+
+The port does not open until this finishes, so check `ls -l /data/governance.db` before the
+deploy and expect roughly that much silence. A second boot is **1–2ms** and reports nothing.
+`VACUUM` also needs room for a second copy of the database while it runs.
+
+The boot that migrates says so, once, and `/health` carries the same numbers under `migration`
+for the life of the process — `null` on every boot that found the disk already current. The
+line below is the 473 MB synthetic run above, not the live disk:
+
+```
+[hooks] MIGRATED ONCE: schema 2 → 4; 750,000 audit rows; DDL 8978ms; VACUUM 714ms, 472.8MB → 157.5MB
+```
 
 Two things in the fixture are substituted at seed time and nowhere else: the toolkit names
 (`$LOAN`, `$APPROVALS` → `ARCADE_LOAN_TOOLKIT`, `ARCADE_APPROVALS_TOOLKIT`) and the persona
@@ -471,7 +513,8 @@ project today: ids, timestamps, persona emails, tool names, decisions, reasons, 
 **#16 made the choice this section used to flag, and #101 finished it.** A redaction event
 carries `redactions[]` — path, `rule_id`, `pattern_id`, kind — and **no payload at all**:
 `before` and `after` are not fields a `GovernanceEvent` has, so the shape is refused at the
-schema rather than merely unused. Putting the raw output in `before` would have written the borrower's
+schema rather than merely unused, and #103 took the columns off the table so the same is
+true of a `sqlite3` shell on the disk. Putting the raw output in `before` would have written the borrower's
 account number into `audit_log` and served it to anyone who can reach this host; putting the
 rewritten output in `after` is no safer, because a rule conditioned on clearance does not
 fire for a privileged subject and *their* "after" still holds the identifiers. The panel
@@ -544,9 +587,10 @@ curl -fsS -H "authorization: Bearer $ARCADE_HOOK_SIGNING_SECRET" \
 
 `rows` are `audit_log` rows exactly as the table holds them — the same `GovernanceEvent` the
 stream carries, including `redactions[]`, **not** the panel's derived shape. Someone asking
-what was decided should get the record, not a summary of it. The table still has `before`
-and `after` columns from before #101; nothing writes them and nothing projects them, so a
-row seeded by an older build is served without the payload it used to hold.
+what was decided should get the record, not a summary of it. The table has no `before` and
+no `after` column to project: #101 stopped writing them and #103 dropped them, so a row
+appended by a build that predates all of this is served, and *stored*, without the payload
+it used to hold.
 
 | filter | matches |
 |---|---|
