@@ -295,23 +295,47 @@ seeds read them once — or reset those services afterwards.
 
 ### 2. Mint the OAuth clients on `cg-idp`
 
-Better Auth **generates** client ids and secrets; they cannot be chosen. In `cg-idp`'s
-Render shell:
+Better Auth **generates** client ids and secrets; they cannot be chosen. Two clients are
+needed — `arcade`, which the Arcade dashboard is registered against, and `web`, which is
+`cg-web`'s own sign-in ("client C").
+
+**Set two environment variables on `cg-idp` first, and let it restart.** They cannot be
+passed to the script: the client list is read from the service's own configuration, and
+without them the second client does not exist.
+
+| on `cg-idp` | value |
+|---|---|
+| `IDP_OAUTH_CLIENTS` | `web` — the `arcade` client is always present whether or not you name it (`apps/idp/src/config.ts`, `PRIMARY_CLIENT_KEY`), so `arcade,web` is the same thing said longer |
+| `IDP_OAUTH_REDIRECT_URIS_WEB` | `${PUBLIC_URL}/api/auth/callback` — `cg-web`'s, byte for byte. Without it this client falls back to Arcade's callback, which is not `cg-web`'s |
+
+Then, once in `cg-idp`'s Render shell:
 
 ```sh
-bun run oauth-client                                  # the `arcade` client (hop 2)
-bun run oauth-client --client web --rotate            # client C, cg-web's own sign-in
+bun run oauth-client          # prints BOTH clients, each with its secret, exactly once
 ```
 
-⚠️ **The secret is printed exactly once** — storage is hashed since #70. Write it down
-then. A lost secret costs one `--rotate` and one dashboard field, never a
-re-registration.
+Skip the variables and the script refuses rather than guessing — `bun run oauth-client
+--client web` exits **2** with `[idp] --client web: not configured. IDP_OAUTH_CLIENTS
+names arcade.`, which is the whole failure mode: a `web` client that was never created
+is one `cg-web` cannot sign anybody in with.
+
+⚠️ **The secret is printed exactly once** — storage is hashed since #70. Write both down
+then. If one is lost, mint a new secret for that client alone under the same client id:
+
+```sh
+bun run oauth-client --client web --rotate
+```
+
+One `--rotate` and one dashboard field, never a re-registration.
 
 ### 3. `arcade deploy` both toolkits
 
+From the repo root. Each deploy runs in a subshell, so the second `cd` is still resolved
+against the root rather than against `tools/loan`:
+
 ```sh
-cd tools/loan      && arcade deploy
-cd tools/approvals && arcade deploy
+(cd tools/loan      && arcade deploy)
+(cd tools/approvals && arcade deploy)
 ```
 
 `arcade deploy` uploads each toolkit's declared secrets from the repo's `.env`, which is
@@ -352,9 +376,19 @@ refuses it — measured on [spike #4](./docs/spikes/04-user-source.md). Whether 
 actually has one attached is readable from outside the dashboard, as
 `urn:arcade:oauth:user_source_id` in its protected-resource document.
 
-The dashboard's auth-method label is decorative — spike #5 found it reading
-"Client Secret Basic" while the provider sent `client_secret_post`. Read the stored
-configuration back instead:
+**The current contract is `client_secret_basic`, on both sides**, and the table above is
+the state to register. `apps/idp` registers its client for Basic and checks the method
+before it checks the secret, so anything else is refused with `invalid_client`; #79 added
+the one tolerance, for Arcade presenting the same credentials twice (Basic header *and*
+identical body parameters), because nothing on the Arcade side removes those rows.
+
+**Do not read the auth method off the dashboard label — it is not the stored state.**
+Historically, on 2026-09-11, spike #5 found a provider record whose label read "Client
+Secret Basic" while the record carried no `auth_method` field at all, leaving `params` as
+the only path to the token endpoint, which is `client_secret_post` by construction. A
+provider recreated the same evening stored `auth_method: "client_secret_basic"`
+correctly. That mismatch is superseded, and it is why the check is a read-back rather
+than a screenshot:
 
 ```sh
 bun docs/spikes/evidence/05-auth-provider-config.ts cg-idp
@@ -461,7 +495,7 @@ is read off the Render service page.** See the warning in step 1.
 | Variable | Read by | Where the value comes from |
 |---|---|---|
 | `BETTER_AUTH_SECRET` **SECRET** | `apps/idp` | Render generates it (`generateValue: true`). **Rotating it logs everyone out and makes the stored ID-token signing key unreadable** |
-| `IDP_OAUTH_CLIENTS` | `apps/idp` | Comma-separated client *keys*, not credentials. Set it to `web` to mint client C alongside `arcade` |
+| `IDP_OAUTH_CLIENTS` | `apps/idp` | Comma-separated client *keys*, not credentials. Set it to `web` to mint client C; `arcade` is always present whether or not it is named. **Set it before running `oauth-client`** — the script reads the list from configuration and refuses a key that is not in it |
 | `IDP_OAUTH_REDIRECT_URIS` | `apps/idp` | The redirect URI Arcade shows under the provider's "Redirect URL". Default is Arcade Cloud's |
 | `IDP_OAUTH_REDIRECT_URIS_<KEY>` | `apps/idp` | Per-client allowlist, upper-snake. `..._WEB` = `${PUBLIC_URL}/api/auth/callback` |
 | `IDP_CLIENT_ID` / `IDP_CLIENT_SECRET` **SECRET** | `apps/web` | Client C, printed once by `bun run oauth-client --client web --rotate` (step 2) |

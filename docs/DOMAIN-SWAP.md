@@ -120,7 +120,7 @@ basis. Two rules survive the swap, both measured:
 
 ### The name Arcade files it under is measured, not chosen
 
-`arcade deploy` starts `server.py`, reads `serverInfo.name` off its `initialize`
+`arcade deploy` starts `tools/<yours>/server.py`, reads `serverInfo.name` off its `initialize`
 response, splits it on underscores and **PascalCases** it. `arcade-mcp` PascalCases the
 tool functions itself, before Arcade ever sees them.
 
@@ -276,9 +276,9 @@ The application seam is one function pair:
 |---|---|
 | **the seam** | `apps/web/lib/identity/session.ts` — `readSession(request)`, `readSessionFromCookies(jar)` |
 | **returns** | `Session { email, gateway?, signed_in_at }`, or `null` |
-| **callers** | `lib/agent/handlers.ts`, `lib/agent/tool-list.ts`, `app/chat/page.tsx`, `app/page.tsx`, `lib/identity/verifier.ts` |
+| **callers** | `apps/web/lib/agent/handlers.ts`, `apps/web/lib/agent/tool-list.ts`, `apps/web/app/chat/page.tsx`, `apps/web/app/page.tsx`, `apps/web/lib/identity/verifier.ts` |
 | **keep** | the two signatures, and `email` being the join key |
-| **delete** | `apps/idp`, `lib/identity/oidc.ts`, `lib/identity/personas.ts`, `lib/identity/roster.ts`, `components/identity/SignInPanel.tsx` |
+| **delete** | `apps/idp`, `apps/web/lib/identity/oidc.ts`, `apps/web/lib/identity/personas.ts`, `apps/web/lib/identity/roster.ts`, `apps/web/components/identity/SignInPanel.tsx` |
 
 Point `readSession` at your own session store and return a `Session` whose `email` is
 the address your directory knows the person by. Nothing downstream reads an identity
@@ -289,7 +289,7 @@ from anywhere else — the verifier refuses a request that tries to carry one wi
 The `gateway` field is the one thing to think about rather than swap: it holds this
 person's Arcade gateway token, which is how the tool call reaches Arcade as them. A
 real IdP replaces how the **session** is established, not hop 1.
-`lib/identity/handlers.ts::liveGatewayToken` stays.
+`apps/web/lib/identity/handlers.ts::liveGatewayToken` stays.
 
 > ⚠️ Your IdP must publish a `jwks_uri` with RS256 keys, or Arcade will not accept it as
 > a User Source — measured on [spike #4](./spikes/04-user-source.md), where an IdP with
@@ -430,8 +430,8 @@ worth anything if its real output is what is written down.
 
 | where | lines | what it is |
 |---|---|---|
-| `packages/*/src` | 5 | **doc comments only** — `policy-schema/src/domain.ts` ×2, `governance-core/src/policy-engine.ts` ×3. Zero executable references |
-| `packages/*/test` + `packages/governance-core/README.md` | 32 | test data (`Loan.GetLoan` as an identifier in fixtures), prose, and `"loan_officer"` as a role string in `policy-schema/contract/approver-routing-cases.json` |
+| `packages/*/src` | 5 | **doc comments only** — `packages/policy-schema/src/domain.ts` ×2, `packages/governance-core/src/policy-engine.ts` ×3. Zero executable references |
+| `packages/*/test` + `packages/governance-core/README.md` | 32 | test data (`Loan.GetLoan` as an identifier in fixtures), prose, and `"loan_officer"` as a role string in `packages/policy-schema/contract/approver-routing-cases.json` |
 | `packages/governance-core/test/redaction-engine.test.ts` | 1 read | **the one real edge from `packages/` into `apps/`** |
 
 The narrower checks that *do* pass, and are the ones worth putting in CI:
@@ -498,7 +498,7 @@ misbehaves — is [`docs/RUNBOOK.md`](./RUNBOOK.md).
 - [ ] Seed fixture carries an over-authority record, sensitive fields, an injected note, and a control record
 - [ ] Toolkit copied, renamed, `MCPApp(name=…)` set; descriptions carry no behavioural instruction
 - [ ] `arcade deploy` run, toolkit name **read back** and put in `ARCADE_LOAN_TOOLKIT`
-- [ ] `governance.json` rewritten: catalogue, roster, policy rules, output rules
+- [ ] `apps/hooks/src/fixtures/governance.json` rewritten: catalogue, roster, policy rules, output rules
 - [ ] Every injection pattern has both halves of a corpus entry; `bun test --cwd apps/hooks` green
 - [ ] `readSession` pointed at your IdP; `apps/idp` deleted; Arcade's provider and User Source repointed
 - [ ] `"cg": { "governed": true }` on your app's manifest, and its `knows-nothing` test shipped
