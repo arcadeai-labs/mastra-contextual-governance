@@ -218,6 +218,57 @@ export interface ArcadeStandIn {
   /** Seconds put on every access token this stand-in issues. */
   tokenLifetimeSeconds: number;
   refreshes: number;
+
+  // -- #113: a gateway that expires tokens and drops connections ------------
+  /** Every access token this stand-in has issued, in order. */
+  issued: string[];
+  /**
+   * Stop accepting every access token issued so far.
+   *
+   * The MCP endpoint then answers those bearers `401 invalid_token`, which is
+   * what a real gateway does to an expired one — **and it says nothing to the
+   * sealed cookie**, whose `expires_at` goes on claiming the token is live.
+   * That gap is the whole of #113: expiry as the session records it and expiry
+   * as the gateway enforces it are two different facts, and only one of them
+   * is a clock this service owns.
+   */
+  expireIssuedTokens(): void;
+  /**
+   * While false, every access token this stand-in issues is dead the moment it
+   * exists — the token endpoint hands one back and the MCP endpoint refuses it.
+   *
+   * The gateway nothing can rescue. It is what a retry has to terminate
+   * against: a service that kept refreshing here would spend a person's
+   * credentials in a loop against a server that has already said no.
+   */
+  acceptsIssuedTokens: boolean;
+  /**
+   * While true, `tools/list` comes back empty — the gateway takes the bearer
+   * and lists nothing, which is a broken control plane rather than a broken
+   * credential (#15).
+   */
+  listsNothing: boolean;
+  /**
+   * While true, the MCP endpoint accepts the request and then drops the
+   * connection mid-body.
+   *
+   * The other half of #113's measurement: a turn that dies on the transport
+   * rather than on the credential, which is what *"Could not connect to server
+   * with any available HTTP transport"* looks like from this side.
+   */
+  dropConnections: boolean;
+  /**
+   * Rotate the refresh token on every refresh, invalidating the one presented.
+   *
+   * Off by default, because the stand-in's original behaviour was to keep one
+   * refresh token alive forever and the identity suite is written against that.
+   * On, it is the stricter authorization server: a refresh whose result is not
+   * resealed into the cookie costs the browser its session. That is the thing
+   * "re-seal the cookie" has to be tested against rather than asserted.
+   */
+  rotateRefreshTokens: boolean;
+  /** Every `grant_type` the token endpoint was asked for, in order. */
+  grants: string[];
   stop(): void;
 }
 
@@ -235,6 +286,9 @@ export function startArcadeStandIn(): ArcadeStandIn {
   const refreshTokens = new Map<string, string>();
   const flows = new Map<string, { user_id: string; next_uri: string; authorized: boolean }>();
 
+  /** Access tokens the gateway still accepts. Expiry is removal from this set. */
+  const liveAccess = new Set<string>();
+
   const state: ArcadeStandIn = {
     url: "",
     registrations: [],
@@ -246,6 +300,13 @@ export function startArcadeStandIn(): ArcadeStandIn {
     omitNextUri: false,
     tokenLifetimeSeconds: 3600,
     refreshes: 0,
+    issued: [],
+    expireIssuedTokens: () => liveAccess.clear(),
+    acceptsIssuedTokens: true,
+    listsNothing: false,
+    dropConnections: false,
+    rotateRefreshTokens: false,
+    grants: [],
     stop: () => server.stop(true),
   };
 
@@ -253,6 +314,8 @@ export function startArcadeStandIn(): ArcadeStandIn {
     const access = `gw-access-${crypto.randomUUID()}`;
     const refresh = `gw-refresh-${crypto.randomUUID()}`;
     refreshTokens.set(refresh, clientId);
+    if (state.acceptsIssuedTokens) liveAccess.add(access);
+    state.issued.push(access);
     return {
       access_token: access,
       refresh_token: refresh,
@@ -261,19 +324,41 @@ export function startArcadeStandIn(): ArcadeStandIn {
     };
   };
 
+  /**
+   * A connection the gateway accepts and then closes without answering.
+   *
+   * A real drop rather than an error status: the body never produces a byte and
+   * the per-request idle timeout closes the socket underneath it, so the client
+   * sees the connection go away mid-request — *"The socket connection was
+   * closed unexpectedly"* — instead of reading a status code. That is the
+   * difference between "the gateway said no" and "there was nothing to say no",
+   * and `probeGatewayToken` is built on exactly that distinction.
+   */
+  const dropConnection = (request: Request, listener: { timeout(request: Request, seconds: number): void }) => {
+    listener.timeout(request, 1);
+    return new Response(new ReadableStream({ start() { /* never writes, never closes */ } }));
+  };
+
   const server = Bun.serve({
     port: 0,
     idleTimeout: 30,
-    async fetch(request) {
+    async fetch(request, listener) {
       const url = new URL(request.url);
       const { pathname } = url;
 
       // The gateway's MCP endpoint. Unauthenticated: a 401 that names where the
       // protected-resource metadata lives, which is how discovery starts.
-      if (pathname === `/mcp/${GATEWAY_ID}` && request.method === "POST") {
+      if (pathname === `/mcp/${GATEWAY_ID}`) {
+        // The transport, dead. Answered before the method check so the SDK's
+        // SSE fallback dies the same way its streamable POST did — which is
+        // what makes the client report that it could reach the server by no
+        // available HTTP transport rather than that the credential was refused.
+        if (state.dropConnections) return dropConnection(request, listener);
+        if (request.method !== "POST") return new Response(null, { status: 405 });
+
         const bearer = request.headers.get("authorization")?.replace(/^Bearer /i, "");
-        if (!bearer) {
-          return new Response(JSON.stringify({ error: "unauthorized" }), {
+        const unauthorized = () =>
+          new Response(JSON.stringify({ error: "invalid_token" }), {
             status: 401,
             headers: {
               "www-authenticate":
@@ -281,13 +366,55 @@ export function startArcadeStandIn(): ArcadeStandIn {
               "content-type": "application/json",
             },
           });
-        }
+        if (!bearer) return unauthorized();
         state.bearers.push(bearer);
-        const body = (await request.json()) as { id?: number; method?: string };
+        // An access token the gateway no longer accepts is refused here and
+        // nowhere else. Nothing tells the holder in advance.
+        if (!liveAccess.has(bearer)) return unauthorized();
+
+        const body = (await request.json()) as { id?: number; method?: string; params?: { name?: string } };
+        if (body.method?.startsWith("notifications/")) return new Response(null, { status: 202 });
         if (body.method === "tools/list") {
-          return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "Loan_GetLoan" }] } });
+          if (state.listsNothing) return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              tools: [
+                {
+                  name: "Loan_GetLoan",
+                  description: "Read one loan file.",
+                  inputSchema: {
+                    type: "object",
+                    properties: { loan_id: { type: "string" } },
+                    required: ["loan_id"],
+                    additionalProperties: false,
+                  },
+                },
+              ],
+            },
+          });
         }
-        return Response.json({ jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18" } });
+        if (body.method === "tools/call") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { content: [{ type: "text", text: `{"loan_id":"LN-2291","status":"pending"}` }] },
+          });
+        }
+        // `capabilities` and `serverInfo` are not decoration: the MCP client
+        // validates the `initialize` result and an incomplete one makes it fall
+        // back to SSE and then give up, which reads as a transport failure
+        // rather than as the malformed answer it is.
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            protocolVersion: "2025-06-18",
+            capabilities: { tools: { listChanged: false } },
+            serverInfo: { name: "arcade-stand-in", version: "0.1.0" },
+          },
+        });
       }
 
       if (pathname === `/.well-known/oauth-protected-resource/mcp/${GATEWAY_ID}`) {
@@ -341,12 +468,18 @@ export function startArcadeStandIn(): ArcadeStandIn {
 
       if (pathname === "/oauth/token" && request.method === "POST") {
         const form = new URLSearchParams(await request.text());
+        state.grants.push(form.get("grant_type") ?? "");
         if (form.get("grant_type") === "refresh_token") {
-          const clientId = refreshTokens.get(form.get("refresh_token") ?? "");
+          const presented = form.get("refresh_token") ?? "";
+          const clientId = refreshTokens.get(presented);
           if (!clientId || clientId !== form.get("client_id")) {
             return Response.json({ error: "invalid_grant" }, { status: 400 });
           }
           state.refreshes += 1;
+          // A rotating server hands back a new refresh token and stops taking
+          // the old one, so a caller that does not store what came back has
+          // spent the browser's session rather than extended it.
+          if (state.rotateRefreshTokens) refreshTokens.delete(presented);
           return Response.json(issue(clientId));
         }
 
