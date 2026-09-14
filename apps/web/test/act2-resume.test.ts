@@ -20,6 +20,13 @@
  *
  * ## Why the assertions are where they are
  *
+ * The reply itself is a claim about the *model*, so it is split: with a key,
+ * the agent's own words are asserted to name the routed approver; without one,
+ * the reply was written by this suite's script and the assertion moves to the
+ * conversation the model was handed — the approver's name in the tool's own
+ * result, chosen by the real routing rule against the real roster. A green run
+ * that says `SCRIPTED` has not measured what Claude says.
+ *
  * The criterion this file exists for is *"the retry passes the pre-hook because
  * a valid grant exists — verified in the audit log, not inferred"*. So the
  * retry's own audit row is read back over `GET /audit` and checked to be an
@@ -45,7 +52,7 @@ import { anthropicModel } from "../lib/agent/agent.ts";
 import { approvalStatus } from "../lib/agent/approval-status.ts";
 import { chat, CHAT_PATH } from "../lib/agent/handlers.ts";
 import { decodeEvents, replyText, type ChatEvent } from "../lib/agent/events.ts";
-import { liveModelKey, scriptedModel, type Turn } from "./model.ts";
+import { liveModelKey, promptText, scriptedModel, type Turn } from "./model.ts";
 import { writeSession, type Session } from "../lib/identity/session.ts";
 
 const LIVE_KEY = liveModelKey();
@@ -117,6 +124,15 @@ interface Turned {
   status: number;
   events: ChatEvent[];
   reply: string;
+  /**
+   * Everything the model was handed, flattened — tool results included.
+   *
+   * Empty on the live path, where there is nothing to record. On the scripted
+   * path it is the only honest place to ask "did the routed approver's name
+   * reach the model at all", because the reply on that path was written by this
+   * suite's own fixture. Same seam #14 reads a hook's remediation text off.
+   */
+  prompt: string;
 }
 
 async function post(cookie: string, body: unknown, script: readonly Turn[]): Promise<Turned> {
@@ -131,7 +147,12 @@ async function post(cookie: string, body: unknown, script: readonly Turn[]): Pro
     body: JSON.stringify(body),
   });
   const events = decodeEvents(await response.text());
-  return { status: response.status, events, reply: replyText(events) };
+  return {
+    status: response.status,
+    events,
+    reply: replyText(events),
+    prompt: LIVE_KEY ? "" : promptText(scripted.prompts),
+  };
 }
 
 const of = <K extends ChatEvent["kind"]>(events: readonly ChatEvent[], kind: K) =>
@@ -329,7 +350,20 @@ describe("act 2, end to end", () => {
     expect(waiting?.approver).toBe("Riley Chen");
     expect(request.approver_id).toBe(RILEY);
     expect(request.candidate_approver_ids[0]).toBe(RILEY);
-    expect(blocked.reply).toContain("Riley Chen");
+
+    if (LIVE_KEY) {
+      // The criterion as written: the agent's own words name the approver. Only
+      // a real completion can be asked this.
+      expect(blocked.reply).toContain("Riley Chen");
+    } else {
+      // Not measurable without a real completion — the reply on this path was
+      // written by this suite's script, and asserting on it would be asserting
+      // on the fixture. What the scripted run does prove is that the routed
+      // approver's name reached the model's prompt, in the tool's own result,
+      // having been chosen by the real routing rule against the real roster.
+      expect(blocked.prompt).toContain("Riley Chen");
+      expect(blocked.prompt).toContain(request.id);
+    }
 
     // The `/pre` row for the escalation says who was routed to and who was
     // not bothered — the routing beat, on the panel, from a real hook decision
