@@ -40,7 +40,7 @@
  * #94 is the record of, arriving on a different screen.
  */
 import { readIdentitySurface, type IdentitySurface } from "../config.ts";
-import { GATEWAY_START_PATH, liveGatewayToken } from "../identity/handlers.ts";
+import { GATEWAY_START_PATH, liveGatewayToken, refreshedGatewayToken } from "../identity/handlers.ts";
 import { mcpUrl, probeGatewayToken } from "../identity/gateway.ts";
 import type { Session } from "../identity/session.ts";
 import { gatewayClient, selectGoverned, SERVER_KEY, GATEWAY_BUILTINS } from "./tools.ts";
@@ -82,6 +82,15 @@ export interface SessionToolsOptions {
  * The cost is one extra refresh; the alternative is a page that either cannot
  * list tools for a persona whose token is aging out, or quietly fails to store
  * the new one and looks like it did.
+ *
+ * **And a refusal is refreshed through, once (#113).** The same asymmetry the
+ * chat route has: `expires_at` is this service's note to itself and the gateway
+ * is the only one that decides. A 401 with a refresh token in the cookie is not
+ * a person's problem yet, so it is refreshed and asked again — and only a
+ * refresh that itself fails puts the re-authorize sentence on the page. Which
+ * is also why act 1 does not go blank halfway through a rehearsal: the tool
+ * list is the act's entire claim, and "the gateway would tell us nothing" and
+ * "policy hid it" look identical on a screen.
  */
 export async function sessionTools(
   session: Session | null,
@@ -99,10 +108,48 @@ export async function sessionTools(
     return { ok: false, reason: `${live.reason}, so the gateway cannot be asked what this persona may see.` };
   }
 
+  const first = await listWith(live.token, config, options);
+  if (first.outcome !== "rejected") return first.answer;
+  const refusal = `The gateway answered ${first.status} to this browser's gateway token`;
+
+  // The gateway refused a bearer whose clock says it is live. One refresh, one
+  // more ask, and no loop after that — the same shape and the same reasoning as
+  // `lib/agent/handlers.ts`, which is the route this page is about to send the
+  // person to.
+  const renewed = await refreshedGatewayToken(live.session, config);
+  if (renewed.token === null) {
+    // The refresh failed too, so there is a person's click left in this and the
+    // sentence has to carry it. Same three facts #94 settled on: what happened,
+    // that policy hid nothing, and where to go.
+    return {
+      ok: false,
+      reason:
+        `${refusal}, and ${renewed.reason}. Nothing was hidden by policy — this is hop 1, ` +
+        `upstream of every hook. Authorize the gateway again at ${GATEWAY_START_PATH}.`,
+    };
+  }
+  const second = await listWith(renewed.token, config, options);
+  return second.answer;
+}
+
+/**
+ * One `tools/list` with one bearer, and whether the gateway refused it.
+ *
+ * `rejected` is lifted out of the answer rather than folded into it because it
+ * is the one outcome with something left to try. Everything else is already
+ * final — a list, or a sentence about why there is none.
+ */
+async function listWith(
+  token: string,
+  config: IdentitySurface,
+  options: SessionToolsOptions,
+): Promise<{ outcome: "final"; answer: SessionTools } | { outcome: "rejected"; status: number; answer: SessionTools }> {
+  const final = (answer: SessionTools) => ({ outcome: "final" as const, answer });
+
   const client = gatewayClient({
     arcadeApiUrl: config.arcadeApiUrl,
     gatewayId: config.identity.gatewayId,
-    token: live.token,
+    token,
     timeoutMs: options.timeoutMs ?? LIST_TIMEOUT_MS,
   });
 
@@ -129,39 +176,46 @@ export async function sessionTools(
       //
       // The token is not cleared here. A server component cannot set a cookie,
       // so the dropping is `POST /api/chat`'s job and this surface only reports.
-      const probe = await probeGatewayToken(mcpUrl(config.arcadeApiUrl, config.identity.gatewayId), live.token);
+      const probe = await probeGatewayToken(mcpUrl(config.arcadeApiUrl, config.identity.gatewayId), token);
       if (probe.outcome === "rejected") {
         return {
-          ok: false,
-          reason:
-            `The gateway answered ${probe.status} to this browser's gateway token, so there is ` +
-            `nothing it will list for this persona. Nothing was hidden by policy — this is hop 1, ` +
-            `upstream of every hook. Authorize the gateway again at ${GATEWAY_START_PATH}.`,
+          outcome: "rejected" as const,
+          status: probe.status,
+          answer: {
+            ok: false,
+            reason:
+              `The gateway answered ${probe.status} to this browser's gateway token, so there is ` +
+              `nothing it will list for this persona. Nothing was hidden by policy — this is hop 1, ` +
+              `upstream of every hook. Authorize the gateway again at ${GATEWAY_START_PATH}.`,
+          },
         };
       }
       if (probe.outcome === "unreachable") {
-        return {
+        return final({
           ok: false,
           reason: `The gateway could not be reached: ${probe.detail}. Nothing was asked of the control plane.`,
-        };
+        });
       }
-      return {
+      return final({
         ok: false,
         reason:
           "The gateway listed no tools at all — not even its own built-ins, which every answer " +
           "carries. That is the list failing to come back, not a persona who may use nothing; " +
           "check that the control plane is answering /access.",
-      };
+      });
     }
 
     const { governed, dropped } = selectGoverned(advertised, { toolkits: config.agent.toolkits });
-    return {
+    return final({
       ok: true,
       tools: Object.entries(governed).map(([name, tool]) => ({ name, description: describe(tool) })),
       filtered: dropped,
-    };
+    });
   } catch (cause) {
-    return { ok: false, reason: `The gateway would not list its tools: ${cause instanceof Error ? cause.message : String(cause)}` };
+    return final({
+      ok: false,
+      reason: `The gateway would not list its tools: ${cause instanceof Error ? cause.message : String(cause)}`,
+    });
   } finally {
     // The connection belongs to this request and this persona, exactly as it
     // does for a turn: leaving it open would leave a bearer alive in a process

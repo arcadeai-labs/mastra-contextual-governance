@@ -388,12 +388,19 @@ export async function gatewayCallback(request: Request, config: IdentitySurface 
  * `access_token` on it. The one thing it never does is hand back the token it
  * already had: a stale bearer is accepted by the type system, presented to the
  * gateway, refused there, and read on screen as a missing toolkit.
+ *
+ * **`expires_at` is not the only trigger (#113).** A caller the gateway has
+ * already refused should not ask this function again — it would be told the
+ * same thing, because the clock still says the token is live. That caller wants
+ * `refreshedGatewayToken`, below.
  */
+export type GatewayBearer = { token: string; session: Session } | { token: null; reason: string };
+
 export async function liveGatewayToken(
   session: Session,
   config: IdentitySurface = readIdentitySurface(),
   now = Date.now(),
-): Promise<{ token: string; session: Session } | { token: null; reason: string }> {
+): Promise<GatewayBearer> {
   if (!session.gateway) {
     // Two absences, two sentences. A browser that has never run hop 1 and a
     // browser whose bearer the gateway refused both hold nothing, and round 1
@@ -410,8 +417,51 @@ export async function liveGatewayToken(
   if (!isExpiring(session.gateway.expires_at, now)) {
     return { token: session.gateway.access_token, session };
   }
+  return refreshedGatewayToken(session, config, now);
+}
+
+/**
+ * Refresh this browser's gateway token **now**, whatever the session believes
+ * about when it expires.
+ *
+ * `liveGatewayToken`'s trigger is `expires_at`, and `expires_at` is a number
+ * this service wrote down at issue. The gateway's opinion is the only one that
+ * decides anything, and #113 is the record of the two disagreeing: on Render,
+ * Dana's bearer was refused with most of an hour left on the cookie's clock, so
+ * the refresh was never attempted and the turn went straight to #94's
+ * re-authorization card. A card is an honest answer to "the credential is
+ * dead"; it is the wrong answer to "the credential is dead **and there is a
+ * refresh token right here**".
+ *
+ * So the 401 is a trigger too. This is that trigger, split out rather than
+ * folded in, because the two callers ask different questions: one asks whether
+ * the token is about to age out, the other has just been told it is no good.
+ *
+ * Same contract as `liveGatewayToken` in every other respect — the session
+ * comes back with the token so the caller can reseal it, and nothing is ever
+ * handed back that the gateway has already refused.
+ */
+export async function refreshedGatewayToken(
+  session: Session,
+  config: IdentitySurface = readIdentitySurface(),
+  now = Date.now(),
+): Promise<GatewayBearer> {
+  if (!session.gateway) {
+    return { token: null, reason: "this browser holds no gateway token" };
+  }
   if (!session.gateway.refresh_token) {
-    return { token: null, reason: "the gateway token has expired and there is no refresh token" };
+    // Two ways to arrive with nothing to refresh with, and they are different
+    // sentences: a token that ran out of time, and a token the gateway stopped
+    // taking early. Saying "expired" about the second would be this service
+    // repeating its own clock back at a person after the gateway has just
+    // contradicted it — and the caller on that path has already said what the
+    // gateway answered, so this clause only has to finish the sentence.
+    return {
+      token: null,
+      reason: isExpiring(session.gateway.expires_at, now)
+        ? "the gateway token has expired and there is no refresh token"
+        : "there is no refresh token to replace it with",
+    };
   }
 
   const resource = mcpUrl(config.arcadeApiUrl, config.identity.gatewayId);
