@@ -626,6 +626,57 @@ describe("liveGatewayToken never hands back a stale bearer", () => {
     }
   });
 
+  test("a 200 whose body is the JSON literal null is a reason, not a throw (round 2)", async () => {
+    // The reviewer's exact shape. `JSON.parse("null")` is `null`, which satisfies
+    // `GatewayTokenResponse` and threw on the first property read — so the one
+    // path this issue exists to build became
+    // `TypeError: null is not an object (evaluating 'refreshed.token.access_token')`
+    // and a 500.
+    forgetGatewayClients();
+    const as = startAuthorizationServer({ status: 200, body: null });
+    try {
+      const live = await liveGatewayToken(expiringSession(), surfaceFor(as.url));
+
+      expect(live.token).toBeNull();
+      if (live.token === null) {
+        expect(live.reason).toContain("access_token");
+        expect(live.reason).not.toContain(TOKEN);
+      }
+    } finally {
+      as.stop();
+      forgetGatewayClients();
+    }
+  });
+
+  test("every 2xx body that is not a token is a reason, and none of them throw", async () => {
+    // One guard, every shape it has to be total over. A property read is fine
+    // for the object cases and fatal for the rest, which is why the read moved
+    // into `accessTokenOf` and takes `unknown`.
+    const bodies: ReadonlyArray<readonly [string, unknown]> = [
+      ["the JSON literal null", null],
+      ["an array", []],
+      ["a string", "not-a-token-response"],
+      ["a number", 42],
+      ["an object with no access_token", { token_type: "Bearer", expires_in: 3600 }],
+      ["an access_token that is not a string", { access_token: 42 }],
+      ["an empty access_token", { access_token: "   " }],
+    ];
+
+    for (const [shape, body] of bodies) {
+      forgetGatewayClients();
+      const as = startAuthorizationServer({ status: 200, body });
+      try {
+        // Named in the expectation so a failure says which shape broke.
+        const live = await liveGatewayToken(expiringSession(), surfaceFor(as.url));
+        expect(`${shape}: ${live.token === null ? "no token" : "a token"}`).toBe(`${shape}: no token`);
+        if (live.token === null) expect(live.reason).not.toContain(TOKEN);
+      } finally {
+        as.stop();
+        forgetGatewayClients();
+      }
+    }
+  });
+
   test("a refresh that works replaces the bearer and clears any earlier rejection", async () => {
     forgetGatewayClients();
     const as = startAuthorizationServer({
@@ -692,6 +743,47 @@ describe("the persona tool list", () => {
       }
     } finally {
       gateway.stop();
+    }
+  });
+});
+
+describe("POST /api/chat, when the refresh answers 200 with no token (round 2)", () => {
+  test("the turn is the 200 ndjson re-authorization, not a 500", async () => {
+    // The reviewer drove this over HTTP and read
+    // `500 {"error":"The chat route failed before it could stream, while it
+    // tried to refresh this browser's gateway token."}`. A throw inside the
+    // pre-stream section is shaped by #92's `serverFault`, so the 500 was
+    // well-formed JSON — and still the wrong answer, because there is a
+    // perfectly good re-authorization to offer and nobody was offered it.
+    forgetGatewayClients();
+    const as = startAuthorizationServer({ status: 200, body: null });
+    const config = surfaceFor(as.url);
+    try {
+      const turn = await ask(config, await browserCookie(config, expiringSession()));
+
+      expect(turn.status).toBe(200);
+      expect(turn.contentType).toContain(NDJSON);
+      expect(turn.body).not.toContain("failed before it could stream");
+      expect(turn.body).not.toContain("is not an object");
+
+      const authorization = turn.events.find((event) => event.kind === "authorization");
+      expect(authorization).toBeDefined();
+      if (authorization?.kind === "authorization") {
+        expect(authorization.url).toContain(GATEWAY_START_PATH);
+        expect(authorization.instructions).toContain("access_token");
+      }
+      expect(turn.events.at(-1)).toEqual({ kind: "done", calls: 0 });
+      expect(turn.body).not.toContain(TOKEN);
+
+      // And the dead bearer is dropped, so the next Send takes the same shape
+      // rather than the never-authorized refusal (round 1's finding).
+      const after = await sessionAfter(turn, config);
+      expect(after?.email).toBe(DANA);
+      expect(after?.gateway).toBeUndefined();
+      expect(after?.gateway_rejected_at).toBeGreaterThan(0);
+    } finally {
+      as.stop();
+      forgetGatewayClients();
     }
   });
 });

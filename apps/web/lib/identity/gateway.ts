@@ -326,6 +326,30 @@ export function refreshGatewayToken(options: {
 }
 
 /**
+ * The usable `access_token` on a token response, or `null` if the body is not
+ * one.
+ *
+ * **Total, and deliberately typed `unknown`.** `tokenRequest` hands back
+ * `JSON.parse(body)` under the `GatewayTokenResponse` type, and that type is a
+ * claim about a remote server's output rather than a fact about it. Round 2 of
+ * #98's review found the gap: an authorization server that answers `200` with
+ * the body `null` parses to `null`, which satisfies the type and throws on the
+ * first property read — `TypeError: null is not an object (evaluating
+ * 'refreshed.token.access_token')` — so the one path this whole issue exists to
+ * build, "no usable token, go and re-authorize", became an unshaped 500.
+ *
+ * So the read is done here, once, against `unknown`, and every shape that is
+ * not an object carrying a non-empty string comes back `null`: `null` itself, a
+ * JSON scalar, an array, a missing field, a field that is not a string, an
+ * empty one. The callers branch on `null` and cannot throw on the way.
+ */
+export function accessTokenOf(token: unknown): string | null {
+  if (typeof token !== "object" || token === null) return null;
+  const value = (token as { access_token?: unknown }).access_token;
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+/**
  * When a token issued now expires.
  *
  * A missing `expires_in` is treated as **one hour**, not as "never": a token

@@ -657,10 +657,23 @@ refused gets the same stream every time until it re-authorizes.
 began rather than the last time somebody pressed Send.
 
 `liveGatewayToken` fails the same way: a refresh that answers non-2xx, or 2xx
-with no `access_token` on it, returns `{ token: null, reason }` and logs the
-status alone. It never hands back the bearer it already had — a stale token is
-accepted by the type system, presented to the gateway, refused there, and read
+with no usable `access_token` on it, returns `{ token: null, reason }` and logs
+the status alone. It never hands back the bearer it already had — a stale token
+is accepted by the type system, presented to the gateway, refused there, and read
 on screen as a missing toolkit.
+
+**"No usable `access_token`" is read by `accessTokenOf`, which takes `unknown`,
+and that is not fussiness.** `tokenRequest` hands back `JSON.parse(body)` under
+the `GatewayTokenResponse` type, and that type is a claim about a remote
+server's output rather than a fact about it. Round 2 of #98's review found the
+gap: an authorization server answering `200` with the body `null` parses to
+`null`, satisfies the type, and threw on the first property read —
+`TypeError: null is not an object (evaluating 'refreshed.token.access_token')` —
+so the re-authorization path this issue exists to build became an unshaped 500.
+Every non-token shape now comes back `null` instead: the literal `null`, a JSON
+scalar, an array, a missing field, a field that is not a string, an empty one.
+`gatewayCallback` reads the code-exchange response through the same function,
+because a `200 null` there had the identical throw one function up.
 
 The persona tool list on `/` and `/chat` (#15) draws the same distinction for
 the same reason: an empty list asks about the bearer before it names `/access`.

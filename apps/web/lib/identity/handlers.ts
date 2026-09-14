@@ -39,8 +39,8 @@ import { clearLeg, clearSession, GATEWAY_COOKIE, PENDING_FLOW_COOKIE, readLeg, r
   type Session, type SigninLeg } from "./session.ts";
 import { escapeHtml, notConfigured, page, redirect, verbatim } from "./pages.ts";
 import { authorizeUrl, exchangeCode, fetchUserinfo, nonce, pkce } from "./oidc.ts";
-import { exchangeGatewayCode, expiryOf, gatewayAuthorizeUrl, gatewayClient, isExpiring, mcpUrl,
-  refreshGatewayToken } from "./gateway.ts";
+import { accessTokenOf, exchangeGatewayCode, expiryOf, gatewayAuthorizeUrl, gatewayClient, isExpiring,
+  mcpUrl, refreshGatewayToken } from "./gateway.ts";
 import { knownPersona } from "./personas.ts";
 import { confirmUser, followNextUri } from "./verifier.ts";
 
@@ -342,11 +342,27 @@ export async function gatewayCallback(request: Request, config: IdentitySurface 
     return page("The gateway refused the code", verbatim(`${exchanged.status} ${exchanged.body}`), 502, headers);
   }
 
+  // The same read as the refresh path's, and for the same reason: a `200` whose
+  // body is `null` or a scalar satisfies the type and throws on the first
+  // property access. Here that would be an unshaped 500 in the middle of hop 1
+  // rather than a page saying what happened (#98 round 2).
+  const issued = accessTokenOf(exchanged.token);
+  if (issued === null) {
+    return page(
+      "The gateway issued no access token",
+      `<p>The token endpoint answered <code>${exchanged.status}</code>, but the body carried no ` +
+        "usable <code>access_token</code>, so there is no bearer to attach to this browser.</p>" +
+        "<p>Nothing was stored. Start the gateway authorization again.</p>",
+      502,
+      headers,
+    );
+  }
+
   await writeSession(
     headers,
     request,
     withGatewayToken(session, {
-      access_token: exchanged.token.access_token,
+      access_token: issued,
       ...(exchanged.token.refresh_token && { refresh_token: exchanged.token.refresh_token }),
       expires_at: expiryOf(exchanged.token),
       client_id: leg.client_id,
@@ -414,14 +430,19 @@ export async function liveGatewayToken(
     return { token: null, reason: `refreshing the gateway token answered ${refreshed.status}` };
   }
 
-  // A 2xx with no `access_token` on it is not a refresh, and it is the shape
-  // that made #94 expensive: the field is `undefined`, it flows into the session
-  // and out to `MCPClient` as the bearer, and the gateway's refusal surfaces
-  // three layers later as "the gateway advertised 0 tools". Nothing usable came
-  // back, so nothing is returned — and the token already held is *not* handed
-  // back in its place, because a stale bearer fails the same way.
-  const access = refreshed.token.access_token;
-  if (typeof access !== "string" || access.trim() === "") {
+  // A 2xx with no usable `access_token` on it is not a refresh, and it is the
+  // shape that made #94 expensive: the field is `undefined`, it flows into the
+  // session and out to `MCPClient` as the bearer, and the gateway's refusal
+  // surfaces three layers later as "the gateway advertised 0 tools". Nothing
+  // usable came back, so nothing is returned — and the token already held is
+  // *not* handed back in its place, because a stale bearer fails the same way.
+  //
+  // `accessTokenOf` rather than a property read, because round 2 of #98's
+  // review found a `200` whose body was the JSON literal `null` throwing right
+  // here and turning this branch — the re-authorization path — into a 500.
+  // Every non-token shape now arrives as `null`.
+  const access = accessTokenOf(refreshed.token);
+  if (access === null) {
     console.warn(`[gateway] refreshing this browser's gateway token answered ${refreshed.status} with no access_token`);
     return { token: null, reason: `refreshing the gateway token answered ${refreshed.status} with no access_token` };
   }
