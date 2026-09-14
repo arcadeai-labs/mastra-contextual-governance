@@ -837,7 +837,8 @@ boot log says so, naming the count and the reset:
 
 ```
 [hooks] RETENTION: audit_log holds 1,600,000 rows, 80% of the 2,000,000-row bound this disk
-        is sized for. Nothing prunes it: run scripts/reset before it fills.
+        is sized for. Nothing prunes it: empty it with the panel's Reset button or bun run
+        reset before it fills.
 ```
 
 Three things follow, and the third is the one that bites:
