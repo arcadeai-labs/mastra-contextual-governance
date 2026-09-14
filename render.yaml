@@ -11,7 +11,11 @@
 # model: each database-owning service mounts a disk and seeds from its fixture
 # only when the database has no schema, so a policy edited on stage and a loan
 # approved on stage are both still there after a restart. Getting back to a
-# clean state is `scripts/reset` (#23).
+# clean state is `bun run reset` (#23), which calls each service's own
+# `POST /admin/reset` under the shared `RESET_TOKEN` below. **A redeploy is not
+# a reset** — the disks survive it — and **a reset is not a re-registration**:
+# nothing resets the OAuth client Arcade holds, and deleting `idp.db` would.
+# `docs/RUNBOOK.md` is the operational half of this file.
 #
 # All three database-owning services — cg-loan-app, cg-hooks, cg-idp — mount
 # a disk below.
@@ -78,6 +82,16 @@ services:
       # the note at the top of this file; the service refuses an address it
       # could not reach at boot.
       - key: IDP_PUBLIC_HOST
+        sync: false
+      # The bearer POST /admin/reset requires (#23) — the loan book back to the
+      # rows this image seeds, between takes, without a deploy. THE SAME VALUE
+      # as cg-hooks', cg-idp's and cg-web's: `bun run reset` presents one
+      # bearer to all three services. Unset means the route does not exist —
+      # 404, and /health reports `reset: "disabled"` — because an endpoint that
+      # empties the bank's system of record and is reachable unauthenticated on
+      # a public URL is a denial-of-demo button. Generate it yourself:
+      # `openssl rand -hex 32`.
+      - key: RESET_TOKEN
         sync: false
 
   # The control plane. Serves /access, /pre and /post to Arcade Cloud, owns the
@@ -159,8 +173,10 @@ services:
       # button reachable without authentication on a public URL is a
       # denial-of-demo vector, and one that fails open on a missing variable is
       # the same thing with a longer fuse. Set the same value on cg-web, which
-      # is what the panel's Reset button posts through. Generate it yourself:
-      # `openssl rand -hex 32`.
+      # is what the panel's Reset button posts through, and on cg-loan-app and
+      # cg-idp, which have endpoints of their own under this name (#23) — one
+      # value, and `bun run reset` presents it to all three. Generate it
+      # yourself: `openssl rand -hex 32`.
       - key: RESET_TOKEN
         sync: false
 
@@ -229,6 +245,17 @@ services:
       - key: PERSONA_RILEY_EMAIL
         sync: false
       - key: PERSONA_MORGAN_EMAIL
+        sync: false
+      # The bearer POST /admin/reset requires (#23). THE SAME VALUE as
+      # cg-hooks', cg-loan-app's and cg-web's. The reset clears people,
+      # sessions, tokens and consents and re-seeds the four personas; it never
+      # touches the `oauthClient` row or the signing keys, and it asserts the
+      # client ids are unchanged on both sides rather than trusting that.
+      # **Never delete idp.db** — that IS a rotation, and Arcade would go on
+      # holding the old credentials, failing at the authorize step where no
+      # hook fires and the panel stays dark. Unset means the route answers 404
+      # and /health reports `reset: "disabled"`.
+      - key: RESET_TOKEN
         sync: false
       # No IDP_PUBLIC_URL here: Render injects RENDER_EXTERNAL_URL and the
       # service falls back to it, so the issuer is always this service's own

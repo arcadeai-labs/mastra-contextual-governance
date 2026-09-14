@@ -24,7 +24,8 @@ plugin as an OAuth 2.1 authorization server, owning `idp.db` on its own disk.
 | `POST /oauth2/introspect`, `POST /oauth2/revoke` | For a resource server that needs to validate or revoke an opaque token. |
 | `GET /.well-known/openid-configuration` | Discovery. A custom OAuth provider does not read it; an Arcade **User Source** does, and refuses an issuer without a `jwks_uri`. |
 | `GET /login`, `GET /consent` | The two pages a persona sees. Server-rendered HTML, legible on a projector. |
-| `GET /health` | Render's health check. Reports the client id, the endpoint URLs, the JWKS URL and what happened to the client secret at boot. |
+| `GET /health` | Render's health check. Reports the client id, the endpoint URLs, the JWKS URL, what happened to the client secret at boot, and whether the reset route exists. |
+| `POST /admin/reset` | Back to the seeded personas, leaving the OAuth client alone. Bearer `RESET_TOKEN`; 404 when that is unset. See below. |
 
 Every Better Auth route hangs off the site root, so the URLs a human types into the
 Arcade dashboard have no `/api/auth` prefix to forget.
@@ -55,7 +56,7 @@ on the ID token, lowercased. `test/flow.test.ts` asserts the claim is byte-equal
 `/oauth2/userinfo` returns for the same session.
 
 The signing key lives in the `jwks` table in `idp.db`, private half encrypted under
-`BETTER_AUTH_SECRET`. `bun run reset` leaves it alone, for the same reason it leaves the
+`BETTER_AUTH_SECRET`. The reset leaves it alone, for the same reason it leaves the
 OAuth client alone: minting a new key pair would start failing ID-token verification for
 anything holding the old key set.
 
@@ -396,6 +397,24 @@ afterwards with the pre-reset credentials; `test/db.test.ts` holds the cascade l
 
 Deleting the disk (or the whole database) *is* a rotation. Do that only when you intend to
 re-register in Arcade.
+
+### The same reset, over HTTP
+
+```sh
+curl -fsS -X POST https://<idp-host>/admin/reset -H "authorization: Bearer $RESET_TOKEN"
+```
+
+Same code as the script — `src/reset.ts`, one implementation and two callers — and the
+same assertion, returned as a **500** with the old and new ids when it ever fires. It
+exists because a presenter between takes has no shell on the service, and because a
+script in a Render shell attaches to whichever instance Render picked while the endpoint
+is served by the process that is actually answering requests.
+
+`RESET_TOKEN` unset means the route does not exist: 404, and `/health` reports
+`reset: "disabled"`, so the 404 has an explanation somebody can find. It is the same
+variable and the same rules `apps/hooks` and `apps/loan-app` use, and `bun run reset` at
+the repo root presents one bearer to all three (#23). `test/reset-endpoint.test.ts` holds
+the client id, the re-seeded people signing in again, idempotence and both refusals.
 
 ## Running it
 

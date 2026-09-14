@@ -102,9 +102,30 @@ Each service answers `GET /health`:
 
 ```sh
 curl localhost:8081/health   # {"status":"healthy","service":"hooks","policy":{"revision":…},...}
-curl localhost:8082/health   # {"status":"ok","service":"loan-app","loans":8}
+curl localhost:8082/health   # {"status":"ok","service":"loan-app","loans":8,"reset":"disabled"}
 curl localhost:8083/health   # {"status":"ok","service":"idp","people":4,...}
 ```
+
+### Getting back to a clean state
+
+```sh
+bun run reset                   # the three services in this checkout
+bun run reset --target render   # the deployed ones
+```
+
+One command, three databases: the identity provider's people, the control plane's
+policy and audit log, and the loan book. Seconds, idempotent, and safe to run
+repeatedly. It calls each service's own `POST /admin/reset` under a shared
+`RESET_TOKEN`, so with that variable unset there is nothing to call and every route
+answers 404.
+
+**A redeploy is not a reset** — all three databases sit on Render disks and seed only
+when empty — and **a reset is not a re-registration**: nothing here rotates the OAuth
+client Arcade holds, and deleting `idp.db` would.
+
+[`docs/RUNBOOK.md`](./docs/RUNBOOK.md) is the rest of it: the pre-flight, the four
+acts with the prompts as measured, what the panel shows at each beat, and the failure
+playbook.
 
 ## The loan book
 
