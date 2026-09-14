@@ -66,6 +66,8 @@ beforeEach(() => {
   harness.arcade.omitNextUri = false;
   harness.arcade.confirmations.length = 0;
   harness.arcade.nextUriFetches.length = 0;
+  harness.arcade.nextUriHits.length = 0;
+  harness.arcade.nextUriAnswer = "continuation";
 });
 
 /** The session a browser is carrying, unsealed with the harness's own key. */
@@ -377,7 +379,9 @@ describe("hop 2 — the custom verifier", () => {
     // Measured on #75: without this fetch the grant does not store, and the
     // tool re-challenges forever with nothing on the panel to say why.
     expect(harness.arcade.nextUriFetches).toEqual([flowId]);
-    expect(verified.headers.get("location")).toContain("/api/v1/oauth/callback_success");
+    // And #100: the browser goes to the continuation the *server* fetch was
+    // handed, not back to `next_uri` — see the dedicated block below.
+    expect(verified.headers.get("location")).toContain("/authorized");
   });
 
   test("the confirmed identity comes from the session even when the request suggests another", async () => {
@@ -463,10 +467,10 @@ describe("hop 2 — the no-session path, which is the human's case", () => {
 
     const ended = await signInAs(fresh, harness, "riley", {
       from: new URL(parked.headers.get("location")!, harness.webUrl).toString(),
-      stopAt: "/api/v1/oauth/callback_success",
+      stopAt: "/authorized",
     });
 
-    expect(ended.url).toContain("/api/v1/oauth/callback_success");
+    expect(ended.url).toContain("/authorized");
     expect(harness.arcade.confirmations).toEqual([
       { flow_id: flowId, user_id: PEOPLE.riley.email, authorized: true },
     ]);

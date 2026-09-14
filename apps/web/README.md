@@ -46,8 +46,9 @@ Dana, in her own Chrome profile
   → hop 2                    GET /api/arcade/verify?flow_id=…
       email from the sealed session, never from the request
       → POST cloud.arcade.dev/api/v1/oauth/confirm_user   (server-side)
-      → fetch next_uri                                     (server-side)
-      → send the browser on
+      → fetch next_uri                                     (server-side, exactly once)
+      → send the browser to the Location that fetch returned, or to a
+        local "Authorized" page when there is none. Never to next_uri.
 ```
 
 Five route handlers, and they are the whole of it:
@@ -136,6 +137,20 @@ Two measured facts shape the rest of it:
 - **`next_uri` is fetched server-side.** Arcade does not finalise the grant until
   something lands there. A verifier that returns the 303 and trusts the browser to
   follow it is correct for a browser and wrong for everything else.
+- **And it is fetched exactly once — the browser is never the second fetch.** The
+  URL carries a single-use authorization code, and cg-idp's token endpoint answers
+  a replay with `invalid_grant "invalid code"` *and* revokes the tokens the first
+  exchange minted. So this route sends the browser to the `Location` the server
+  fetch was handed, and to a local page when there is none. Redirecting to
+  `next_uri` after fetching it is #100: a verifier that says "authorized", an
+  Arcade grant that exists, and `get_loan` failing a turn later at
+  `GET cg-idp/oauth2/userinfo`. "Is this the same place?" is decided on the
+  **request target** — origin, path, and the query as an unordered multiset of
+  decoded pairs, fragment ignored — not on the URL string, because a `Location`
+  of `?b=2&a=1` against a `next_uri` of `?a=1&b=2` is a different string and the
+  same replay. The `next_uri` status and continuation are logged
+  as `[verifier] next_uri answered …` — origin, path and parameter *names* only,
+  never a value.
 
 A `confirm_user` non-2xx or a `user_mismatch` renders a page carrying Arcade's own
 words and says plainly that nothing was authorized. Nothing fails quietly.

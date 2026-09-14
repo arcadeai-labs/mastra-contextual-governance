@@ -8,6 +8,7 @@
  * the JSON calls Better Auth expects, and answers `/health`. Nothing here knows
  * what a loan is or who is allowed to do what.
  */
+import { authorizationCodeId, codeState, type CodeState } from "./authorization-code.ts";
 import { createAuth, CONSENT_PAGE, ID_TOKEN_ALG, JWKS_PATH, LOGIN_PAGE } from "./auth.ts";
 import { CLIENT_SECRET_STATE_MESSAGE, ensureOAuthClients, findClientName } from "./client.ts";
 import { readConfig, usingDevSecret } from "./config.ts";
@@ -429,7 +430,12 @@ function mixedCredentialsRefusal(): Response {
  * client" from "Arcade has the wrong secret", which is the question anyone
  * reading this line is asking.
  */
-async function logTokenFailure(token: TokenRequest, response: Response, registered: string[]) {
+async function logTokenFailure(
+  token: TokenRequest,
+  response: Response,
+  registered: string[],
+  code: CodeState | null = null,
+) {
   const body = (await response.clone().json().catch(() => null)) as
     | { error?: string; error_description?: string }
     | null;
@@ -440,8 +446,25 @@ async function logTokenFailure(token: TokenRequest, response: Response, register
       `error=${body?.error ?? "(none)"} ` +
       `error_description=${JSON.stringify(body?.error_description ?? "(none)")} ` +
       `client_auth=${JSON.stringify(observedClientAuth(token))} ` +
-      `client_id=${claimed !== null && registered.includes(claimed) ? claimed : "(not the registered client)"}`,
+      `client_id=${claimed !== null && registered.includes(claimed) ? claimed : "(not the registered client)"}` +
+      (code === null ? "" : ` code=${code}`),
   );
+
+  // Its own line, because this one is not a refusal — it is damage. The replay
+  // has already made the plugin revoke the tokens the first exchange minted, so
+  // the relying party is now holding a grant that will fail at
+  // `/oauth2/userinfo` with nothing else to say why (#100).
+  //
+  // `console.log`, not `console.warn`: this is the second half of the sentence
+  // above it, and a two-line diagnosis split across stdout and stderr is two
+  // lines a reader has to reassemble from interleaved streams.
+  if (code === "already_consumed") {
+    console.log(
+      `[${SERVICE}] that code had already been exchanged — the tokens its first exchange ` +
+        `minted have just been revoked (revokeTokensIssuedForAuthorizationCode). ` +
+        `Something is fetching the authorization callback twice.`,
+    );
+  }
 }
 
 const server = Bun.serve({
@@ -546,6 +569,14 @@ const server = Bun.serve({
       const forwardedForm = dual === "duplicated" ? withoutBodyClientSecret(sent.form) : sent.form;
       const forwardedBody = dual === "duplicated" ? forwardedForm.toString() : body;
 
+      // Read *before* the handler runs, and this is the whole trick: the plugin
+      // answers a replayed code and an unknown one with the same
+      // `invalid_grant "invalid code"`, and on the way it revokes the tokens the
+      // first exchange minted — which is the only evidence that the code was
+      // ever real. Afterwards there is nothing left to tell them apart.
+      const presented = sent.form.get("grant_type") === "authorization_code" ? sent.form.get("code") : null;
+      const presentedState = presented ? codeState(db, await authorizationCodeId(presented)) : null;
+
       const response = await auth.handler(
         new Request(request.url, {
           method: "POST",
@@ -557,7 +588,22 @@ const server = Bun.serve({
         // Logged as what the plugin was asked, not as what arrived: after the
         // strip this *is* a `client_secret_basic` request, and saying anything
         // else would send a reader looking for a method problem that is gone.
-        await logTokenFailure({ authorization, form: forwardedForm }, response, registeredClientIds);
+        // The code classification rides along only when the plugin's own answer
+        // is the ambiguous one. On any other rejection — wrong secret, wrong
+        // redirect_uri, PKCE — the code's history is not the question, and a
+        // `code=unknown` beside `invalid_client` would send a reader looking in
+        // the wrong place.
+        const answered = (await response.clone().json().catch(() => null)) as
+          | { error?: string; error_description?: string }
+          | null;
+        const ambiguous =
+          answered?.error === "invalid_grant" && answered?.error_description === "invalid code";
+        await logTokenFailure(
+          { authorization, form: forwardedForm },
+          response,
+          registeredClientIds,
+          ambiguous ? presentedState : null,
+        );
       }
       return response;
     }

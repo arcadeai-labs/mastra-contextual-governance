@@ -25,6 +25,17 @@
  *    this module fetches it **server-side** and then sends the browser on; a
  *    verifier that returns the redirect and trusts the browser to follow it is
  *    correct for a browser and wrong for everything else.
+ *
+ * And one measured on #100, which is the other half of that same sentence:
+ *
+ * 3. **`next_uri` is fetched exactly once, and the browser is never one of the
+ *    two.** The server fetch runs the authorization-code exchange at `cg-idp`;
+ *    a browser sent to the same URL runs it again, and Better Auth's token
+ *    endpoint does not merely refuse the replay — it revokes the tokens the
+ *    first exchange minted. The visible symptom is three layers away: `get_loan`
+ *    fails at `userinfo` with "The identity provider rejected the token." So the
+ *    browser is sent to the **continuation** the server fetch was handed, and to
+ *    a local page when there is none.
  */
 
 /** What `confirm_user` answers with on success. */
@@ -86,8 +97,9 @@ export async function confirmUser(options: {
  * the browser next.
  *
  * `redirect: "manual"` because following it here would run the browser's half
- * of the flow on the server. The only thing this call has to accomplish is that
- * *something* landed on the URL; the browser is then sent to the same place.
+ * of the flow on the server, and because the `Location` is the thing the caller
+ * needs: it is where the browser goes instead of back here. Landing on this URL
+ * is what finalises the grant, and it must happen once — see `continuationOf`.
  */
 export async function followNextUri(nextUri: string): Promise<{ status: number; location: string | null }> {
   const response = await fetch(nextUri, { redirect: "manual" });
@@ -95,4 +107,121 @@ export async function followNextUri(nextUri: string): Promise<{ status: number; 
   // held open by a response nobody read.
   await response.arrayBuffer().catch(() => undefined);
   return { status: response.status, location: response.headers.get("location") };
+}
+
+/**
+ * Where the browser goes once `followNextUri` has already been there.
+ *
+ * `null` means "nowhere it can be sent" and the caller renders a local page.
+ * Three things are refused, each because sending a browser there is a fault:
+ *
+ * - **No `Location`.** The continuation ended at `next_uri`; there is nothing
+ *   further to walk.
+ * - **A `Location` that resolves back to `next_uri`.** Following it would be the
+ *   second exchange of a single-use code, which is #100: Better Auth's token
+ *   endpoint answers `invalid_grant "invalid code"` *and* revokes the tokens the
+ *   first exchange minted (`checkVerificationValue` →
+ *   `revokeTokensIssuedForAuthorizationCode`). The grant is destroyed, not just
+ *   unfinished, and the tool then fails at `userinfo` with no log line here.
+ * - **A scheme that is not `http`/`https`.** The value comes off another
+ *   service's response header and ends up in a `Location` this server writes;
+ *   `javascript:` and `data:` are not somewhere a browser is sent.
+ */
+export function continuationOf(nextUri: string, location: string | null): string | null {
+  if (!location) return null;
+
+  let resolved: URL;
+  try {
+    resolved = new URL(location, nextUri);
+  } catch {
+    return null;
+  }
+  if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return null;
+
+  let target: URL;
+  try {
+    target = new URL(nextUri);
+  } catch {
+    return null;
+  }
+  if (sameRequestTarget(resolved, target)) return null;
+
+  return resolved.href;
+}
+
+/**
+ * Whether two URLs make the **same HTTP request** — which is the only question
+ * that matters here, and is not the same question as whether they are the same
+ * string.
+ *
+ * Round 1 of #115's review found the string version passing a replay. A 302
+ * whose `Location` is `?b=2&a=1` against a `next_uri` of `?a=1&b=2` has a
+ * different `href`, so `href !== href` said "this is a continuation" — and the
+ * browser then sent a byte-identical request line to the single-use endpoint the
+ * server had just spent. Measured: `hits: 2`, and the second one answered
+ * `invalid_grant "invalid code"`. The comparison has to be on what goes on the
+ * wire, not on how the URL happens to be serialised.
+ *
+ * So: origin, path, and the query as an **unordered multiset** of decoded
+ * key/value pairs. `URLSearchParams` does the decoding, which is what makes
+ * `?a=1` and `?a=%31` — and `+` and `%20` — the same pair rather than two.
+ *
+ * Three deliberate choices:
+ *
+ * - **The fragment is ignored**, because a browser never sends it. A `Location`
+ *   that differs from `next_uri` only after the `#` is the same request.
+ * - **A trailing slash is *not* normalised away.** `/callback` and `/callback/`
+ *   are different request targets to most servers, and treating them as one
+ *   would refuse a legitimate continuation.
+ * - **Ties break toward "same".** The path is compared raw *and*
+ *   percent-decoded, so `/callback` matches `/call%62ack`. Being wrong in this
+ *   direction costs a redirect the browser did not need — it lands on the local
+ *   Authorized page instead, and the grant is already made. Being wrong in the
+ *   other direction costs the grant.
+ */
+function sameRequestTarget(a: URL, b: URL): boolean {
+  if (a.origin !== b.origin) return false;
+  if (!samePath(a.pathname, b.pathname)) return false;
+
+  const pairs = (url: URL) =>
+    [...url.searchParams]
+      .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`)
+      .sort();
+
+  const left = pairs(a);
+  const right = pairs(b);
+  return left.length === right.length && left.every((pair, index) => pair === right[index]);
+}
+
+/** Two paths, compared as written and as decoded. A malformed escape stays literal. */
+function samePath(a: string, b: string): boolean {
+  if (a === b) return true;
+  const decode = (value: string) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  };
+  return decode(a) === decode(b);
+}
+
+/**
+ * A URL reduced to what is safe to write into a log: origin, path, and the
+ * *names* of its query parameters.
+ *
+ * Arcade's continuation carries the authorization leg's query string, and on
+ * some legs that includes a `code`. A log line is read by people and shipped to
+ * Render; the shape is the diagnosis and the values are credentials.
+ */
+export function loggable(value: string | null): string {
+  if (!value) return "(none)";
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "(unparseable)";
+  }
+  const names = [...new Set([...url.searchParams.keys()])];
+  return `${url.origin}${url.pathname}${names.length > 0 ? `?${names.map((name) => `${name}=…`).join("&")}` : ""}`;
 }

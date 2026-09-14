@@ -17,7 +17,8 @@
  * - **Arcade Cloud is a stand-in, and only Arcade Cloud.** It speaks the MCP
  *   authorization discovery Arcade speaks (401 → protected-resource metadata →
  *   authorization-server metadata → dynamic registration → authorize → token),
- *   checks PKCE for real, and serves `confirm_user` and a `next_uri`. It is a
+ *   checks PKCE for real, and serves `confirm_user` and a `next_uri` whose code
+ *   is single-use, the way #100 measured Better Auth's to be. It is a
  *   stand-in because the real one needs a project API key and a human's
  *   dashboard field; the shape it imitates is the one spike #04 and #75
  *   measured off the live service, hop for hop.
@@ -209,6 +210,33 @@ export interface ArcadeStandIn {
   confirmations: Array<{ flow_id: string; user_id: string; authorized: boolean }>;
   /** `next_uri`s that were actually fetched. Measured on #75: the grant needs this. */
   nextUriFetches: string[];
+  /**
+   * What `next_uri` answers with.
+   *
+   * `continuation` is the live service's shape as #100 reads it: landing there
+   * runs Arcade's provider exchange and 302s onward to a page that is *not*
+   * `next_uri`. `terminal` is a 200 with no `Location`, which is the other end
+   * of the range and the case where the verifier has nowhere left to send the
+   * browser. Both have to leave the code redeemed exactly once.
+   */
+  nextUriAnswer: "continuation" | "terminal";
+  /**
+   * Every `next_uri` hit, as `flow_id` — including the replays #100 is about.
+   *
+   * Separate from `nextUriFetches`, which is deduplicated per flow, because the
+   * bug is a *second* hit on a flow that already had one, and a list that folds
+   * them together cannot see it.
+   */
+  nextUriHits: string[];
+  /**
+   * The `next_uri` this stand-in handed back for a flow.
+   *
+   * A test asserting "the browser was not sent to `next_uri`" has to know what
+   * `next_uri` was, and reconstructing it from the URL template would be the
+   * test asserting against its own copy of the stand-in rather than against the
+   * stand-in.
+   */
+  nextUriOf(flowId: string): string | undefined;
   /** Bearers presented to the MCP endpoint, in order. */
   bearers: string[];
   /** Force the next `confirm_user` to fail with this status and body. */
@@ -233,7 +261,10 @@ export interface ArcadeStandIn {
 export function startArcadeStandIn(): ArcadeStandIn {
   const codes = new Map<string, { challenge: string; clientId: string; redirectUri: string }>();
   const refreshTokens = new Map<string, string>();
-  const flows = new Map<string, { user_id: string; next_uri: string; authorized: boolean }>();
+  const flows = new Map<
+    string,
+    { user_id: string; next_uri: string; authorized: boolean; redeemed: boolean }
+  >();
 
   const state: ArcadeStandIn = {
     url: "",
@@ -241,6 +272,9 @@ export function startArcadeStandIn(): ArcadeStandIn {
     consents: [],
     confirmations: [],
     nextUriFetches: [],
+    nextUriAnswer: "continuation",
+    nextUriHits: [],
+    nextUriOf: (flowId) => flows.get(flowId)?.next_uri,
     bearers: [],
     failConfirm: null,
     omitNextUri: false,
@@ -382,7 +416,7 @@ export function startArcadeStandIn(): ArcadeStandIn {
           return new Response(JSON.stringify({ code: 400, msg: "Bad request" }), { status: 400 });
         }
         const nextUri = `${state.url}/api/v1/oauth/callback_success?flow_id=${encodeURIComponent(body.flow_id)}`;
-        flows.set(body.flow_id, { user_id: body.user_id, next_uri: nextUri, authorized: false });
+        flows.set(body.flow_id, { user_id: body.user_id, next_uri: nextUri, authorized: false, redeemed: false });
         state.confirmations.push({ flow_id: body.flow_id, user_id: body.user_id, authorized: false });
         return Response.json({
           auth_id: `auth_${body.flow_id}`,
@@ -391,17 +425,57 @@ export function startArcadeStandIn(): ArcadeStandIn {
       }
 
       // Measured on #75: the grant is not finalised until something lands here.
+      //
+      // And measured on #100: the code behind it is single-use. This stand-in
+      // redeems it the first time and refuses every hit after that, the way
+      // Better Auth's token endpoint does — `invalid_grant "invalid code"`, and
+      // the grant already made is revoked rather than left alone. Without the
+      // refusal a replay is invisible here and a test asserting "one hit" is
+      // asserting nothing about what a second one would cost.
       if (pathname === "/api/v1/oauth/callback_success") {
         const flowId = url.searchParams.get("flow_id") ?? "";
-        state.nextUriFetches.push(flowId);
+        state.nextUriHits.push(flowId);
         const flow = flows.get(flowId);
-        if (flow) {
-          flow.authorized = true;
-          for (const confirmation of state.confirmations) {
-            if (confirmation.flow_id === flowId) confirmation.authorized = true;
+        if (!flow || flow.redeemed) {
+          if (flow) {
+            // `revokeTokensIssuedForAuthorizationCode`, in one line.
+            flow.authorized = false;
+            for (const confirmation of state.confirmations) {
+              if (confirmation.flow_id === flowId) confirmation.authorized = false;
+            }
           }
+          return Response.json(
+            { error: "invalid_grant", error_description: "invalid code" },
+            { status: 400 },
+          );
         }
-        return new Response("authorized", { headers: { "content-type": "text/plain" } });
+
+        flow.redeemed = true;
+        flow.authorized = true;
+        state.nextUriFetches.push(flowId);
+        for (const confirmation of state.confirmations) {
+          if (confirmation.flow_id === flowId) confirmation.authorized = true;
+        }
+        if (state.nextUriAnswer === "terminal") {
+          return new Response("authorized", { headers: { "content-type": "text/plain" } });
+        }
+        // The continuation: somewhere that is not `next_uri`, carrying the
+        // authorization leg's query string — which is why the verifier's log
+        // line prints parameter names and not values.
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: `${state.url}/authorized?flow_id=${encodeURIComponent(flowId)}&code=s3cr3t-should-not-be-logged`,
+          },
+        });
+      }
+
+      // Where Arcade's continuation lands. Renders no form, so a browser
+      // walking the chain stops here.
+      if (pathname === "/authorized") {
+        return new Response("<!doctype html><p>Arcade: authorized", {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
       }
 
       return new Response("not found", { status: 404 });

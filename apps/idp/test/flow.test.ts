@@ -1190,6 +1190,140 @@ describe("the token endpoint says why it refused", () => {
   });
 });
 
+/**
+ * #100 — the replayed code, which is the expensive rejection.
+ *
+ * Better Auth answers a code it has never seen and a code it redeemed a moment
+ * ago with the same `invalid_grant "invalid code"`. The second one is not just a
+ * refusal: `checkVerificationValue` calls
+ * `revokeTokensIssuedForAuthorizationCode` on the way out, so the replay deletes
+ * the tokens the *first*, successful exchange minted. The relying party keeps a
+ * grant that has been emptied, and the failure resurfaces somewhere else — here,
+ * `apps/loan-app` getting a 401 from `/oauth2/userinfo`.
+ *
+ * Two rejections 216 ms apart in this log are what #100 actually looked like,
+ * and neither said which kind it was. These tests are about the field that now
+ * does.
+ */
+describe("a replayed authorization code is named as one", () => {
+  const rejection = /POST \/oauth2\/token rejected:/;
+
+  /** The exchange Arcade makes, byte for byte: Basic, form body, PKCE verifier. */
+  async function exchange(code: string, verifier: string): Promise<Response> {
+    return fetch(`${baseUrl}/oauth2/token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: basicAuth(creds.client_id, creds.client_secret!),
+      },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: verifier,
+      }),
+    });
+  }
+
+  test("the second exchange of a real code is logged as already_consumed", async () => {
+    const { code, verifier } = await mintCode(riley);
+
+    const first = await exchange(code, verifier);
+    expect(first.status).toBe(200);
+
+    const from = await logLength();
+    const second = await exchange(code, verifier);
+    expect(second.status).toBe(400);
+    expect(await second.json()).toMatchObject({
+      error: "invalid_grant",
+      error_description: "invalid code",
+    });
+
+    const line = await waitForLogLine(/code=already_consumed/, from);
+    expect(line).toMatch(rejection);
+    expect(line).toContain("error=invalid_grant");
+    expect(line).toContain('error_description="invalid code"');
+    expect(line).toContain(`client_id=${creds.client_id}`);
+    // The code itself is never printed: it is a credential until it is spent,
+    // and this line is written the moment somebody else may be holding it.
+    expect(line).not.toContain(code);
+
+    // And the consequence, on its own line, because "rejected" undersells it.
+    const damage = await waitForLogLine(/had already been exchanged/, from);
+    expect(damage).toContain("revoked");
+  });
+
+  test("a code this service never issued is logged as unknown, not as a replay", async () => {
+    const from = await logLength();
+
+    const response = await exchange(`not-a-code-${crypto.randomUUID()}`, pkce().verifier);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: "invalid_grant",
+      error_description: "invalid code",
+    });
+
+    const line = await waitForLogLine(/code=unknown/, from);
+    expect(line).toMatch(rejection);
+    expect(line).toContain('error_description="invalid code"');
+    // The distinction is the deliverable. Same four words on the wire, two
+    // different lines here.
+    expect(line).not.toContain("already_consumed");
+  });
+
+  test("the tokens the first exchange minted really are revoked by the replay", async () => {
+    // Not an assertion about the log. Without this the two lines above are a
+    // label on a thing nobody measured, and #100 was expensive precisely
+    // because everyone believed the refusal was harmless.
+    const { code, verifier } = await mintCode(morgan);
+
+    const first = await exchange(code, verifier);
+    expect(first.status).toBe(200);
+    const { access_token } = (await first.json()) as { access_token: string };
+
+    const working = await fetch(`${baseUrl}/oauth2/userinfo`, {
+      headers: { authorization: `Bearer ${access_token}` },
+    });
+    expect(working.status).toBe(200);
+
+    const replay = await exchange(code, verifier);
+    expect(replay.status).toBe(400);
+
+    // The same token, the same endpoint, one replay later. This is the exact
+    // 401 `apps/loan-app` turned into "The identity provider rejected the
+    // token." on 2026-09-14.
+    const dead = await fetch(`${baseUrl}/oauth2/userinfo`, {
+      headers: { authorization: `Bearer ${access_token}` },
+    });
+    expect(dead.status).toBe(401);
+  });
+
+  test("a rejection that is not about the code carries no code field", async () => {
+    // `code=` would be noise on every wrong-secret line and would send a reader
+    // looking at the authorization leg for a problem that is in the credential.
+    const { code, verifier } = await mintCode(dana);
+    const from = await logLength();
+
+    const response = await fetch(`${baseUrl}/oauth2/token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: basicAuth(creds.client_id, "definitely-not-the-secret"),
+      },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: verifier,
+      }),
+    });
+    expect(response.status).toBe(401);
+
+    const line = await waitForLogLine(/error=invalid_client/, from);
+    expect(line).not.toContain("code=");
+  });
+});
+
 describe("reset does not rotate the OAuth client", () => {
   test("the credentials Arcade holds still complete a flow after scripts/reset", async () => {
     const before = creds;
