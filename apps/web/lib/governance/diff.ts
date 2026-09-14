@@ -20,14 +20,21 @@
  * injected instruction. With no way to tell them apart, the safe reading of
  * every removed value is "secret".
  *
- * ⚠️ **Since #16 a `/post` event carries `redactions[]` and no payload at all** —
+ * **Since #16 a `/post` event carries `redactions[]` and no payload at all** —
  * not `before`, not `after`, because the audit log is durable and `GET /events`
- * is unauthenticated. So this function has nothing to diff for a redaction
- * event, and the panel's post lane has to be built from `redactions[]` (path,
- * `rule_id`, `pattern_id`, kind) instead: the path names the row, the kind
- * names the mask, and the rule id is {@link DiffRow.annotation}'s chip. That is
- * #21's to wire; nothing in #16 changed this file's behaviour.
+ * is unauthenticated. There is therefore nothing for {@link maskedDiff} to
+ * compare on a redaction event, and a panel that asked it anyway got two
+ * `undefined`s, no rows, and the "came back unchanged" placeholder printed over
+ * the act the demo exists to show. {@link redactionRows} is the other source:
+ * one row per `RedactionRecord`, where the *record* says what changed and the
+ * mask is derived from `kind` rather than from a value nobody sent.
+ *
+ * {@link diffRowsFor} picks between them, and `redactions[]` wins: it is the
+ * control plane's own account of what it removed, and an event carrying one is
+ * never described as unchanged.
  */
+
+import type { GovernanceEvent, RedactionRecord } from "@cg/policy-schema";
 
 /** What happened to one leaf of the payload. */
 export type DiffChange = "changed" | "removed" | "added";
@@ -45,10 +52,10 @@ export interface DiffRow {
   /** What the model actually received here. */
   readonly after: string | null;
   /**
-   * Extension point for the `redactions[]` array `GovernanceEvent` carries
-   * since #16: the `rule_id`/`pattern_id` chip naming *why* this leaf changed.
-   * Nothing reads it yet, so this is always `null` and the renderer omits the
-   * chip; wiring it is #21's.
+   * The `rule_id` — and the `pattern_id` when a sweep rather than a named field
+   * did the work — naming *why* this leaf changed. Populated from
+   * `redactions[]`; `null` on a row derived by comparing two payloads, where
+   * nothing on the event says which rule touched which leaf.
    */
   readonly annotation: string | null;
 }
@@ -142,4 +149,68 @@ export function maskedDiff(before: unknown, after: unknown): DiffRow[] {
 
   walk("", before, after);
   return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Rows from `redactions[]` — the shape a real `/post` event arrives in
+// ---------------------------------------------------------------------------
+
+/**
+ * What the model got where a value used to be, said in words.
+ *
+ * Derived from `kind` alone, because a `RedactionRecord` deliberately carries
+ * no value and no replacement text — see its docstring in `@cg/policy-schema`.
+ * So the panel can say *that* a field was masked and never what the mask
+ * covered, which is the invariant this whole file exists to keep.
+ */
+const OUTCOME: Record<RedactionRecord["kind"], string | null> = {
+  mask: "masked",
+  replace: "replaced",
+  // `null` renders as "removed entirely": the key is gone from the payload
+  // rather than standing there holding a marker.
+  remove: null,
+  unsettled: "withheld — the output policy did not settle",
+};
+
+/** `changed` for a substitution, `removed` for a deletion. Never `added`. */
+const CHANGE: Record<RedactionRecord["kind"], DiffChange> = {
+  mask: "changed",
+  replace: "changed",
+  remove: "removed",
+  unsettled: "changed",
+};
+
+/**
+ * One row per redaction, in the order the engine reported them (rule priority,
+ * then id), so the panel reads in the same order the audit row does.
+ *
+ * `before` is the same mask phrase the payload diff uses, minus the type: the
+ * record does not say whether what went was a string or a number, and guessing
+ * would be inventing detail about a value nobody has.
+ */
+export function redactionRows(redactions: readonly RedactionRecord[]): DiffRow[] {
+  return redactions.map((record) => ({
+    path: record.path,
+    change: CHANGE[record.kind],
+    before: "value withheld",
+    after: OUTCOME[record.kind],
+    annotation: [record.rule_id, record.pattern_id].filter((part) => part !== null).join(" · ") || null,
+  }));
+}
+
+/**
+ * The rows for one event, from whichever account of the change it carries.
+ *
+ * `redactions[]` first and by preference: it is the control plane's own record,
+ * it names the rule per leaf, and it exists precisely so the event does not
+ * have to carry the payload. Falling back to the payload diff keeps the older
+ * shape renderable — a hook that does send `before`/`after` still draws — and
+ * an event with neither yields no rows, which is the one case the renderer is
+ * allowed to call unchanged.
+ */
+export function diffRowsFor(event: GovernanceEvent): DiffRow[] {
+  if (event.redactions !== undefined && event.redactions.length > 0) {
+    return redactionRows(event.redactions);
+  }
+  return maskedDiff(event.before, event.after);
 }

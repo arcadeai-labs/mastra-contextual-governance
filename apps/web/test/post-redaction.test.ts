@@ -35,6 +35,11 @@ import { anthropicModel } from "../lib/agent/agent.ts";
 import { chat, CHAT_PATH } from "../lib/agent/handlers.ts";
 import { decodeEvents, replyText, type ChatEvent } from "../lib/agent/events.ts";
 import { liveModelKey, promptText, scriptedModel, type Turn } from "./model.ts";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { GovernanceEvent } from "@cg/policy-schema";
+import { ControlPlanePanelView } from "../components/governance/ControlPlanePanelView.tsx";
+import { appendEvents, emptyTimeline } from "../lib/governance/timeline.ts";
 import { writeSession, type Session } from "../lib/identity/session.ts";
 import loans from "../../loan-app/src/fixtures/loans.json" with { type: "json" };
 
@@ -253,6 +258,52 @@ describe("Dana reads the file the demo turns on", () => {
       (row) => row.hook === "pre" && row.execution_id === post?.execution_id,
     );
     expect(pre?.tool).toBe("Loan.GetLoan");
+  });
+});
+
+describe("the panel, fed the row the control plane actually wrote", () => {
+  // The reviewer's reproduction, automated. Not a hand-built event: this takes
+  // the `/post` row `apps/hooks` wrote during the turn above, off `GET /audit`,
+  // and renders the real panel with it. Round 1 shipped a hook whose event the
+  // panel could not read — `EventCard` handed `MaskedDiff` two absent payloads
+  // and the Post lane printed "the payload came back unchanged" over act 3.
+  let markup: string;
+
+  beforeAll(async () => {
+    const rows = await harness.audit();
+    const row = rows.find(
+      (candidate) => candidate.hook === "post" && candidate.decision === "modify",
+    );
+    expect(row).toBeDefined();
+
+    const event = GovernanceEvent.parse(row);
+    markup = renderToStaticMarkup(
+      createElement(ControlPlanePanelView, {
+        timeline: appendEvents(emptyTimeline(), [event]),
+        status: "live" as const,
+        source: { mode: "fixture" as const },
+      }),
+    );
+  }, TURN_TIMEOUT_MS);
+
+  test("the Post lane shows the paths, the masks and the rules that fired", () => {
+    expect(markup).toContain("$.bank_account_number");
+    expect(markup).toContain("$.tax_id");
+    expect(markup).toContain("$.underwriter_notes");
+    expect(markup).toContain("value withheld");
+    expect(markup).toContain("post.redact-borrower-identifiers");
+    expect(markup).toContain("post.strip-injected-instructions");
+  });
+
+  test("and does not call it unchanged", () => {
+    expect(markup).not.toContain("unchanged");
+    expect(markup).toContain('data-decision="modify"');
+  });
+
+  test("and still prints no value the rules removed", () => {
+    expect(markup).not.toContain(ACCOUNT_NUMBER);
+    expect(markup).not.toContain(TAX_ID);
+    expect(markup).not.toContain(INJECTION);
   });
 });
 

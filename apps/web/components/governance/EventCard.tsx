@@ -32,6 +32,7 @@
 import type { GovernanceEvent } from "@cg/policy-schema";
 
 import { DECISIONS } from "./decisions.ts";
+import { diffRowsFor } from "../../lib/governance/diff.ts";
 import { MaskedDiff } from "./MaskedDiff.tsx";
 
 /** `16:04:31` — the wall clock a presenter can point at. UTC, as the event is. */
@@ -57,6 +58,12 @@ export function EventCard({
   correlated?: boolean;
 }) {
   const decision = DECISIONS[event.decision];
+  // Two accounts of a change, one renderer. A `/post` redaction arrives as
+  // `redactions[]` with no payload at all (#16); anything that does send
+  // `before`/`after` is still diffed. Asking for the rows here rather than
+  // inside the component is what stopped the card from passing two
+  // `undefined`s and drawing "unchanged" over act 3.
+  const rows = diffRowsFor(event);
   const showDiff = event.decision === "modify" || event.before !== undefined;
   const count = members.length;
   const grouped = count > 1;
@@ -89,7 +96,7 @@ export function EventCard({
 
       {event.reason !== "" && <p className="cg-reason">{event.reason}</p>}
 
-      {showDiff && <MaskedDiff before={event.before} after={event.after} />}
+      {showDiff && <MaskedDiff rows={rows} />}
 
       {grouped && (
         <details className="cg-event-members">

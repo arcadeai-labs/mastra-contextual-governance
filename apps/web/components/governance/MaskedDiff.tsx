@@ -1,23 +1,31 @@
 /**
- * The before/after diff for a `modify`.
+ * What a `modify` changed, one row per leaf: the field, what it was, what it
+ * became — stacked rather than set in two columns, because a lane is a third of
+ * half a screen and two columns at that width wrap every value into an
+ * unreadable ribbon.
  *
- * Three parts per changed leaf — the field, what it was, what it became —
- * stacked rather than set in two columns, because a lane is a third of half a
- * screen and two columns at that width wrap every value into an unreadable
- * ribbon.
+ * Handed rows rather than payloads, because there are two ways to know what
+ * changed and only one of them involves a payload: a real `/post` event carries
+ * `redactions[]` and nothing else (#16). `lib/governance/diff.ts` decides which
+ * account to read; this component only draws.
  *
- * Every `before` here is a mask produced by `maskedDiff()`, and this component
- * cannot print a removed value because it is never handed one. The mask is
- * drawn on a hatched field with the word *withheld* in it: a design review
- * found that the previous row of dots read, at projector distance, as a value
- * in a masked font rather than as the absence of one. The visual language is
- * something struck out of a document, which is what happened to it.
+ * Every `before` here is a mask, and this component cannot print a removed
+ * value because it is never handed one. The mask is drawn on a hatched field
+ * with the word *withheld* in it: a design review found that the previous row
+ * of dots read, at projector distance, as a value in a masked font rather than
+ * as the absence of one. The visual language is something struck out of a
+ * document, which is what happened to it.
+ *
+ * **No rows means no change, and only then.** The placeholder below is a claim
+ * about the control plane — that it looked and took nothing — so it must never
+ * stand in for an event whose account of itself this component failed to read.
+ * That is exactly what it did before #16's review: a redaction event carries no
+ * payload, the diff of two absent payloads is empty, and act 3 rendered as "the
+ * payload came back unchanged".
  */
-import { maskedDiff } from "../../lib/governance/diff.ts";
+import type { DiffRow } from "../../lib/governance/diff.ts";
 
-export function MaskedDiff({ before, after }: { before: unknown; after: unknown }) {
-  const rows = maskedDiff(before, after);
-
+export function MaskedDiff({ rows }: { rows: readonly DiffRow[] }) {
   if (rows.length === 0) {
     return (
       <div className="cg-diff">
@@ -52,10 +60,10 @@ export function MaskedDiff({ before, after }: { before: unknown; after: unknown 
             </span>
           </div>
 
-          {/* The rule_id / pattern_id naming why this leaf changed. The event
-              has carried `redactions[]` since #16, but nothing reads it into
-              `DiffRow` yet — that is #21 — so this is absent today. */}
-          {row.annotation !== null && <p className="cg-diff-path">{row.annotation}</p>}
+          {/* Which rule took this leaf, and which pattern found it. Present on
+              rows built from `redactions[]`; absent on a payload diff, where
+              nothing on the event attributes a leaf to a rule. */}
+          {row.annotation !== null && <p className="cg-diff-rule">{row.annotation}</p>}
         </div>
       ))}
     </div>
