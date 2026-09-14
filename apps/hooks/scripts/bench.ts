@@ -43,6 +43,9 @@ const server = createServer({
 });
 const base = `http://localhost:${server.port}`;
 
+const auditRows = (): number =>
+  db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM audit_log").get()?.n ?? 0;
+
 function bigCatalogue(targetBytes: number) {
   const toolkits: Record<string, unknown> = { Loan: { tools: LOAN_TOOLS } };
   let bytes = 0;
@@ -82,9 +85,28 @@ async function time(label: string, path: string, body: unknown, runs: number) {
 }
 
 const { bytes, toolkits } = bigCatalogue(1_600_000);
-console.log(`whole-project catalogue: ${Object.keys(toolkits).length} toolkits, ${(bytes / 1024 / 1024).toFixed(2)} MB\n`);
+const entries: number = Object.values(toolkits).reduce<number>(
+  (n, t) => n + Object.keys((t as { tools: Record<string, unknown> }).tools).length,
+  0,
+);
+console.log(
+  `whole-project catalogue: ${Object.keys(toolkits).length} toolkits, ` +
+    `${entries.toLocaleString("en-US")} tools, ${(bytes / 1024 / 1024).toFixed(2)} MB\n`,
+);
 
-await time("/access whole-project catalogue", "/access", { user_id: SAM, toolkits }, 20);
+const beforeCatalogue = auditRows();
+const CATALOGUE_RUNS = 20;
+await time("/access whole-project catalogue", "/access", { user_id: SAM, toolkits }, CATALOGUE_RUNS);
+/**
+ * Rows per whole-project call, measured rather than assumed (#107).
+ *
+ * It used to be one per catalogue entry — 10,844 — and the disk arithmetic
+ * below was written against that constant. It is now one row per governed tool
+ * plus one summary, and the point of measuring it here is that a change to
+ * `src/access-audit.ts` moves this line rather than leaving a stale number in
+ * a README.
+ */
+const rowsPerCatalogueCall = (auditRows() - beforeCatalogue) / CATALOGUE_RUNS;
 await time("/access scoped to Loan", "/access", { user_id: SAM, toolkits: { Loan: { tools: LOAN_TOOLS } } }, 200);
 await time("/pre deny (act 2)", "/pre", {
   execution_id: "tc_bench",
@@ -99,7 +121,11 @@ await time("/pre allow", "/pre", {
   context: { authorization: [{}], user_id: DANA },
 }, 200);
 
-console.log(`\naudit rows written: ${db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM audit_log").get()?.n}`);
+console.log(
+  `\naudit rows written: ${auditRows().toLocaleString("en-US")}` +
+    `  (whole-project /access: ${rowsPerCatalogueCall} rows per call, ` +
+    `for ${entries.toLocaleString("en-US")} tools decided)`,
+);
 
 // ---------------------------------------------------------------------------
 // What the log costs on disk (#62)
@@ -125,7 +151,42 @@ const empty = openGovernance(":memory:", { loanToolkit: "Loan", approvalsToolkit
 const baseline = sizeOf(empty, "empty.db");
 empty.close();
 
-const rows = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM audit_log").get()?.n ?? 0;
+// The rows the timing section left are too few to price a table with — under
+// #107's accounting a whole-project call writes five, not ten thousand — so the
+// pricing pass writes its own, through the same real handlers over the same
+// real socket.
+//
+// A **mix**, and that matters more than the count: a row's size is mostly its
+// `reason`, and the four below are the four lengths this service writes. Pricing
+// the table off `/access` alone would quote the cheapest row there is ("No rule
+// matched.") as the average, and a `/pre` denial carrying a rendered remediation
+// instruction is several times that.
+const PRICING_ROWS = 50_000;
+const pricingCalls: Array<[string, unknown]> = [
+  // Dana: four governed tools, four allows. The demo's ordinary shape.
+  ["/access", { user_id: DANA, toolkits: { Loan: { tools: LOAN_TOOLS } } }],
+  // Sam: the same four, one of them hidden by a rule, with the rule's own reason.
+  ["/access", { user_id: SAM, toolkits: { Loan: { tools: LOAN_TOOLS } } }],
+  // A summary row, and the reason that goes with it.
+  ["/access", { user_id: DANA, toolkits: { Stock: { tools: { A: V, B: V, C: V } } } }],
+  // The longest reason this service writes: act 2's rendered remediation.
+  ["/pre", {
+    execution_id: "tc_bench_price",
+    tool: { name: "ApproveLoan", toolkit: "Loan", version: "1.0.0" },
+    inputs: { loan_id: "LN-2291", amount: 95_000 },
+    context: { authorization: [{}], user_id: DANA },
+  }],
+];
+for (let i = 0; auditRows() < PRICING_ROWS; i += 1) {
+  const [path, body] = pricingCalls[i % pricingCalls.length]!;
+  await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
+    body: JSON.stringify(body),
+  });
+}
+
+const rows = auditRows();
 const withRows = sizeOf(db, "with-rows.db");
 const perRow = (withRows - baseline) / rows;
 const GB = 1024 ** 3;
@@ -136,8 +197,7 @@ console.log(
     `(${(baseline / 1024).toFixed(0)} KB)\n` +
     `  ${perRow.toFixed(0)} bytes/row  →  a 1 GB disk holds ~` +
     `${Math.floor(GB / perRow).toLocaleString("en-US")} rows, ` +
-    `~${Math.floor(GB / perRow / 10_844).toLocaleString("en-US")} whole-project /access calls, ` +
-    `~${Math.floor(GB / perRow / 8_259).toLocaleString("en-US")} org-admin tools/list bursts`,
+    `~${Math.floor(GB / perRow / rowsPerCatalogueCall).toLocaleString("en-US")} whole-project /access calls`,
 );
 rmSync(dir, { recursive: true, force: true });
 
