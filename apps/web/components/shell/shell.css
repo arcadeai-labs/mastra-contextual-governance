@@ -52,9 +52,12 @@
  * is the shell taking that offer. Three lanes in 960px want a smaller root than
  * three lanes in 1920px, and one number moves all of it.
  *
- * Measured at 1920x1080: 16.3px, which puts a lane name at 32px, a tool name at
- * 20px and the smallest identifier at 12.4px.
+ * Measured at 1920x1080: 18.2px, against 25.3px for the same panel on its own
+ * full-width page. Not half, deliberately — the stream badge and the event meta
+ * line are the smallest things on the panel and they are also the two that carry
+ * the claim "this is the live control plane, and here is whose call it was".
+ * They set the floor; the lanes had room to spare.
  */
 .cg-split-right .cg-panel {
-  font-size: clamp(13px, 0.85vw, 20px);
+  font-size: clamp(14px, 0.95vw, 22px);
 }

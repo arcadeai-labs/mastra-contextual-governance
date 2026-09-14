@@ -97,10 +97,14 @@ export function BankPane({
         </span>
       </div>
 
+      {/* Reading order is the order of the demo, and it is also what fits above
+          the fold on a 1920x1080 projector: the file being decided, then the
+          conversation deciding it. The tool list is act 1's and the sign-in
+          panel is used once per browser profile, so both sit below — measured,
+          not guessed: with the tool list second the Send button landed 31px
+          under the fold. */}
       <div className="bank-body">
         <LoanFiles />
-
-        <ToolListSlot>{toolList}</ToolListSlot>
 
         <section className="bank-panel bank-chat" aria-label="Assistant">
           <h2 className="bank-panel-title">Assistant</h2>
@@ -108,6 +112,8 @@ export function BankPane({
             <Chat signedInAs={signedInAs} {...(onChatEvent ? { onEvent: onChatEvent } : {})} {...(onTurnStart ? { onTurnStart } : {})} />
           </div>
         </section>
+
+        <ToolListSlot>{toolList}</ToolListSlot>
 
         <section className="bank-panel" aria-label="User session">
           <h2 className="bank-panel-title">User session</h2>
