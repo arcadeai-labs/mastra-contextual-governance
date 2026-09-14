@@ -136,8 +136,11 @@ cost a day on #75.
             GET /api/arcade/verify?flow_id=…   (apps/web)
               · session present → POST cloud.arcade.dev/api/v1/oauth/confirm_user
                 {flow_id, user_id: <session email>} server-side, then fetch next_uri
-                server-side, then send the browser on. The grant does not store
-                unless next_uri is fetched (measured, #75).
+                server-side exactly once, then send the browser to apps/web's own
+                Authorized page, which links to / (never to Arcade's continuation;
+                human decision at the #100 gate, landed #118 e23bf57). The grant does
+                not store unless next_uri is fetched (measured, #75). Arcade's Location
+                from that fetch is logged and otherwise ignored.
               · no session → park flow_id in a short-lived signed cookie, send the
                 browser to sign-in, and complete the same two calls from the sign-in
                 callback. The verifier never reads the persona from the query string.
