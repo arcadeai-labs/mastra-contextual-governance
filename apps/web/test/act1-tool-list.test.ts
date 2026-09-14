@@ -152,7 +152,54 @@ describe("the tool list comes from the gateway, per signed-in persona", () => {
     // checked `toHaveLength(3)` would pass if the gateway swapped one tool for
     // another.
     expect(names).not.toContain(APPROVE_WIRE);
-    expect(names).toEqual(["Loan_SearchLoans", "Loan_GetLoan", "Loan_DenyLoan"]);
+    expect(names).toEqual([
+      "Loan_SearchLoans",
+      "Loan_GetLoan",
+      "Loan_DenyLoan",
+      "Approvals_RequestApproval",
+      "Approvals_Decide",
+    ]);
+  });
+
+  /**
+   * `DESIGN.md` → No model-side controls, enforced on the sentence the model
+   * actually receives rather than on the source that produced it.
+   *
+   * The rule bars behavioural instruction in a tool description "in either
+   * direction: nothing about confirming, refusing, escalating, retrying,
+   * caution or irreversibility". Round 1 of #89's review found the approvals
+   * descriptions this slice added saying *"Escalate an action you were refused
+   * authority for ... You do not choose the approver ... It does not wait for
+   * the answer"* — three instructions, defended with the wrong test.
+   *
+   * It is worth a test rather than a correction because of what #89 measures.
+   * The live 5/5 is the claim that the *hook's* sentence moved the model. A
+   * description that had already told it to escalate after a refusal would have
+   * been steering the very result the measurement exists to prove.
+   *
+   * Read through `sessionTools`, so what is checked is what a real `tools/list`
+   * put in front of the model, not a string in a file that may not reach it.
+   *
+   * Scoped to the approvals toolkit: the loan descriptions carry "there is no
+   * undo", which is open as #90 and is not this slice's to change. When #90
+   * lands, widen this to every tool the gateway advertises.
+   */
+  test("the approvals descriptions instruct the model in nothing", async () => {
+    const result = await sessionTools(sessionFor(DANA), { config: harness.config });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const approvals = result.tools.filter((tool) => tool.name.startsWith("Approvals_"));
+    // Both of them, so a toolkit that silently stopped being advertised cannot
+    // pass this by having nothing to check.
+    expect(approvals).toHaveLength(2);
+
+    const barred =
+      /\b(escalat\w*|refus\w*|retry|retrying|confirm\w*|caution\w*|irreversib\w*|no undo|you (?:should|must|do not|can)|only then|and stop|wait for)\b/i;
+    for (const tool of approvals) {
+      expect(tool.description.length).toBeGreaterThan(0);
+      expect(tool.description).not.toMatch(barred);
+    }
   });
 
   test("as Dana, the same call lists it", async () => {
@@ -237,8 +284,16 @@ describe("who the /access frame names", () => {
 
     // One row per tool decided, allowed or hidden — `handleAccess` writes the
     // whole catalogue so a reviewer can reconstruct every decision, not only
-    // the refusals.
+    // the refusals. Six rows, across both project toolkits: `/access` is asked
+    // about the approvals tools too, and an unasked question would be a control
+    // that never ran rather than a control that allowed (#89).
+    //
+    // Dot-spelled, all six. This is the audit trail, and the audit trail names
+    // tools the way every hook payload does — the underscore belongs in the one
+    // place a rule addresses the model, and nowhere else.
     expect(rows.map((row) => row.tool).sort()).toEqual([
+      "Approvals.Decide",
+      "Approvals.RequestApproval",
       "Loan.ApproveLoan",
       "Loan.DenyLoan",
       "Loan.GetLoan",
@@ -295,7 +350,16 @@ describe("the $95K prompt, as Sam, who has no approval authority at all", () => 
     expect(result.status).toBe(200);
     expect(lastSurface?.advertised).not.toContain(APPROVE_WIRE);
     expect(lastSurface?.governed).not.toContain(APPROVE_WIRE);
-    expect(lastSurface?.governed).toEqual(["Loan_SearchLoans", "Loan_GetLoan", "Loan_DenyLoan"]);
+    // Everything except the one tool act 1 hides. Sam keeps the approvals tools
+    // — nothing in the policy takes them from him, and act 1's claim is about
+    // `ApproveLoan` specifically, not about a narrower surface in general.
+    expect(lastSurface?.governed).toEqual([
+      "Loan_SearchLoans",
+      "Loan_GetLoan",
+      "Loan_DenyLoan",
+      "Approvals_RequestApproval",
+      "Approvals_Decide",
+    ]);
   });
 
   test("no denied tool call appears in the audit log, because no call was attempted", () => {

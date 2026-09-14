@@ -2,6 +2,7 @@
   "//": [
     "The cast and the rules governance.db is seeded from when it has no schema. Edit a row live in the database, not here — this file is read once, on first boot.",
     "$LOAN and $APPROVALS are replaced at seed time with ARCADE_LOAN_TOOLKIT and ARCADE_APPROVALS_TOOLKIT. Tool names are PascalCase because arcade-mcp PascalCases them unconditionally (measured on #35); a rule keyed on get_loan matches nothing, and a rule that matches nothing is indistinguishable from a rule that permits.",
+    "The placeholder is the toolkit name alone, so the separator after it is yours to choose and it means something (#89). Write $LOAN.ApproveLoan in a match or anywhere naming the tool as a hook payload and an audit row do; write $LOAN_ApproveLoan in a pre denial's reason, because that sentence is addressed to the model and the model can only call the name its own tool list carries. The compiler enforces the difference: a reason naming a catalogued toolkit dot-spelled does not compile.",
     "$APPROVALS.Decide lists an argument the tool does not take: `approval`. It is not something a caller supplies — /pre resolves the request_id against approval_requests and writes the resolved facts into that key, discarding anything the caller put there. Catalogued because a rule condition may only read a catalogued argument, and optional because a request_id naming nothing must reach pre.decide-needs-a-known-request rather than be refused as a malformed call.",
     "Emails are the fallback for a local run and must equal apps/idp/src/fixtures/people.json's. PERSONA_<KEY>_EMAIL overrides each one at seed time, exactly as apps/idp does.",
     "Two output rules, on purpose (#16). post.redact-borrower-identifiers is act 3 and is conditioned on clearance — Riley and Morgan read the identifiers, Dana and Sam do not — because a control that redacts for everyone demonstrates nothing about identity. post.strip-injected-instructions is act 4 and is conditioned on nobody, because whether text is trying to give the model orders is not a question about anyone's authority; a chief credit officer must not be the one persona who reads the injection. Both fire on the same call and the audit row names each by id.",
@@ -74,7 +75,7 @@
       "match": { "toolkit": "$LOAN", "tool": "ApproveLoan" },
       "conditions": [{ "input": "amount", "operator": "exceeds_clearance" }],
       "effect": "deny",
-      "reason": "DENIED: approving {{inputs.loan_id}} for {{inputs.amount}} exceeds your approval authority of {{subject.clearance}}. To proceed, call $APPROVALS.RequestApproval with action=approve_loan, resource_id={{inputs.loan_id}}, amount={{inputs.amount}} and justification=<why this loan should be approved>, then wait for the approval and retry $LOAN.ApproveLoan with loan_id={{inputs.loan_id}} and amount={{inputs.amount}} unchanged.",
+      "reason": "DENIED: approving {{inputs.loan_id}} for {{inputs.amount}} exceeds your approval authority of {{subject.clearance}}. To proceed, call $APPROVALS_RequestApproval with action=approve_loan, resource_id={{inputs.loan_id}}, amount={{inputs.amount}} and justification=<why this loan should be approved>, then wait for the approval and retry $LOAN_ApproveLoan with loan_id={{inputs.loan_id}} and amount={{inputs.amount}} unchanged.",
       "priority": 100
     },
     {

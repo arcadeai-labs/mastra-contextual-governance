@@ -415,16 +415,23 @@ describe("the table exercises every rejection the union declares", () => {
 describe("a validated grant lifts the denial it was issued for", () => {
   // The fixture clearance rule — deny when quantity exceeds the subject's
   // clearance — with a reason `compilePolicy` accepts: a pre denial has to tell
-  // the model what to call next. SUBJECT's clearance is 50; the call asks 95.
+  // the model what to call next, naming the tool the way the model's own tool
+  // list spells it (#89). SUBJECT's clearance is 50; the call asks 95.
+  //
+  // `compilePolicy` runs here in a `describe` body rather than inside an `it`,
+  // so a reason it rejects does not fail a test — it throws between tests, and
+  // every `it` below silently never registers. That is how round 1 of this
+  // slice's review found `Approvals.request_approval` still here: `bun test`
+  // printed no failure and exited 1.
   const policy = compilePolicy({
     catalogue: {
       [SAMPLE_TOOLKIT]: { [SAMPLE_WRITE_TOOL]: ["widget_id", "quantity", "note?"] },
-      Approvals: { request_approval: ["resource_id", "quantity", "justification"] },
+      Approvals: { RequestApproval: ["resource_id", "quantity", "justification"] },
     },
     rules: [
       aPolicyRule({
         reason:
-          "Blocked. To proceed, call Approvals.request_approval with " +
+          "Blocked. To proceed, call Approvals_RequestApproval with " +
           "resource_id={{inputs.widget_id}}, quantity={{inputs.quantity}} and " +
           "justification=<why>, then retry this call unchanged.",
       }),

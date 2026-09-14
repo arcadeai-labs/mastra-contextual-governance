@@ -941,8 +941,12 @@ and then says in its own result that no message was sent rather than reporting a
 `slack_message_ts` it invented — an agent that believes it has escalated something nobody
 will see is the failure `tools/approvals` spends a comment block on.
 
-To drive it by hand, the gateway stand-in advertises the approvals toolkit as soon as it
-has a store token to reach `/approvals` with:
+**Advertising the approvals toolkit and running it are two different things**, and the
+gateway stand-in keeps them apart. It advertises `Approvals_RequestApproval` and
+`Approvals_Decide` **always**, submits them to `/access` with everything else and governs
+them at `/pre`, because the agent has to be able to *see* the tool the pre-hook's
+remediation sentence names — a model that cannot refuses the instruction, which is #89.
+Whether a call to one then *runs* depends on `APPROVALS_STORE_TOKEN`:
 
 ```sh
 ARCADE_API_URL=http://localhost:4405 HOOKS_PUBLIC_HOST=localhost:4401 \
@@ -951,9 +955,19 @@ ARCADE_API_URL=http://localhost:4405 HOOKS_PUBLIC_HOST=localhost:4401 \
   bun run --cwd apps/web gateway-stand-in
 ```
 
-Without `APPROVALS_STORE_TOKEN` it advertises the loan toolkit alone and act 2 stops at
-the denial — an approvals tool the agent is offered and then refused by reads as the
-control plane misbehaving.
+With the token the two tools are real clients of the real `/approvals` endpoints. Without
+it the call still reaches `/access` and `/pre` — it is on the panel and in the audit log,
+which is what act 2's second half has to be able to show — and is then refused with a
+sentence saying this stand-in holds no store token. An invented request id would be worse
+than that error in the way this repo keeps naming: the beat would look finished and no
+approver would ever have been asked.
+
+The tool descriptions in the stand-in **instruct the model in nothing** — not when to call
+a tool, not what to do after it answers, not who chooses the approver. `DESIGN.md` → No
+model-side controls bars that in a tool description exactly as it bars it in the system
+prompt, and `test/act1-tool-list.test.ts` reads the descriptions back through a real
+`tools/list` and fails on the vocabulary, so the rule is enforced on the sentence the model
+receives rather than on the source that produced it.
 
 ## Act 1 — the tool an analyst cannot see
 

@@ -46,6 +46,37 @@ describe("the seed", () => {
     expect(() => compilePolicy({ catalogue: data.catalogue, rules: data.policy_rules })).not.toThrow();
   });
 
+  /**
+   * The stage-edit case, which is the one that would actually bite.
+   *
+   * `governance.db` is editable live and `DESIGN.md` says so — that is the
+   * point of the rule editor and of the `sqlite3` shell on the Render disk. So
+   * "the seed spells it right" is a weaker claim than it looks: the rule that
+   * fires on stage is whatever the row says at that moment. Put the dot back
+   * and the control plane refuses the whole policy and fails closed, which is
+   * loud. The alternative is a rule that denies, writes its audit row, renders
+   * its reason, and instructs the model to call a name it has never been shown
+   * (#89) — a demo that looks like it works.
+   */
+  test("a rule edited back to the dot spelling does not compile", () => {
+    const db = fresh();
+    const before = readRevision(db);
+    db.query(
+      `UPDATE policy_rules SET reason = ? WHERE id = 'pre.approve-within-clearance'`,
+    ).run(
+      "DENIED: approving {{inputs.loan_id}} for {{inputs.amount}} exceeds your approval " +
+        "authority of {{subject.clearance}}. To proceed, call Approvals.RequestApproval with " +
+        "action=approve_loan, resource_id={{inputs.loan_id}}, amount={{inputs.amount}} and " +
+        "justification=<why this loan should be approved>.",
+    );
+    // The edit landed and the cache would notice it.
+    expect(readRevision(db)).toBeGreaterThan(before);
+
+    expect(() => compilePolicy(readPolicy(db))).toThrow(
+      /names "Approvals\.RequestApproval".*"Approvals_RequestApproval" — write that instead/s,
+    );
+  });
+
   test("carries the cast with the limits DESIGN.md names", () => {
     const byName = Object.fromEntries(loadSeed(OPTIONS).subjects.map((s) => [s.display_name, s]));
     expect(byName["Dana Okafor"]).toMatchObject({ role: "loan_officer", clearance: 50_000 });
@@ -91,8 +122,15 @@ describe("the seed", () => {
     ]);
     expect(data.output_rules.every((r) => r.match.toolkit === "LoanBook")).toBe(true);
     const escalation = data.policy_rules.find((r) => r.hook === "pre");
-    expect(escalation?.reason).toContain("Escalations.RequestApproval");
-    expect(escalation?.reason).toContain("LoanBook.ApproveLoan");
+    // The remediation sentence is addressed to the model, so it carries the
+    // wire spelling — and it carries the *configured* toolkit name in it, which
+    // is the half of #89 a deployment that renamed its toolkits would break
+    // silently. `match` above stays dot-free and split in two; the reason is
+    // the only place the separator is a decision.
+    expect(escalation?.reason).toContain("Escalations_RequestApproval");
+    expect(escalation?.reason).toContain("LoanBook_ApproveLoan");
+    expect(escalation?.reason).not.toContain("Escalations.RequestApproval");
+    expect(escalation?.reason).not.toContain("LoanBook.ApproveLoan");
     expect(JSON.stringify(data)).not.toContain("$LOAN");
     expect(JSON.stringify(data)).not.toContain("$APPROVALS");
     expect(() => compilePolicy({ catalogue: data.catalogue, rules: data.policy_rules })).not.toThrow();

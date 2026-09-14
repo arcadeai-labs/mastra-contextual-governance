@@ -71,7 +71,7 @@ let web: ReturnType<typeof Bun.serve>;
 let currentModel: () => unknown;
 
 beforeAll(async () => {
-  harness = await startAgentHarness({ approvals: true });
+  harness = await startAgentHarness();
   web = Bun.serve({
     port: 0,
     idleTimeout: 120,

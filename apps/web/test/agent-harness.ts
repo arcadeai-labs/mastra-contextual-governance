@@ -147,22 +147,6 @@ export interface AgentHarnessOptions {
    * being the real service.
    */
   hooksEnv?: Record<string, string>;
-  /**
-   * Advertise the approvals toolkit as well as the loan one, so the agent can
-   * reach `Approvals_RequestApproval` and `Approvals_Decide` (#20's resume
-   * half). The two tools are real clients of the real `/approvals` endpoints on
-   * this harness's own control plane; only Slack is missing.
-   *
-   * **Opt-in, and it is the wider surface that is the truthful one.** A live
-   * `tools/list` for a signed-in persona carries eight entries — the project's
-   * six plus the gateway's two built-ins (`DESIGN.md` → Tool surface) — and the
-   * agent's allow-list has named both toolkits since #88's review. What is
-   * narrow is this stand-in, and the reason it stays narrow by default is
-   * scope rather than accuracy: act 1's suite (#15) asserts on the exact list a
-   * persona is shown, and widening it from here would be #20 editing #15's
-   * claim about act 1. #89 owns that move.
-   */
-  approvals?: boolean;
 }
 
 export async function startAgentHarness(
@@ -198,7 +182,7 @@ export async function startAgentHarness(
       ARCADE_HOOK_SIGNING_SECRET: HOOK_SECRET,
       APPROVALS_STORE_TOKEN: STORE_TOKEN,
       ARCADE_LOAN_TOOLKIT: LOAN_TOOLKIT,
-      ARCADE_APPROVALS_TOOLKIT: "Approvals",
+      ARCADE_APPROVALS_TOOLKIT: APPROVALS_TOOLKIT,
       LOAN_APP_PUBLIC_HOST: "localhost:1",
       NODE_ENV: "test",
       ...options.hooksEnv,
@@ -233,14 +217,18 @@ export async function startAgentHarness(
     hookSigningSecret: HOOK_SECRET,
     loanAppHost,
     loanToolkit: LOAN_TOOLKIT,
-    // Off unless a suite asks. See `AgentHarnessOptions.approvals`.
-    ...(options.approvals !== true
-      ? {}
-      : {
-          approvalsToolkit: APPROVALS_TOOLKIT,
-          approvalsStoreToken: STORE_TOKEN,
-          webPublicHost: "localhost:1",
-        }),
+    // Advertised always, since #89: a live `tools/list` carries both project
+    // toolkits, and an agent that cannot see `Approvals_RequestApproval`
+    // refuses the pre-hook's own remediation instruction. Every suite gets the
+    // surface the deployed system has.
+    approvalsToolkit: APPROVALS_TOOLKIT,
+    // And **runnable**, since #20's resume half: with the store token the two
+    // approvals tools are real clients of the real `/approvals` endpoints on
+    // this harness's own control plane, so act 2's second half can be driven
+    // end to end. Without it they are advertised and governed and then refuse
+    // honestly, which is what `createGatewayStandIn` does on its own.
+    approvalsStoreToken: STORE_TOKEN,
+    webPublicHost: "localhost:1",
     onCall: (call) => calls.push(call),
     onList: (list) => lists.push(list),
   });
@@ -252,6 +240,7 @@ export async function startAgentHarness(
     ARCADE_API_KEY: "arcade-key-for-agent-tests",
     ARCADE_GATEWAY_ID: GATEWAY_ID,
     ARCADE_LOAN_TOOLKIT: LOAN_TOOLKIT,
+    ARCADE_APPROVALS_TOOLKIT: APPROVALS_TOOLKIT,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY?.trim() || "anthropic-key-for-agent-tests",
     MODEL_ID: process.env.MODEL_ID?.trim() || "claude-sonnet-5",
     SESSION_SECRET,

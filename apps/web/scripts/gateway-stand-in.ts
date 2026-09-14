@@ -48,12 +48,16 @@
  *
  * Not real, and deliberately so:
  *
- * - **Slack.** `Approvals_RequestApproval` routes by #9's real rule and records
- *   the request against the real `/approvals` endpoints, and then does not post
- *   a DM, because a user token for Slack is a credential no local run holds.
- *   The result says that in words rather than reporting a `slack_message_ts` it
- *   invented — an agent that believes it has escalated something nobody will
- *   see is the one failure `tools/approvals` spends a comment block on.
+ * - **Slack.** With a store token, `Approvals_RequestApproval` routes by #9's
+ *   real rule and records the request against the real `/approvals` endpoints,
+ *   and then does not post a DM, because a user token for Slack is a credential
+ *   no local run holds. The result says that in words rather than reporting a
+ *   `slack_message_ts` it invented — an agent that believes it has escalated
+ *   something nobody will see is the one failure `tools/approvals` spends a
+ *   comment block on. Without a store token the two approvals tools are still
+ *   advertised and still governed, and a call to one is refused with a sentence
+ *   saying so: being in the list is what act 2's second half needs (#89), and
+ *   running is a separate question (#20).
  * - **Layer 2 is a switch, not a flow.** Arcade evaluates tool auth
  *   requirements before `/pre` and, on a first use, answers with an
  *   `authorization_url` for the persona to visit. There is no OAuth here to
@@ -118,14 +122,24 @@ const TOOL_VERSION = "1.0.0";
 export const GATEWAY_BUILTINS = ["System_ManageAuthorization", "Arcade_ListApps"] as const;
 
 /**
- * What a toolkit advertises, as `arcade-mcp` PascalCases it (#35), and how
- * this stand-in runs it once `/pre` has allowed the call.
+ * What a project toolkit advertises, as `arcade-mcp` PascalCases it (#35), and
+ * how — or whether — this stand-in runs it once `/pre` has allowed the call.
  *
  * Two targets, because the two deployed toolkits are stateless clients of two
  * different services and neither of them is Arcade. `tools/loan` calls
  * `apps/loan-app` with the persona's bearer; `tools/approvals` calls the
  * `/approvals` endpoints on `apps/hooks` with the shared store token. The
  * split is `arcade deploy`'s, not this file's — see `DESIGN.md` → Services.
+ *
+ * **Advertising a tool and running it are two different things**, and the
+ * approvals toolkit is where the difference is load-bearing in both directions.
+ * The agent has to be able to *see* `Approvals_RequestApproval`, because the
+ * pre-hook's remediation sentence names it and a model that cannot see it
+ * refuses the instruction (#89) — so it is always advertised, always submitted
+ * to `/access`, always governed at `/pre`. Whether it then *runs* depends on
+ * whether this stand-in was given a store token to reach `/approvals` with
+ * (#20). Without one, `call` is absent and the call is refused honestly rather
+ * than answered with an invented request id.
  */
 interface BaseToolSpec {
   name: string;
@@ -145,8 +159,16 @@ interface ApprovalsToolSpec extends BaseToolSpec {
    * The tool's own body, run in-process against the real `/approvals`
    * endpoints. Returns what the deployed Python tool returns, or the message
    * it would have raised as a `ToolExecutionError`.
+   *
+   * **Absent when this stand-in holds no store token.** Then the tool is still
+   * advertised and still governed — it reaches `/access` and `/pre`, and it is
+   * on the panel and in the audit log, which is what act 2's second half has to
+   * be able to show — and the call is refused with a sentence saying so. An
+   * invented request id would be worse in exactly the way this repo keeps
+   * naming: the beat would look finished and no approver would ever have been
+   * asked.
    */
-  call: (
+  call?: (
     inputs: Record<string, unknown>,
     actor: string,
   ) => Promise<{ ok: true; value: unknown } | { ok: false; error: string }>;
@@ -384,58 +406,70 @@ function createApprovalsStore(options: {
 }
 
 /**
- * The approvals toolkit, running the body of `tools/approvals` against the
- * real `/approvals` endpoints.
+ * The approvals tools, advertised and governed here; run only when this
+ * stand-in was given a store token.
  *
- * **What is real here and what is not.** The routing is the real rule —
- * `routeApproval` from `@cg/governance-core`, the same module `tools/approvals`
- * is checked against row for row (#9, `approver-routing-cases.json`). The
- * roster, the record, the id and the decision are the real service's, over
- * real HTTP, behind the real `APPROVALS_STORE_TOKEN`. What is missing is
- * **Slack**: posting a DM needs a user token nobody holds offline, so the
- * result says in as many words that no message was sent rather than reporting
- * a `slack_message_ts` it invented. An agent reading it is told the truth
- * about what happened.
+ * They exist in this file for one reason: `tools/list` is where the agent's
+ * surface comes from, and act 2's second half is the model reading a denial
+ * that says *"call `Approvals_RequestApproval`"* and doing it. A stand-in that
+ * advertised the loan toolkit alone would make that impossible offline and
+ * would make it look like a model problem — which is exactly how #89 was found.
  *
- * The descriptions are shortened from `tools/approvals`'. Note what
- * `RequestApproval`'s still carries and why it is not steering: *"it does not
- * wait for the answer"* is a statement about the tool, which the model
- * genuinely cannot know otherwise, and it is the deployed toolkit's own text
- * (`tools/approvals/approvals/__init__.py`), not a sentence this file wrote to
- * get a beat to land.
+ * **The descriptions state what each tool does and instruct the model in
+ * nothing** — not when to call it, not what to do after it answers, not who
+ * chooses the approver. `DESIGN.md` → No model-side controls bars behavioural
+ * instruction "in either direction: nothing about confirming, refusing,
+ * escalating, retrying, caution or irreversibility", and it bars it in a tool
+ * description exactly as it bars it in the system prompt. Round 1 of #89's
+ * review caught an earlier draft here saying *"Escalate an action you were
+ * refused authority for ... You do not choose the approver ... It does not wait
+ * for the answer"*: three behavioural instructions, defended at the time with
+ * the wrong test — "nothing about who may do it" is not the rule.
+ *
+ * It matters more here than anywhere, because the live 5/5 measurement is the
+ * claim that *the hook's sentence* moved the model. A description that already
+ * told it to escalate after a refusal would have been steering the result the
+ * measurement was taken to prove, and the number would have meant nothing.
+ * `test/act1-tool-list.test.ts` reads these back through a real `tools/list`
+ * and fails on the vocabulary, so the rule is enforced on the sentence the
+ * model receives rather than on the source that produced it.
+ *
+ * `store` is what makes them runnable (#20). Without it they are advertised,
+ * submitted to `/access`, governed at `/pre` — and then honestly refused.
  */
-function approvalsTools(toolkit: string, store: ApprovalsStore): ApprovalsToolSpec[] {
+function approvalsTools(toolkit: string, store?: ApprovalsStore): ApprovalsToolSpec[] {
   return [
     {
       target: "approvals",
       name: `${toolkit}_RequestApproval`,
       description:
-        "Escalate an action you were refused authority for to the person who can approve it. It routes the request to the individual holding the lowest authority sufficient to cover it — you do not choose the approver — records it, notifies them, and returns the request ID and who was asked. It does not wait for the answer and it grants you nothing.",
+        "Records a request for one person's approval of an action on a resource, and notifies the approver it routes to. Returns the request ID and who was notified.",
       inputSchema: object(
         {
-          action: str("The action that was refused, named exactly as the refusal named it."),
-          resource_id: str("The thing the action was going to act on — for example LN-2291."),
-          amount: num("The dollar amount the refused call carried, unchanged."),
-          justification: str("Why this should be approved, in your own words."),
+          action: str("The action the approval would cover — for example approve_loan."),
+          resource_id: str("What the action would act on, such as a loan application ID."),
+          amount: num("The amount the approval would cover, in US dollars."),
+          justification: str("The case for the action. The approver reads it verbatim."),
         },
         ["action", "resource_id", "amount", "justification"],
       ),
-      call: (inputs, actor) => store.requestApproval(inputs, actor),
+      ...(store === undefined
+        ? {}
+        : { call: (inputs, actor) => store.requestApproval(inputs, actor) }),
     },
     {
       target: "approvals",
       name: `${toolkit}_Decide`,
-      description:
-        "Record an approver's answer to an approval request. It records the answer against the request; it does not decide anything itself and it does not check whether the caller was entitled to.",
+      description: "Records an approver's answer against an approval request.",
       inputSchema: object(
         {
-          request_id: str("The ID of the approval request being decided."),
-          decision: { ...str("Whether the request is approved or denied."), enum: ["approved", "denied"] },
-          note: str("A note to the requester explaining the decision. Optional."),
+          request_id: str("The approval request being answered."),
+          decision: { ...str("The answer."), enum: ["approved", "denied"] },
+          note: str("An optional note recorded with the decision."),
         },
         ["request_id", "decision"],
       ),
-      call: (inputs, actor) => store.decide(inputs, actor),
+      ...(store === undefined ? {} : { call: (inputs, actor) => store.decide(inputs, actor) }),
     },
   ];
 }
@@ -469,17 +503,23 @@ export interface GatewayStandInOptions {
   /** `tool.toolkit` as Arcade files the deployed loan toolkit. */
   loanToolkit?: string;
   /**
-   * `tool.toolkit` as Arcade files the deployed approvals toolkit, and the
-   * bearer its two tools reach the `/approvals` endpoints with.
+   * `tool.toolkit` as Arcade files the deployed approvals toolkit.
    *
-   * Both or neither. Omitted, this stand-in advertises the loan toolkit alone
-   * and act 2 stops at the denial, which is what every caller before #20's
-   * resume half wanted. Supplied, `Approvals_RequestApproval` and
-   * `Approvals_Decide` are advertised, submitted to `/access` with everything
-   * else, and governed at `/pre` like every other call.
+   * Always advertised, whether or not this is set — the default is the name
+   * `.env.example` pins. The agent has to be able to see
+   * `Approvals_RequestApproval` because the pre-hook's remediation sentence
+   * names it (#89).
    */
   approvalsToolkit?: string;
-  /** The shared `APPROVALS_STORE_TOKEN` the two approvals tools present. */
+  /**
+   * The shared `APPROVALS_STORE_TOKEN` the two approvals tools present, which
+   * is what makes them **runnable** here (#20).
+   *
+   * Unset, they are still advertised, still submitted to `/access` and still
+   * governed at `/pre`, and a call to one is then refused with a sentence
+   * saying this stand-in does not run it. Set, they are real clients of the
+   * real `/approvals` endpoints on `apps/hooks`.
+   */
   approvalsStoreToken?: string;
   /** Where the approval link points. HOST-form or a full origin. */
   webPublicHost?: string;
@@ -534,7 +574,7 @@ export interface GatewayStandIn {
 
 export function createGatewayStandIn(options: GatewayStandInOptions): GatewayStandIn {
   const toolkit = options.loanToolkit ?? "Loan";
-  const approvalsToolkit = options.approvalsToolkit?.trim() ?? "";
+  const approvalsToolkit = options.approvalsToolkit?.trim() || "Approvals";
   const actors = new Map<string, string>();
   const challenges = new Map<string, string>();
   const tokenForActor = options.tokenForActor ?? ((email: string) => `dev:${email}`);
@@ -544,21 +584,28 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
   const hooks = base(options.hooksHost);
   const loanApp = base(options.loanAppHost);
 
-  const tools: ToolSpec[] = [
-    ...loanTools(toolkit),
-    ...(approvalsToolkit === ""
-      ? []
-      : approvalsTools(
-          approvalsToolkit,
-          createApprovalsStore({
-            hooks,
-            storeToken: options.approvalsStoreToken ?? "",
-            webHost: options.webPublicHost?.startsWith("http")
-              ? options.webPublicHost
-              : base(options.webPublicHost ?? "localhost:3000"),
-          }),
-        )),
-  ];
+  // Runnable only with a store token to reach `/approvals` with. Advertised
+  // either way — see `approvalsStoreToken` on the options above.
+  const approvalsStore =
+    (options.approvalsStoreToken ?? "") === ""
+      ? undefined
+      : createApprovalsStore({
+          hooks,
+          storeToken: options.approvalsStoreToken as string,
+          webHost: options.webPublicHost?.startsWith("http")
+            ? options.webPublicHost
+            : base(options.webPublicHost ?? "localhost:3000"),
+        });
+
+  // Both project toolkits, because a live gateway advertises both and the
+  // agent's allow-list is keyed on both (DESIGN.md → Tool surface). Grouped by
+  // toolkit rather than flattened, because `/access` speaks toolkit-and-tool
+  // and the request below has to carry every one of them.
+  const byToolkit: Record<string, ToolSpec[]> = {
+    [toolkit]: loanTools(toolkit),
+    [approvalsToolkit]: approvalsTools(approvalsToolkit, approvalsStore),
+  };
+  const tools = Object.values(byToolkit).flat();
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
   const mcpPath = `/mcp/${options.gatewayId}`;
@@ -576,15 +623,19 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
    * answers in; `/access` speaks tool-and-toolkit, and this is the join.
    */
   async function hiddenFor(actor: string): Promise<{ ok: true; tools: Set<string> } | { ok: false; reason: string }> {
-    // Grouped by toolkit rather than assumed to be one, since #20's resume
-    // half: a project with two deployed toolkits submits both in one call,
-    // which is also what the live gateway does.
-    const toolkits: Record<string, { tools: Record<string, Array<{ version: string }>> }> = {};
-    for (const tool of tools) {
-      const { toolkit: owner, name } = qualifiedToolName(tool.name);
-      const entry = (toolkits[owner] ??= { tools: {} });
-      entry.tools[name] = [{ version: TOOL_VERSION }];
-    }
+    // One entry per toolkit, each carrying its own tools. Submitting only the
+    // loan toolkit would leave every approvals tool unasked-about — and an
+    // unasked question is not an allow, it is a control that never ran.
+    const toolkits = Object.fromEntries(
+      Object.entries(byToolkit).map(([name, specs]) => [
+        name,
+        {
+          tools: Object.fromEntries(
+            specs.map((tool) => [qualifiedToolName(tool.name).name, [{ version: TOOL_VERSION }]]),
+          ),
+        },
+      ]),
+    );
 
     const access = await fetch(`${hooks}/access`, {
       method: "POST",
@@ -773,6 +824,26 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
           ),
         );
       }
+      if (spec.target === "approvals" && spec.call === undefined) {
+        // Advertised, governed, and then honestly unfinished — this stand-in
+        // was given no store token. The call reached `/access` and `/pre` and
+        // is on the panel and in the audit log, which is what act 2's second
+        // half has to be able to show. What it cannot do without a bearer for
+        // `/approvals` is record the request and route an approver.
+        //
+        // An invented request id would be worse than this error in exactly the
+        // way this repo keeps naming: the beat would look finished and no
+        // approver would ever have been asked.
+        options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "ran" });
+        return rpc(
+          message.id,
+          toolError(
+            `"${wire}" passed /pre. This stand-in advertises the ${approvalsToolkit} toolkit so the ` +
+              `agent can reach it, but it holds no APPROVALS_STORE_TOKEN, so it cannot record the ` +
+              `request or route an approver. Tell the user the request could not be sent.`,
+          ),
+        );
+      }
 
       // The tool itself. Two targets, one `/post` below: `tools/loan` is a
       // client of `apps/loan-app` with the persona's bearer, `tools/approvals`
@@ -780,7 +851,7 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
       // run only because `/pre` said OK, and both are asked about at `/post`.
       let payload: Record<string, unknown> | null;
       if (spec.target === "approvals") {
-        const outcome = await spec.call(inputs, actor).catch((cause: unknown) => ({
+        const outcome = await spec.call!(inputs, actor).catch((cause: unknown) => ({
           ok: false as const,
           error: cause instanceof Error ? cause.message : String(cause),
         }));
@@ -962,10 +1033,9 @@ if (import.meta.main) {
 
   const gatewayId = env.ARCADE_GATEWAY_ID?.trim() || "cg-demo-us";
   const hooksHost = env.HOOKS_PUBLIC_HOST?.trim() || "localhost:8081";
-  // Both toolkits when the store token is there to reach `/approvals` with,
-  // the loan toolkit alone when it is not — because an approvals tool that
-  // cannot reach the store is a tool the agent is offered and then refused by,
-  // which reads as the control plane misbehaving.
+  // Both toolkits always — the agent has to be able to see
+  // `Approvals_RequestApproval`, because the pre-hook's remediation sentence
+  // names it (#89). The store token is what decides whether they *run*.
   const storeToken = env.APPROVALS_STORE_TOKEN?.trim() || "";
   const standIn = createGatewayStandIn({
     gatewayId,
@@ -973,10 +1043,11 @@ if (import.meta.main) {
     hookSigningSecret: env.ARCADE_HOOK_SIGNING_SECRET?.trim() || "cg-hooks-dev-secret-not-for-production",
     loanAppHost: env.LOAN_APP_PUBLIC_HOST?.trim() || "localhost:8082",
     loanToolkit: env.ARCADE_LOAN_TOOLKIT?.trim() || "Loan",
+    // Advertised either way; runnable only with a store token.
+    approvalsToolkit: env.ARCADE_APPROVALS_TOOLKIT?.trim() || "Approvals",
     ...(storeToken === ""
       ? {}
       : {
-          approvalsToolkit: env.ARCADE_APPROVALS_TOOLKIT?.trim() || "Approvals",
           approvalsStoreToken: storeToken,
           webPublicHost: env.PUBLIC_URL?.trim() || env.WEB_PUBLIC_HOST?.trim() || "localhost:3000",
         }),
@@ -1003,8 +1074,9 @@ if (import.meta.main) {
   );
   console.log(
     storeToken === ""
-      ? `[gateway-stand-in] APPROVALS_STORE_TOKEN is not set, so only the loan toolkit is advertised ` +
-          `and act 2 stops at the denial. Set it to run the approvals half offline.`
+      ? `[gateway-stand-in] the approvals toolkit is advertised and governed but NOT run: ` +
+          `APPROVALS_STORE_TOKEN is not set, so a call to it reaches /access and /pre and is then ` +
+          `refused. Set it to run the approvals half offline.`
       : `[gateway-stand-in] the approvals toolkit is advertised and reaches ${hooksHost}/approvals. ` +
           `No Slack message is sent — there is no credential here — and RequestApproval says so in ` +
           `its own result rather than reporting a message id it did not get.`,

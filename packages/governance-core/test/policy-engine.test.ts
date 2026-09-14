@@ -43,7 +43,7 @@ import {
 
 const READ: ToolRef = { toolkit: SAMPLE_TOOLKIT, name: SAMPLE_READ_TOOL };
 const WRITE: ToolRef = { toolkit: SAMPLE_TOOLKIT, name: SAMPLE_WRITE_TOOL };
-const ESCALATE: ToolRef = { toolkit: "Approvals", name: "request_approval" };
+const ESCALATE: ToolRef = { toolkit: "Approvals", name: "RequestApproval" };
 /**
  * What the gateway serves, keyed by the toolkit names config carries: each
  * tool with the arguments a call to it must supply.
@@ -64,8 +64,8 @@ const CATALOGUE = {
     ],
   },
   Approvals: {
-    request_approval: ["resource_id", "quantity", "justification"],
-    decide: ["request_id", "decision"],
+    RequestApproval: ["resource_id", "quantity", "justification"],
+    Decide: ["request_id", "decision"],
   },
 };
 
@@ -85,7 +85,7 @@ const director: Subject = aSubject({
 
 const REMEDIATION =
   "DENIED: {{inputs.quantity}} exceeds your {{subject.clearance}} clearance for " +
-  "{{tool.toolkit}}.{{tool.name}}. To proceed, call Approvals.request_approval with " +
+  "{{tool.toolkit}}.{{tool.name}}. To proceed, call Approvals_RequestApproval with " +
   "resource_id={{inputs.widget_id}}, quantity={{inputs.quantity}} and justification=<why " +
   "this is needed>, then retry this call unchanged once it is approved.";
 
@@ -117,7 +117,7 @@ function fullInputs(tool: ToolRef): Record<string, unknown> {
 
 /** A reason that passes the remediation check without saying anything specific. */
 const ESCALATE_FIRST =
-  "Blocked. To proceed, call Approvals.request_approval with resource_id={{inputs.widget_id}}, " +
+  "Blocked. To proceed, call Approvals_RequestApproval with resource_id={{inputs.widget_id}}, " +
   "quantity={{inputs.quantity}} and justification=<why>, then retry.";
 
 function policy(rules: PolicyRule[], overrides: Partial<Policy> = {}) {
@@ -269,7 +269,7 @@ describe("evaluatePermission: amounts against clearance", () => {
     const { reason } = call(supervisor, 95);
     expect(reason).toBe(
       "DENIED: 95 exceeds your 50 clearance for Widgets.update_widget. To proceed, call " +
-        "Approvals.request_approval with resource_id=WID-1, quantity=95 and justification=<why " +
+        "Approvals_RequestApproval with resource_id=WID-1, quantity=95 and justification=<why " +
         "this is needed>, then retry this call unchanged once it is approved.",
     );
   });
@@ -778,16 +778,33 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
       /must tell the model what to do next.*"Insufficient authority\."/,
     ],
     [
+      // #89. The rule is otherwise perfect: right tool, right arguments, right
+      // toolkit. It just names the tool the way an audit row does, and the
+      // model's tool list has no such entry — so the one sentence that was
+      // going to un-stick the turn instructs nothing. Refused at compile time,
+      // because at run time it looks exactly like a working denial.
+      "a pre denial naming a catalogued tool in the dot spelling the model never sees",
+      withRules(
+        rule({
+          ...base(),
+          reason:
+            "Blocked. To proceed, call Approvals.RequestApproval with resource_id={{inputs.widget_id}}, " +
+            "quantity={{inputs.quantity}} and justification=<why>, then retry.",
+        }),
+      ),
+      /names "Approvals\.RequestApproval", the spelling hook payloads and audit rows use.*"Approvals_RequestApproval" — write that instead/s,
+    ],
+    [
       "a pre denial naming a tool that a catalogued toolkit does not serve",
-      withRules(rule({ ...base(), reason: "Call Approvals.escalate with resource_id=1." })),
-      /names "Approvals\.escalate", which toolkit "Approvals" does not serve.*must tell the model what to do next/s,
+      withRules(rule({ ...base(), reason: "Call Approvals_Escalate with resource_id=1." })),
+      /names "Approvals_Escalate", which toolkit "Approvals" does not serve.*must tell the model what to do next/s,
     ],
     [
       "a pre denial whose argument values are empty placeholders",
       withRules(
         rule({
           ...base(),
-          reason: "Call Approvals.request_approval with resource_id={{}}, quantity={{}}, justification={{}}.",
+          reason: "Call Approvals_RequestApproval with resource_id={{}}, quantity={{}}, justification={{}}.",
         }),
       ),
       /does not form a placeholder.*no value for argument\(s\) "resource_id", "quantity", "justification"/s,
@@ -797,7 +814,7 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
       withRules(
         rule({
           ...base(),
-          reason: `Call Approvals.request_approval with resource_id="", quantity='', justification=<>.`,
+          reason: `Call Approvals_RequestApproval with resource_id="", quantity='', justification=<>.`,
         }),
       ),
       /no value for argument\(s\) "resource_id", "quantity", "justification"/,
@@ -817,15 +834,15 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
       withRules(
         rule({
           ...base(),
-          reason: `${NO_REMEDIATION}. Instead call Bogus.escalate with ticket=1.`,
+          reason: `${NO_REMEDIATION}. Instead call Bogus_Escalate with ticket=1.`,
         }),
       ),
-      /says "Do not retry" but also instructs a call \("Bogus\.escalate"\)/,
+      /says "Do not retry" but also instructs a call \("Bogus_Escalate"\)/,
     ],
     [
       "a pre denial that says Do not retry and then names a catalogued tool",
-      withRules(rule({ ...base(), reason: `${NO_REMEDIATION}; Approvals.request_approval is closed.` })),
-      /says "Do not retry" but also instructs a call \("Approvals\.request_approval"\)/,
+      withRules(rule({ ...base(), reason: `${NO_REMEDIATION}; Approvals_RequestApproval is closed.` })),
+      /says "Do not retry" but also instructs a call \("Approvals_RequestApproval"\)/,
     ],
     [
       "a subject matcher with an empty roles list, which matches nobody",
@@ -899,30 +916,30 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
         rule({
           ...base(),
           reason:
-            "Call Approvals.request_approval; then Bogus.do_thing with resource_id=WID-1, " +
+            "Call Approvals_RequestApproval; then Bogus_DoThing with resource_id=WID-1, " +
             "quantity=95, justification=needed.",
         }),
       ),
-      /"Approvals\.request_approval" but not the argument\(s\) it needs.*gives argument\(s\) "resource_id", "quantity", "justification" to "Bogus\.do_thing", which is not a catalogued tool/s,
+      /"Approvals_RequestApproval" but not the argument\(s\) it needs.*gives argument\(s\) "resource_id", "quantity", "justification" to "Bogus_DoThing", which is not a catalogued tool/s,
     ],
     [
       "a pre denial naming a remediation tool but none of its arguments",
-      withRules(rule({ ...base(), reason: "Call Approvals.request_approval first." })),
-      /"Approvals\.request_approval" but not the argument\(s\) it needs: "resource_id", "quantity", "justification"/,
+      withRules(rule({ ...base(), reason: "Call Approvals_RequestApproval first." })),
+      /"Approvals_RequestApproval" but not the argument\(s\) it needs: "resource_id", "quantity", "justification"/,
     ],
     [
       "a pre denial naming a remediation tool but only some of its arguments",
       withRules(
-        rule({ ...base(), reason: "Call Approvals.request_approval with resource_id=1, quantity=2." }),
+        rule({ ...base(), reason: "Call Approvals_RequestApproval with resource_id=1, quantity=2." }),
       ),
-      /"Approvals\.request_approval" but not the argument\(s\) it needs: "justification"/,
+      /"Approvals_RequestApproval" but not the argument\(s\) it needs: "justification"/,
     ],
     [
       "a pre denial naming every argument but giving none of them a value",
       withRules(
         rule({
           ...base(),
-          reason: "Call Approvals.request_approval with resource_id=, quantity=, justification=.",
+          reason: "Call Approvals_RequestApproval with resource_id=, quantity=, justification=.",
         }),
       ),
       /no value for argument\(s\) "resource_id", "quantity", "justification"/,
@@ -932,20 +949,20 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
       withRules(
         rule({
           ...base(),
-          reason: "Call Approvals.request_approval with resource_id=1, quantity= and justification=x.",
+          reason: "Call Approvals_RequestApproval with resource_id=1, quantity= and justification=x.",
         }),
       ),
       /no value for argument\(s\) "quantity"/,
     ],
     [
       "a pre denial naming an argument the remediation tool does not accept",
-      withRules(rule({ ...base(), reason: "Call Approvals.request_approval with banana=1." })),
-      /gives "Approvals\.request_approval" argument\(s\) "banana", which it does not accept/,
+      withRules(rule({ ...base(), reason: "Call Approvals_RequestApproval with banana=1." })),
+      /gives "Approvals_RequestApproval" argument\(s\) "banana", which it does not accept/,
     ],
     [
       "a pre denial whose one argument is a value placeholder with no argument name",
       withRules(
-        rule({ ...base(), reason: "Call Approvals.request_approval for {{inputs.widget_id}}." }),
+        rule({ ...base(), reason: "Call Approvals_RequestApproval for {{inputs.widget_id}}." }),
       ),
       /not the argument\(s\) it needs/,
     ],
@@ -1007,7 +1024,7 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
         rule({
           ...base(),
           reason:
-            "Call Approvals.request_approval with resource_id={{inputs.missing_id}}, " +
+            "Call Approvals_RequestApproval with resource_id={{inputs.missing_id}}, " +
             "quantity={{inputs.missing_quantity}}, justification={{inputs.missing_reason}}.",
         }),
       ),
@@ -1040,7 +1057,7 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
         rule({
           ...base(),
           reason:
-            "With resource_id=1, quantity=2, justification=x, call Approvals.request_approval.",
+            "With resource_id=1, quantity=2, justification=x, call Approvals_RequestApproval.",
         }),
       ),
       /before naming the tool they belong to/,
@@ -1051,11 +1068,11 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
         rule({
           ...base(),
           reason:
-            "Call Approvals.request_approval with request_id=<id>, decision=approve; then " +
-            "Approvals.decide with resource_id=1, quantity=2, justification=x.",
+            "Call Approvals_RequestApproval with request_id=<id>, decision=approve; then " +
+            "Approvals_Decide with resource_id=1, quantity=2, justification=x.",
         }),
       ),
-      /"Approvals\.request_approval" but not the argument\(s\) it needs: "resource_id", "quantity", "justification"/,
+      /"Approvals_RequestApproval" but not the argument\(s\) it needs: "resource_id", "quantity", "justification"/,
     ],
   ];
 
@@ -1105,7 +1122,7 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
         rule({
           ...base(),
           reason:
-            "Call Approvals.request_approval with resource_id={{inputs.widget_id}}, " +
+            "Call Approvals_RequestApproval with resource_id={{inputs.widget_id}}, " +
             "quantity={{inputs.quantity}}, justification=<your reason>; then retry.",
         }),
       ]),
@@ -1121,7 +1138,7 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
     ];
     for (const args of forms) {
       expect(() =>
-        policy([rule({ ...base(), reason: `Call Approvals.request_approval with ${args}.` })]),
+        policy([rule({ ...base(), reason: `Call Approvals_RequestApproval with ${args}.` })]),
       ).not.toThrow();
     }
   });
@@ -1168,7 +1185,7 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
         rule({
           ...base(),
           reason:
-            "Call Approvals.request_approval with resource_id={{inputs.widget_id}}, " +
+            "Call Approvals_RequestApproval with resource_id={{inputs.widget_id}}, " +
             "quantity={{inputs.quantity}}, justification=<why>.",
         }),
       ]),
@@ -1181,7 +1198,7 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
         rule({
           ...base(),
           reason:
-            "Call Approvals.request_approval with resource_id={{inputs.widget_id}}, " +
+            "Call Approvals_RequestApproval with resource_id={{inputs.widget_id}}, " +
             "quantity={{inputs.quantity}}, justification=<e.g. why the customer needs it>.",
         }),
       ]),
@@ -1203,15 +1220,15 @@ describe("compilePolicy refuses a policy that cannot mean what it says", () => {
 
   it("checks each remediation tool named, when a reason names more than one", () => {
     const both =
-      "Call Approvals.request_approval with resource_id=1, quantity=2, justification=x; " +
-      "once approved, Approvals.decide is called with request_id=<id>, decision=approve.";
+      "Call Approvals_RequestApproval with resource_id=1, quantity=2, justification=x; " +
+      "once approved, Approvals_Decide is called with request_id=<id>, decision=approve.";
     expect(() => policy([rule({ ...base(), reason: both })])).not.toThrow();
 
     const halfDone =
-      "Call Approvals.request_approval with resource_id=1, quantity=2, justification=x; " +
-      "then Approvals.decide with request_id=<id>.";
+      "Call Approvals_RequestApproval with resource_id=1, quantity=2, justification=x; " +
+      "then Approvals_Decide with request_id=<id>.";
     expect(() => policy([rule({ ...base(), reason: halfDone })])).toThrow(
-      /"Approvals\.decide" but not the argument\(s\) it needs: "decision"/,
+      /"Approvals_Decide" but not the argument\(s\) it needs: "decision"/,
     );
   });
 

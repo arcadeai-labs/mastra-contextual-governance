@@ -213,7 +213,7 @@ const TOOL_FIELDS = new Set(["toolkit", "name"]);
 
 /**
  * The grammar of a reason, as one left-to-right scan. Every `{{`, every
- * `name=value` and every `Toolkit.tool` is classified exactly once, at the
+ * `name=value` and every tool reference is classified exactly once, at the
  * earliest position it occurs, so nothing can be a value to one check and
  * invisible to another. Alternatives, in order:
  *
@@ -223,15 +223,26 @@ const TOOL_FIELDS = new Set(["toolkit", "name"]);
  *   token that contains no brace, angle or quote character (so an empty
  *   `{{}}`, `""` or `<>` cannot pass as a literal) — captured so that `name=`
  *   followed by nothing can be refused;
- * - a `Toolkit.tool` reference;
+ * - a `Toolkit_Tool` reference — **the wire spelling**, which is the one the
+ *   model reads over MCP (`DESIGN.md` → Names, as measured on the wire);
+ * - a `Toolkit.Tool` reference — the dot spelling, captured only so it can be
+ *   refused by name rather than silently ignored (#89);
  * - a stray `{{` or `}}`: a placeholder that did not parse, refused outright.
+ *
+ * Both reference forms require **PascalCase on both sides of the separator**,
+ * because `arcade-mcp` PascalCases every half unconditionally (measured on
+ * #35). That is what keeps `loan_id`, `min_amount` and `action=approve_loan`
+ * out of the reference grammar: a reason is prose, and this domain's prose is
+ * full of snake_case argument names that are not tools.
  */
 const PLACEHOLDER_SOURCE = String.raw`\{\{\s*[A-Za-z0-9_.-]+\s*\}\}`;
+const PASCAL = String.raw`[A-Z][A-Za-z0-9]*`;
 const REASON_TOKEN = new RegExp(
   [
     String.raw`(?<placeholder>${PLACEHOLDER_SOURCE})`,
     String.raw`\b(?<arg>[A-Za-z_][A-Za-z0-9_]*)=(?<value>${PLACEHOLDER_SOURCE}|<[^<>]+>|"[^"]+"|'[^']+'|[^\s,.;(){}<>"']+)?`,
-    String.raw`\b(?<toolkit>[A-Za-z][A-Za-z0-9_-]*)\.(?<tool>[A-Za-z_][A-Za-z0-9_]*)\b`,
+    String.raw`\b(?<toolkit>${PASCAL})_(?<tool>${PASCAL})\b`,
+    String.raw`\b(?<dottedToolkit>${PASCAL})\.(?<dottedTool>${PASCAL})\b`,
     String.raw`(?<stray>\{\{|\}\})`,
   ].join("|"),
   "g",
@@ -383,15 +394,30 @@ function matchedArguments(
  *
  * Remediation, for a `pre` denial: the `reason` is the only thing the model
  * will read. It must either say `Do not retry`, so the model stops rather than
- * guesses — and then instruct no call at all — or name a next tool to call — a catalogued `Toolkit.tool` — and,
- * *following that name*, spell out as `name=value` every argument the
- * catalogue says that tool needs. Arguments belong to the reference they
- * follow, and *any* `Toolkit.tool`-shaped reference closes the previous
- * invocation, catalogued or not, so arguments cannot drift onto a tool that
- * was not named for them. Arguments given to an uncatalogued reference, to a
- * tool a catalogued toolkit does not serve, before any tool, without a value,
- * or that the tool does not accept, are each refused. Anything less is an
- * apology, and the compiler refuses it.
+ * guesses — and then instruct no call at all — or name a next tool to call — a
+ * catalogued `Toolkit_Tool` — and, *following that name*, spell out as
+ * `name=value` every argument the catalogue says that tool needs. Arguments
+ * belong to the reference they follow, and *any* `Toolkit_Tool`-shaped
+ * reference closes the previous invocation, catalogued or not, so arguments
+ * cannot drift onto a tool that was not named for them. Arguments given to an
+ * uncatalogued reference, to a tool a catalogued toolkit does not serve,
+ * before any tool, without a value, or that the tool does not accept, are each
+ * refused. Anything less is an apology, and the compiler refuses it.
+ *
+ * **The underscore is the whole of #89.** One tool has two true spellings:
+ * `Loan_ApproveLoan` is what MCP advertises and therefore what the model can
+ * see in its own tool list, and `Loan.ApproveLoan` is what a hook payload, an
+ * audit row and this rule's own `match` call it. Remediation text is the one
+ * place where the difference is load-bearing, because it is the one place a
+ * rule *addresses the model*. Measured on #14 against live Claude Sonnet 5 at
+ * temperature 0: told to call `Approvals.RequestApproval`, a name absent from
+ * its toolset, the model refused the instruction outright in 2 of 5 runs — on
+ * the correct reasoning that text arriving in a tool result and naming an
+ * unlisted tool is exactly what act 4's injection looks like. So a dot-spelled
+ * reference to a **catalogued** toolkit is refused here by name. The failure it
+ * replaces is the one this project keeps warning about: a rule that compiles,
+ * fires, writes an audit row and instructs nothing, because the only sentence
+ * the model was going to act on named a tool it could not see.
  */
 function checkReason(rule: PolicyRule, catalogue: CompiledCatalogue): string[] {
   const { reason } = rule;
@@ -405,6 +431,14 @@ function checkReason(rule: PolicyRule, catalogue: CompiledCatalogue): string[] {
     args: ToolArguments | null;
     given: string[];
     valueless: string[];
+    /**
+     * A catalogued tool named in the dot spelling. It still closes the
+     * previous invocation and still absorbs the arguments written for it —
+     * otherwise they would be reported as stranded, or as belonging to the
+     * tool named before it — but every downstream message about it is
+     * suppressed, because the one already recorded says what to change.
+     */
+    misspelt?: true;
   };
   const invocations: Invocation[] = [];
   const preamble: string[] = [];
@@ -428,6 +462,23 @@ function checkReason(rule: PolicyRule, catalogue: CompiledCatalogue): string[] {
       if (current === null) preamble.push(g.arg);
       else if (g.value === undefined) current.valueless.push(g.arg);
       else current.given.push(g.arg);
+    } else if (g.dottedToolkit !== undefined && g.dottedTool !== undefined) {
+      // Only when the prefix is one of ours. `Toolkit.Tool` is a shape that
+      // ordinary prose can stumble into, and refusing every PascalCase pair
+      // separated by a dot would be refusing English. Refusing a dot-spelled
+      // reference to a toolkit this policy actually governs is refusing a
+      // wrong instruction.
+      const toolkit = catalogue.get(g.dottedToolkit);
+      if (toolkit) {
+        const wire = `${g.dottedToolkit}_${g.dottedTool}`;
+        problems.push(
+          `reason names "${token[0]}", the spelling hook payloads and audit rows use. The model ` +
+            `reads this sentence and can only call a tool its own list carries, where the same ` +
+            `tool is "${wire}" — write that instead`,
+        );
+        current = { reference: token[0], args: null, given: [], valueless: [], misspelt: true };
+        invocations.push(current);
+      }
     } else if (g.toolkit !== undefined && g.tool !== undefined) {
       const toolkit = catalogue.get(g.toolkit);
       const reference = token[0];
@@ -461,11 +512,14 @@ function checkReason(rule: PolicyRule, catalogue: CompiledCatalogue): string[] {
   }
 
   const catalogued = invocations.filter((i) => i.args !== null);
-  if (catalogued.length === 0) {
+  // A reason that named the right tool in the wrong spelling has already been
+  // told exactly that. Adding "name a tool" on top would read as though it had
+  // named none, which is the opposite of what happened.
+  if (catalogued.length === 0 && !invocations.some((i) => i.misspelt)) {
     problems.push(
       `a pre denial's reason must tell the model what to do next: name a catalogued ` +
-        `remediation tool as "Toolkit.tool" with its arguments, or say "${NO_REMEDIATION}". ` +
-        `Got: "${reason}"`,
+        `remediation tool as "Toolkit_Tool", the spelling the model sees, with its arguments, ` +
+        `or say "${NO_REMEDIATION}". Got: "${reason}"`,
     );
     return problems;
   }
@@ -477,7 +531,8 @@ function checkReason(rule: PolicyRule, catalogue: CompiledCatalogue): string[] {
     );
   }
 
-  for (const { reference, args, given, valueless } of invocations) {
+  for (const { reference, args, given, valueless, misspelt } of invocations) {
+    if (misspelt) continue;
     if (args === null) {
       const stranded = [...given, ...valueless];
       if (stranded.length > 0) {
