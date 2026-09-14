@@ -17,6 +17,7 @@
  */
 import { createEventBus } from "@cg/governance-core";
 
+import { createApprovalNoticeBus } from "./approval-notices.ts";
 import { retentionWarning } from "./audit-log.ts";
 import { usingDevSecret, readConfig } from "./config.ts";
 import { EVENTS_PATH } from "./events.ts";
@@ -46,7 +47,14 @@ const bus = createEventBus({
   onSubscriberError: (cause) => log(`STREAM SUBSCRIBER FAILED: ${String(cause)}`),
 });
 
-const server = createServer({ config, db, cache, bus, log });
+// The second fan-out on the same socket: approval decisions (#20's resume
+// half). Its own registry because what it carries is not an audit row — see
+// `approval-notices.ts`.
+const notices = createApprovalNoticeBus({
+  onSubscriberError: (cause) => log(`APPROVAL NOTICE SUBSCRIBER FAILED: ${String(cause)}`),
+});
+
+const server = createServer({ config, db, cache, bus, notices, log });
 
 const tally = counts(db);
 log(

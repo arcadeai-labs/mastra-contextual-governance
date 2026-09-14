@@ -39,6 +39,7 @@ import {
 } from "@cg/policy-schema";
 
 import { createApprovalControl } from "./approval-governance.ts";
+import type { ApprovalNoticeBus } from "./approval-notices.ts";
 import { APPROVALS_PREFIX, handleApprovals } from "./approvals-api.ts";
 import { pendingCount } from "./approvals-store.ts";
 import { AUDIT_PATH, handleAudit } from "./audit-api.ts";
@@ -62,6 +63,12 @@ export interface ServerDeps {
    * every test that predates #20 wants.
    */
   bus?: EventBus;
+  /**
+   * The fan-out for `event: approval` on the same stream (#20's resume half).
+   * Optional and independent of `bus`: without it, decisions are recorded
+   * exactly as before and nothing is announced.
+   */
+  notices?: ApprovalNoticeBus;
   log?: (line: string) => void;
   /** Overridden in tests so an idle stream's keep-alive is observable. */
   streamKeepAliveMs?: number;
@@ -85,7 +92,7 @@ class Timeout extends Error {
 }
 
 export function createServer(deps: ServerDeps) {
-  const { config, db, cache, bus } = deps;
+  const { config, db, cache, bus, notices } = deps;
   const log = deps.log ?? ((line: string) => console.log(`[${SERVICE}] ${line}`));
   /**
    * The audit write is the fan-out seam: rows reach the stream only once the
@@ -313,6 +320,9 @@ export function createServer(deps: ServerDeps) {
           db,
           cache,
           now: ctx.now,
+          ...(notices === undefined
+            ? {}
+            : { publishNotice: (notice) => notices.publish([notice]) }),
         });
         if (answered !== null) return answered;
         return json({ error: "Not found" }, 404);
@@ -339,6 +349,7 @@ export function createServer(deps: ServerDeps) {
         return handleEvents(request, {
           db,
           bus,
+          ...(notices === undefined ? {} : { notices }),
           log,
           ...(deps.streamKeepAliveMs !== undefined && { keepAliveMs: deps.streamKeepAliveMs }),
           ...(deps.streamBacklogLimit !== undefined && { backlogLimit: deps.streamBacklogLimit }),

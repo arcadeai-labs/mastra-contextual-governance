@@ -88,6 +88,10 @@ export function SplitScreen({ stream, signedInAs, identity, toolList }: SplitScr
           {...(toolList === undefined ? {} : { toolList })}
           onChatEvent={onChatEvent}
           onTurnStart={onTurnStart}
+          // #20: the chat watches the same stream the panel does, for the one
+          // frame the panel ignores. `null` unless this is the live control
+          // plane — a fixture replay has no approval frames in it.
+          approvalStreamUrl={stream.mode === "hooks" ? stream.url : null}
         />
       </div>
 

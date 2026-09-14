@@ -41,6 +41,7 @@ export const STORE_TOKEN = "store-token-for-agent-tests";
 export const SESSION_SECRET = "agent-suite-session-secret-0123456789";
 export const GATEWAY_ID = "cg-demo-us";
 export const LOAN_TOOLKIT = "Loan";
+/** `tool.toolkit` as Arcade files the deployed approvals toolkit (#35). */
 export const APPROVALS_TOOLKIT = "Approvals";
 
 /** The four, as both fixtures seed them. Lower case — the join key (#58). */
@@ -216,7 +217,18 @@ export async function startAgentHarness(
     hookSigningSecret: HOOK_SECRET,
     loanAppHost,
     loanToolkit: LOAN_TOOLKIT,
+    // Advertised always, since #89: a live `tools/list` carries both project
+    // toolkits, and an agent that cannot see `Approvals_RequestApproval`
+    // refuses the pre-hook's own remediation instruction. Every suite gets the
+    // surface the deployed system has.
     approvalsToolkit: APPROVALS_TOOLKIT,
+    // And **runnable**, since #20's resume half: with the store token the two
+    // approvals tools are real clients of the real `/approvals` endpoints on
+    // this harness's own control plane, so act 2's second half can be driven
+    // end to end. Without it they are advertised and governed and then refuse
+    // honestly, which is what `createGatewayStandIn` does on its own.
+    approvalsStoreToken: STORE_TOKEN,
+    webPublicHost: "localhost:1",
     onCall: (call) => calls.push(call),
     onList: (list) => lists.push(list),
   });

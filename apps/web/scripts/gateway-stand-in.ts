@@ -48,6 +48,16 @@
  *
  * Not real, and deliberately so:
  *
+ * - **Slack.** With a store token, `Approvals_RequestApproval` routes by #9's
+ *   real rule and records the request against the real `/approvals` endpoints,
+ *   and then does not post a DM, because a user token for Slack is a credential
+ *   no local run holds. The result says that in words rather than reporting a
+ *   `slack_message_ts` it invented — an agent that believes it has escalated
+ *   something nobody will see is the one failure `tools/approvals` spends a
+ *   comment block on. Without a store token the two approvals tools are still
+ *   advertised and still governed, and a call to one is refused with a sentence
+ *   saying so: being in the list is what act 2's second half needs (#89), and
+ *   running is a separate question (#20).
  * - **Layer 2 is a switch, not a flow.** Arcade evaluates tool auth
  *   requirements before `/pre` and, on a first use, answers with an
  *   `authorization_url` for the persona to visit. There is no OAuth here to
@@ -83,6 +93,9 @@
  * which is also what would let `/chat` be driven offline from a browser.
  */
 
+import { routeApproval } from "@cg/governance-core";
+import type { Subject } from "@cg/policy-schema";
+
 /** Arcade's fixed prefix ahead of the hook's own message. Measured, spike #2. */
 export const DENIAL_PREFIX = "Tool execution was denied by an extension policy: ";
 
@@ -108,25 +121,60 @@ const TOOL_VERSION = "1.0.0";
  */
 export const GATEWAY_BUILTINS = ["System_ManageAuthorization", "Arcade_ListApps"] as const;
 
-/** What a project toolkit advertises, as `arcade-mcp` PascalCases it (#35). */
-interface ToolSpec {
+/**
+ * What a project toolkit advertises, as `arcade-mcp` PascalCases it (#35), and
+ * how — or whether — this stand-in runs it once `/pre` has allowed the call.
+ *
+ * Two targets, because the two deployed toolkits are stateless clients of two
+ * different services and neither of them is Arcade. `tools/loan` calls
+ * `apps/loan-app` with the persona's bearer; `tools/approvals` calls the
+ * `/approvals` endpoints on `apps/hooks` with the shared store token. The
+ * split is `arcade deploy`'s, not this file's — see `DESIGN.md` → Services.
+ *
+ * **Advertising a tool and running it are two different things**, and the
+ * approvals toolkit is where the difference is load-bearing in both directions.
+ * The agent has to be able to *see* `Approvals_RequestApproval`, because the
+ * pre-hook's remediation sentence names it and a model that cannot see it
+ * refuses the instruction (#89) — so it is always advertised, always submitted
+ * to `/access`, always governed at `/pre`. Whether it then *runs* depends on
+ * whether this stand-in was given a store token to reach `/approvals` with
+ * (#20). Without one, `call` is absent and the call is refused honestly rather
+ * than answered with an invented request id.
+ */
+interface BaseToolSpec {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  /**
-   * `GET /loans`, `GET /loans/{loan_id}`, … — how this stand-in runs the tool
-   * against `apps/loan-app`.
-   *
-   * **Absent for a tool this stand-in advertises but cannot run.** Being in the
-   * list and being runnable here are two different things, and the approvals
-   * toolkit is the case that makes the difference load-bearing: the agent has
-   * to be able to *see* `Approvals_RequestApproval`, because the pre-hook's
-   * remediation sentence names it and a model that cannot see it refuses the
-   * instruction (#89). Running it means deterministic routing, the approvals
-   * store and Slack — the deployed Python toolkit's job, and #20's.
-   */
-  run?: (inputs: Record<string, unknown>) => { method: string; path: string; query?: Record<string, string>; body?: unknown };
 }
+
+interface LoanToolSpec extends BaseToolSpec {
+  target: "loan-app";
+  /** `GET /loans`, `GET /loans/{loan_id}`, … — how this stand-in runs the tool. */
+  run: (inputs: Record<string, unknown>) => { method: string; path: string; query?: Record<string, string>; body?: unknown };
+}
+
+interface ApprovalsToolSpec extends BaseToolSpec {
+  target: "approvals";
+  /**
+   * The tool's own body, run in-process against the real `/approvals`
+   * endpoints. Returns what the deployed Python tool returns, or the message
+   * it would have raised as a `ToolExecutionError`.
+   *
+   * **Absent when this stand-in holds no store token.** Then the tool is still
+   * advertised and still governed — it reaches `/access` and `/pre`, and it is
+   * on the panel and in the audit log, which is what act 2's second half has to
+   * be able to show — and the call is refused with a sentence saying so. An
+   * invented request id would be worse in exactly the way this repo keeps
+   * naming: the beat would look finished and no approver would ever have been
+   * asked.
+   */
+  call?: (
+    inputs: Record<string, unknown>,
+    actor: string,
+  ) => Promise<{ ok: true; value: unknown } | { ok: false; error: string }>;
+}
+
+type ToolSpec = LoanToolSpec | ApprovalsToolSpec;
 
 const object = (properties: Record<string, unknown>, required: string[] = []) => ({
   type: "object",
@@ -151,9 +199,10 @@ const num = (description: string) => ({ type: "number", description });
  * do it — authority is the control plane's question, asked after the model has
  * already chosen (`DESIGN.md` → Thesis).
  */
-function loanTools(toolkit: string): ToolSpec[] {
+function loanTools(toolkit: string): LoanToolSpec[] {
   return [
     {
+      target: "loan-app",
       name: `${toolkit}_SearchLoans`,
       description:
         "Find loan applications in the loan book, newest submission first. All filters are optional and combine; with none supplied this returns every application on file.",
@@ -173,6 +222,7 @@ function loanTools(toolkit: string): ToolSpec[] {
       }),
     },
     {
+      target: "loan-app",
       name: `${toolkit}_GetLoan`,
       description:
         "Read one loan application's complete file by ID. Use this whenever you need more than the list-view fields, and always before recording a decision.",
@@ -180,6 +230,7 @@ function loanTools(toolkit: string): ToolSpec[] {
       run: (inputs) => ({ method: "GET", path: `/loans/${encodeURIComponent(String(inputs.loan_id))}` }),
     },
     {
+      target: "loan-app",
       name: `${toolkit}_ApproveLoan`,
       description:
         "Approve a loan application for a given dollar amount, committing the decision to the loan book. It is a write against the bank's system of record, not a recommendation, and there is no undo.",
@@ -197,6 +248,7 @@ function loanTools(toolkit: string): ToolSpec[] {
       }),
     },
     {
+      target: "loan-app",
       name: `${toolkit}_DenyLoan`,
       description:
         "Decline a loan application with a stated reason, committing the decision to the loan book. There is no undo.",
@@ -217,7 +269,145 @@ function loanTools(toolkit: string): ToolSpec[] {
 }
 
 /**
- * The approvals tools, advertised and governed here but executed elsewhere.
+ * The half of `tools/approvals` that is not Slack, as an HTTP client of the
+ * `/approvals` endpoints.
+ *
+ * Each method mirrors one tool body in `tools/approvals/approvals/__init__.py`,
+ * including the two places that one raises rather than returns: an amount
+ * nobody on the roster can cover, and a store that would not record the
+ * request. Returning a plausible success there would let an agent believe it
+ * had escalated something nobody will ever see, which is the failure the
+ * Python tool spends a comment block on.
+ */
+interface ApprovalsStore {
+  requestApproval(
+    inputs: Record<string, unknown>,
+    actor: string,
+  ): Promise<{ ok: true; value: unknown } | { ok: false; error: string }>;
+  decide(
+    inputs: Record<string, unknown>,
+    actor: string,
+  ): Promise<{ ok: true; value: unknown } | { ok: false; error: string }>;
+}
+
+function createApprovalsStore(options: {
+  hooks: string;
+  storeToken: string;
+  webHost: string;
+}): ApprovalsStore {
+  const request = (method: string, path: string, body?: unknown) =>
+    fetch(`${options.hooks}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${options.storeToken}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+  return {
+    async requestApproval(inputs, actor) {
+      const action = String(inputs.action ?? "");
+      const resourceId = String(inputs.resource_id ?? "");
+      const amount = Number(inputs.amount);
+      const justification = String(inputs.justification ?? "");
+      if (!Number.isFinite(amount)) {
+        return { ok: false, error: `${String(inputs.amount)} is not an amount that can be routed for approval.` };
+      }
+
+      const rosterResponse = await request("GET", "/approvals/roster").catch(
+        (cause: unknown) => cause as Error,
+      );
+      if (rosterResponse instanceof Error || !rosterResponse.ok) {
+        const detail =
+          rosterResponse instanceof Error ? rosterResponse.message : String(rosterResponse.status);
+        return { ok: false, error: `The approvals store would not answer for the roster (${detail}).` };
+      }
+      const roster = ((await rosterResponse.json()) as { subjects?: Subject[] }).subjects ?? [];
+
+      // #9's rule, the real module, the same one `tools/approvals` is checked
+      // against. The agent does not choose the approver and neither does this.
+      const routed = routeApproval(amount, actor, roster);
+      if (routed.outcome === "no_eligible_approver") {
+        return {
+          ok: false,
+          error:
+            `Nobody holds authority sufficient to approve ${action} for ${amount}, so no ` +
+            `approval was requested.`,
+        };
+      }
+
+      const created = await request("POST", "/approvals", {
+        requester_id: actor,
+        action,
+        resource_id: resourceId,
+        amount,
+        justification,
+        approver_id: routed.approver.user_id,
+        candidate_approver_ids: routed.candidates.map((subject) => subject.user_id),
+        required_clearance: routed.required_clearance,
+      });
+      const body = (await created.json().catch(() => null)) as
+        | { request?: { id?: string; status?: string }; error?: string }
+        | null;
+      const requestId = body?.request?.id;
+      if (created.status !== 201 || !requestId) {
+        return {
+          ok: false,
+          error:
+            `The approval request could not be recorded, so nobody was asked ` +
+            `(${body?.error ?? created.status}).`,
+        };
+      }
+
+      return {
+        ok: true,
+        value: {
+          request_id: requestId,
+          status: body?.request?.status ?? "pending",
+          approver: routed.approver.user_id,
+          approver_display_name: routed.approver.display_name || routed.approver.user_id,
+          required_clearance: routed.required_clearance,
+          candidate_approvers: routed.candidates.map((subject) => subject.user_id),
+          approval_url: `${options.webHost}/approvals/${requestId}`,
+          // Not a `slack_message_ts`, because no message was sent. Saying so
+          // is the difference between "go and tell Riley" and an agent that
+          // believes it has escalated something nobody has seen — the same
+          // distinction `tools/approvals` raises a `ToolExecutionError` for
+          // when Slack refuses.
+          notification:
+            "No Slack message was sent: this is the offline gateway stand-in, which holds no " +
+            "Slack credential. The request is recorded and routed; the approver has to be told " +
+            "another way.",
+        },
+      };
+    },
+
+    async decide(inputs, actor) {
+      const id = String(inputs.request_id ?? "");
+      const decision = String(inputs.decision ?? "");
+      const note = inputs.note === undefined || inputs.note === null ? null : String(inputs.note);
+      const response = await request("POST", `/approvals/${encodeURIComponent(id)}/decision`, {
+        decision,
+        note,
+        // From the resolved bearer, never from an argument: the deployed tool
+        // takes it from `context.user_id` for the same reason.
+        decided_by: actor,
+      });
+      const body = (await response.json().catch(() => null)) as
+        | { request?: unknown; error?: string }
+        | null;
+      if (!response.ok) {
+        return { ok: false, error: body?.error ?? `the approvals store answered ${response.status}` };
+      }
+      return { ok: true, value: body?.request ?? {} };
+    },
+  };
+}
+
+/**
+ * The approvals tools, advertised and governed here; run only when this
+ * stand-in was given a store token.
  *
  * They exist in this file for one reason: `tools/list` is where the agent's
  * surface comes from, and act 2's second half is the model reading a denial
@@ -230,20 +420,27 @@ function loanTools(toolkit: string): ToolSpec[] {
  * chooses the approver. `DESIGN.md` → No model-side controls bars behavioural
  * instruction "in either direction: nothing about confirming, refusing,
  * escalating, retrying, caution or irreversibility", and it bars it in a tool
- * description exactly as it bars it in the system prompt. Round 1 of this
- * slice's review caught the first draft here saying *"Escalate an action you
- * were refused authority for ... You do not choose the approver ... It does not
- * wait for the answer"*: three behavioural instructions, defended at the time
- * with the wrong test — "nothing about who may do it" is not the rule.
+ * description exactly as it bars it in the system prompt. Round 1 of #89's
+ * review caught an earlier draft here saying *"Escalate an action you were
+ * refused authority for ... You do not choose the approver ... It does not wait
+ * for the answer"*: three behavioural instructions, defended at the time with
+ * the wrong test — "nothing about who may do it" is not the rule.
  *
  * It matters more here than anywhere, because the live 5/5 measurement is the
  * claim that *the hook's sentence* moved the model. A description that already
  * told it to escalate after a refusal would have been steering the result the
  * measurement was taken to prove, and the number would have meant nothing.
+ * `test/act1-tool-list.test.ts` reads these back through a real `tools/list`
+ * and fails on the vocabulary, so the rule is enforced on the sentence the
+ * model receives rather than on the source that produced it.
+ *
+ * `store` is what makes them runnable (#20). Without it they are advertised,
+ * submitted to `/access`, governed at `/pre` — and then honestly refused.
  */
-function approvalsTools(toolkit: string): ToolSpec[] {
+function approvalsTools(toolkit: string, store?: ApprovalsStore): ApprovalsToolSpec[] {
   return [
     {
+      target: "approvals",
       name: `${toolkit}_RequestApproval`,
       description:
         "Records a request for one person's approval of an action on a resource, and notifies the approver it routes to. Returns the request ID and who was notified.",
@@ -256,11 +453,14 @@ function approvalsTools(toolkit: string): ToolSpec[] {
         },
         ["action", "resource_id", "amount", "justification"],
       ),
+      ...(store === undefined
+        ? {}
+        : { call: (inputs, actor) => store.requestApproval(inputs, actor) }),
     },
     {
+      target: "approvals",
       name: `${toolkit}_Decide`,
-      description:
-        "Records an approver's answer against an approval request.",
+      description: "Records an approver's answer against an approval request.",
       inputSchema: object(
         {
           request_id: str("The approval request being answered."),
@@ -269,6 +469,7 @@ function approvalsTools(toolkit: string): ToolSpec[] {
         },
         ["request_id", "decision"],
       ),
+      ...(store === undefined ? {} : { call: (inputs, actor) => store.decide(inputs, actor) }),
     },
   ];
 }
@@ -301,8 +502,27 @@ export interface GatewayStandInOptions {
   loanAppHost: string;
   /** `tool.toolkit` as Arcade files the deployed loan toolkit. */
   loanToolkit?: string;
-  /** `tool.toolkit` as Arcade files the deployed approvals toolkit. */
+  /**
+   * `tool.toolkit` as Arcade files the deployed approvals toolkit.
+   *
+   * Always advertised, whether or not this is set — the default is the name
+   * `.env.example` pins. The agent has to be able to see
+   * `Approvals_RequestApproval` because the pre-hook's remediation sentence
+   * names it (#89).
+   */
   approvalsToolkit?: string;
+  /**
+   * The shared `APPROVALS_STORE_TOKEN` the two approvals tools present, which
+   * is what makes them **runnable** here (#20).
+   *
+   * Unset, they are still advertised, still submitted to `/access` and still
+   * governed at `/pre`, and a call to one is then refused with a sentence
+   * saying this stand-in does not run it. Set, they are real clients of the
+   * real `/approvals` endpoints on `apps/hooks`.
+   */
+  approvalsStoreToken?: string;
+  /** Where the approval link points. HOST-form or a full origin. */
+  webPublicHost?: string;
   /** `0` lets the OS pick, which is what tests and an unset `PORT` want. */
   port?: number;
   /**
@@ -354,17 +574,7 @@ export interface GatewayStandIn {
 
 export function createGatewayStandIn(options: GatewayStandInOptions): GatewayStandIn {
   const toolkit = options.loanToolkit ?? "Loan";
-  const approvalsToolkit = options.approvalsToolkit ?? "Approvals";
-  // Both project toolkits, because a live gateway advertises both and the
-  // agent's allow-list is keyed on both (DESIGN.md → Tool surface). Grouped by
-  // toolkit rather than flattened, because `/access` speaks toolkit-and-tool
-  // and the request below has to carry every one of them.
-  const byToolkit: Record<string, ToolSpec[]> = {
-    [toolkit]: loanTools(toolkit),
-    [approvalsToolkit]: approvalsTools(approvalsToolkit),
-  };
-  const tools = Object.values(byToolkit).flat();
-  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  const approvalsToolkit = options.approvalsToolkit?.trim() || "Approvals";
   const actors = new Map<string, string>();
   const challenges = new Map<string, string>();
   const tokenForActor = options.tokenForActor ?? ((email: string) => `dev:${email}`);
@@ -373,6 +583,30 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
     host.startsWith("localhost") || host.startsWith("127.0.0.1") ? `http://${host}` : `https://${host}`;
   const hooks = base(options.hooksHost);
   const loanApp = base(options.loanAppHost);
+
+  // Runnable only with a store token to reach `/approvals` with. Advertised
+  // either way — see `approvalsStoreToken` on the options above.
+  const approvalsStore =
+    (options.approvalsStoreToken ?? "") === ""
+      ? undefined
+      : createApprovalsStore({
+          hooks,
+          storeToken: options.approvalsStoreToken as string,
+          webHost: options.webPublicHost?.startsWith("http")
+            ? options.webPublicHost
+            : base(options.webPublicHost ?? "localhost:3000"),
+        });
+
+  // Both project toolkits, because a live gateway advertises both and the
+  // agent's allow-list is keyed on both (DESIGN.md → Tool surface). Grouped by
+  // toolkit rather than flattened, because `/access` speaks toolkit-and-tool
+  // and the request below has to carry every one of them.
+  const byToolkit: Record<string, ToolSpec[]> = {
+    [toolkit]: loanTools(toolkit),
+    [approvalsToolkit]: approvalsTools(approvalsToolkit, approvalsStore),
+  };
+  const tools = Object.values(byToolkit).flat();
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
   const mcpPath = `/mcp/${options.gatewayId}`;
 
@@ -584,15 +818,18 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
       if (!spec) {
         return rpc(
           message.id,
-          toolError(`"${wire}" passed /pre, but this stand-in only runs the ${toolkit} tools.`),
+          toolError(
+            `"${wire}" passed /pre, but this stand-in only runs ` +
+              `${[...new Set(tools.map((tool) => qualifiedToolName(tool.name).toolkit))].join(" and ")}.`,
+          ),
         );
       }
-      if (!spec.run) {
-        // Advertised, governed, and then honestly unfinished. The call reached
-        // `/access` and `/pre` and is on the panel and in the audit log, which
-        // is what act 2's second half has to be able to show. What it cannot do
-        // here is route and notify an approver — `tools/approvals` does that,
-        // and #20 wires the wait and the resume.
+      if (spec.target === "approvals" && spec.call === undefined) {
+        // Advertised, governed, and then honestly unfinished — this stand-in
+        // was given no store token. The call reached `/access` and `/pre` and
+        // is on the panel and in the audit log, which is what act 2's second
+        // half has to be able to show. What it cannot do without a bearer for
+        // `/approvals` is record the request and route an approver.
         //
         // An invented request id would be worse than this error in exactly the
         // way this repo keeps naming: the beat would look finished and no
@@ -602,32 +839,53 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
           message.id,
           toolError(
             `"${wire}" passed /pre. This stand-in advertises the ${approvalsToolkit} toolkit so the ` +
-              `agent can reach it, but it does not run it: routing and notifying an approver is the ` +
-              `deployed tools/approvals toolkit's job. Tell the user the request could not be sent.`,
+              `agent can reach it, but it holds no APPROVALS_STORE_TOKEN, so it cannot record the ` +
+              `request or route an approver. Tell the user the request could not be sent.`,
           ),
         );
       }
 
-      const call = spec.run(inputs);
-      const target = new URL(loanApp + call.path);
-      for (const [key, value] of Object.entries(call.query ?? {})) target.searchParams.set(key, value);
+      // The tool itself. Two targets, one `/post` below: `tools/loan` is a
+      // client of `apps/loan-app` with the persona's bearer, `tools/approvals`
+      // is a client of the `/approvals` endpoints with the store token. Both
+      // run only because `/pre` said OK, and both are asked about at `/post`.
+      let payload: Record<string, unknown> | null;
+      if (spec.target === "approvals") {
+        const outcome = await spec.call!(inputs, actor).catch((cause: unknown) => ({
+          ok: false as const,
+          error: cause instanceof Error ? cause.message : String(cause),
+        }));
+        if (!outcome.ok) {
+          options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "ran" });
+          return rpc(message.id, toolError(outcome.error));
+        }
+        payload = outcome.value as Record<string, unknown>;
+      } else {
+        const call = spec.run(inputs);
+        const target = new URL(loanApp + call.path);
+        for (const [key, value] of Object.entries(call.query ?? {})) target.searchParams.set(key, value);
 
-      const ran = await fetch(target, {
-        method: call.method,
-        headers: {
-          authorization: `Bearer ${tokenForActor(actor)}`,
-          ...(call.body === undefined ? {} : { "content-type": "application/json" }),
-        },
-        ...(call.body === undefined ? {} : { body: JSON.stringify(call.body) }),
-      }).catch((cause: unknown) => cause as Error);
+        const ran = await fetch(target, {
+          method: call.method,
+          headers: {
+            authorization: `Bearer ${tokenForActor(actor)}`,
+            ...(call.body === undefined ? {} : { "content-type": "application/json" }),
+          },
+          ...(call.body === undefined ? {} : { body: JSON.stringify(call.body) }),
+        }).catch((cause: unknown) => cause as Error);
 
-      if (ran instanceof Error) {
-        return rpc(message.id, toolError(`The loan origination system could not be reached: ${ran.message}`));
-      }
-      const payload = (await ran.json().catch(() => null)) as { error?: string } | null;
-      if (!ran.ok) {
-        options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "ran" });
-        return rpc(message.id, toolError(payload?.error ?? `the loan origination system answered ${ran.status}`));
+        if (ran instanceof Error) {
+          return rpc(message.id, toolError(`The loan origination system could not be reached: ${ran.message}`));
+        }
+        const body = (await ran.json().catch(() => null)) as { error?: string } | null;
+        payload = body as Record<string, unknown> | null;
+        if (!ran.ok) {
+          options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "ran" });
+          return rpc(
+            message.id,
+            toolError(body?.error ?? `the loan origination system answered ${ran.status}`),
+          );
+        }
       }
 
       // Layer 4. What the tool returned is not yet what the model gets: the
@@ -775,12 +1033,24 @@ if (import.meta.main) {
 
   const gatewayId = env.ARCADE_GATEWAY_ID?.trim() || "cg-demo-us";
   const hooksHost = env.HOOKS_PUBLIC_HOST?.trim() || "localhost:8081";
+  // Both toolkits always — the agent has to be able to see
+  // `Approvals_RequestApproval`, because the pre-hook's remediation sentence
+  // names it (#89). The store token is what decides whether they *run*.
+  const storeToken = env.APPROVALS_STORE_TOKEN?.trim() || "";
   const standIn = createGatewayStandIn({
     gatewayId,
     hooksHost,
     hookSigningSecret: env.ARCADE_HOOK_SIGNING_SECRET?.trim() || "cg-hooks-dev-secret-not-for-production",
     loanAppHost: env.LOAN_APP_PUBLIC_HOST?.trim() || "localhost:8082",
     loanToolkit: env.ARCADE_LOAN_TOOLKIT?.trim() || "Loan",
+    // Advertised either way; runnable only with a store token.
+    approvalsToolkit: env.ARCADE_APPROVALS_TOOLKIT?.trim() || "Approvals",
+    ...(storeToken === ""
+      ? {}
+      : {
+          approvalsStoreToken: storeToken,
+          webPublicHost: env.PUBLIC_URL?.trim() || env.WEB_PUBLIC_HOST?.trim() || "localhost:3000",
+        }),
     port,
     onCall: ({ user_id, tool, outcome }) => console.log(`[gateway-stand-in] ${outcome} ${tool} as ${user_id}`),
     onList: ({ user_id, advertised, hidden }) =>
@@ -801,6 +1071,15 @@ if (import.meta.main) {
     `[gateway-stand-in] every tools/call asks ${hooksHost}/pre first and runs nothing when the answer ` +
       `is not OK, then asks ${hooksHost}/post and forwards its override.output when there is one; ` +
       `every tools/list asks ${hooksHost}/access first and omits what comes back denied.`,
+  );
+  console.log(
+    storeToken === ""
+      ? `[gateway-stand-in] the approvals toolkit is advertised and governed but NOT run: ` +
+          `APPROVALS_STORE_TOKEN is not set, so a call to it reaches /access and /pre and is then ` +
+          `refused. Set it to run the approvals half offline.`
+      : `[gateway-stand-in] the approvals toolkit is advertised and reaches ${hooksHost}/approvals. ` +
+          `No Slack message is sent — there is no credential here — and RequestApproval says so in ` +
+          `its own result rather than reporting a message id it did not get.`,
   );
 
   // A token per persona, printed, because offline there is no hop 1 to mint

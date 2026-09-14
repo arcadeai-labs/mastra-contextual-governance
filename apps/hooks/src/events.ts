@@ -20,6 +20,20 @@
  *     id: evt_4k7xq2m9hz
  *     data: {"id":"evt_4k7xq2m9hz","ts":"…","hook":"pre","decision":"deny",…}
  *
+ * ## A second event name, added by #20's resume half
+ *
+ * The same socket also carries `event: approval` — an `ApprovalNotice`, emitted
+ * when the approvals store records a decision, with **no `id:` line**:
+ *
+ *     event: approval
+ *     data: {"kind":"approval.granted","request_id":"apr_…","requester_id":"dana…",…}
+ *
+ * It is not a `GovernanceEvent`, it is not in `audit_log`, and it takes no part
+ * in the replay — a frame with no id leaves the client's `Last-Event-ID` where
+ * it was, so everything above is untouched. #21's adapter already ignores any
+ * frame whose event name is not `governance`, so the panel never sees one.
+ * `approval-notices.ts` carries the full argument for all three.
+ *
  * ## The stream lags the log; it never leads it
  *
  * Events arrive through the bus, which `record` publishes to *after* the audit
@@ -86,6 +100,11 @@ import type { Database } from "bun:sqlite";
 
 import type { EventBus, PublishedEvent } from "@cg/governance-core";
 
+import {
+  approvalFrame,
+  type ApprovalNotice,
+  type ApprovalNoticeBus,
+} from "./approval-notices.ts";
 import { cappedAnchor, maxSeq, pageAfter, seqOf } from "./audit-log.ts";
 
 export const EVENTS_PATH = "/events";
@@ -147,6 +166,15 @@ const STREAM_HEADERS: Record<string, string> = {
 export interface EventStreamDeps {
   readonly db: Database;
   readonly bus: EventBus;
+  /**
+   * The second thing this socket carries: `event: approval`, published when
+   * the approvals store records a decision (#20's resume half).
+   *
+   * Optional and independent of `bus`, so a server with a panel but no
+   * approvals traffic is unchanged. Notices carry no `id:` and are not audit
+   * rows — `approval-notices.ts` has the whole argument.
+   */
+  readonly notices?: ApprovalNoticeBus;
   readonly log: (line: string) => void;
   /** Overridden in tests so an idle keep-alive is observable in milliseconds. */
   readonly keepAliveMs?: number;
@@ -227,6 +255,15 @@ export function handleEvents(request: Request, deps: EventStreamDeps): Response 
 
   const encoder = new TextEncoder();
   const pending: PublishedEvent[] = [];
+  /**
+   * Approval notices waiting for the socket.
+   *
+   * A queue of its own rather than a union in `pending`, because the two are
+   * ordered by different things: an audit row has a `seq` that makes "strictly
+   * increasing down the socket" true by construction, and a notice has no
+   * position in any log at all. Merging them would mean inventing one.
+   */
+  const pendingNotices: ApprovalNotice[] = [];
 
   let closed = false;
   let overflowed = false;
@@ -235,6 +272,7 @@ export function handleEvents(request: Request, deps: EventStreamDeps): Response 
   let replayFrom = 0;
   let replayTo = 0;
   let unsubscribe: () => void = () => {};
+  let unsubscribeNotices: () => void = () => {};
   /** Resolves the idle wait in `pull`. Non-null only while `pull` is waiting. */
   let wake: (() => void) | null = null;
   /**
@@ -270,6 +308,19 @@ export function handleEvents(request: Request, deps: EventStreamDeps): Response 
         }
         notify();
       });
+      unsubscribeNotices =
+        deps.notices?.subscribe((batch) => {
+          if (closed) return;
+          // Counted against the same cap for the same reason: a client too far
+          // behind to be made whole is disconnected and resumes, rather than
+          // having the middle of its stream silently trimmed.
+          if (!writerIdle && pendingNotices.length + batch.length > backlogLimit) {
+            overflowed = true;
+          } else {
+            for (const notice of batch) pendingNotices.push(notice);
+          }
+          notify();
+        }) ?? (() => {});
       const cutoff = maxSeq(db);
 
       request.signal.addEventListener("abort", () => {
@@ -354,6 +405,15 @@ export function handleEvents(request: Request, deps: EventStreamDeps): Response 
           return;
         }
 
+        // Then any approval notice, ahead of live governance rows: it is what
+        // a waiting browser is holding a turn open for, and it is not ordered
+        // against the audit log in the first place.
+        if (pendingNotices.length > 0) {
+          const batch = pendingNotices.splice(0, STREAM_CHUNK_EVENTS);
+          controller.enqueue(encoder.encode(batch.map(approvalFrame).join("")));
+          return;
+        }
+
         // Then live, in the batches the bus delivered.
         if (pending.length > 0) {
           const batch = pending.splice(0, STREAM_CHUNK_EVENTS);
@@ -392,6 +452,7 @@ export function handleEvents(request: Request, deps: EventStreamDeps): Response 
     cancel() {
       closed = true;
       unsubscribe();
+      unsubscribeNotices();
       notify();
     },
   });

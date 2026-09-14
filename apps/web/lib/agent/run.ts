@@ -28,12 +28,37 @@
  * #14 exists to measure. A wrapper that swallowed the second call would make
  * the acceptance criterion unfalsifiable.
  *
+ * **Nothing here waits for an approval, and the turn really does end.** #20's
+ * `waiting` event is emitted after `Approvals_RequestApproval` returns, and
+ * from that point the turn is *closing*: the model's last words still stream —
+ * *"Approval requested from Riley Chen, VP Credit. Waiting."* is what the issue
+ * asks for by name — but the first tool call after it ends the reading and
+ * aborts the agent loop.
+ *
+ * Round 1 of #110's review found this half-done: `waiting` was emitted and the
+ * loop carried on, so a model that called `Loan_ApproveLoan` straight after the
+ * escalation got that call executed, against a control plane holding no grant.
+ * The guarantee is not here — it is in `escalation.ts`, which shuts the turn's
+ * toolset synchronously with the escalation's own return, so a later call
+ * cannot reach the gateway whatever this loop is doing. What this file adds is
+ * that the loop stops and the refused call never appears on screen: no hook
+ * fired, so there is no decision to render, and the three kinds that describe a
+ * tool which did not return would each be a claim nothing here can make.
+ *
+ * There is no poll, no long-poll and no sleep in this file, and there must not
+ * be: `DESIGN.md` → The wait, and the issue says why in two ways — a visibly
+ * spinning agent contradicts the "won't spin and waste your tokens" line the
+ * demo is built on, and a long-polling tool call would hit gateway timeouts in
+ * the least debuggable way possible, live. The resume is a *new* turn, started
+ * by the UI when the decision arrives on the governance stream.
+ *
  * **`maxSteps` is a ceiling, not a policy.** It stops a runaway from costing
  * money, and it is set well above the two or three steps this demo needs so
  * that a model which *does* spin hits it visibly rather than being quietly
  * capped at one call.
  */
 import { authorizationRequired, isHookDecision, remediationText } from "./authorization.ts";
+import { approvalRequested } from "./escalation.ts";
 import { CORRELATION_TOKEN } from "../governance/correlation.ts";
 import type { ChatEvent } from "./events.ts";
 
@@ -46,7 +71,7 @@ export const TEMPERATURE = 0;
 /** Anything with the `stream` method an agent has. Narrow on purpose — this file uses one method. */
 export interface Streamable {
   stream(
-    messages: string,
+    messages: string | readonly TurnMessage[],
     options: Record<string, unknown>,
   ): Promise<{ fullStream: ReadableStream<{ type: string; payload?: Record<string, unknown> }> }>;
 }
@@ -104,10 +129,37 @@ export function failureText(result: unknown): string {
 
 export interface RunOptions {
   agent: Streamable;
-  prompt: string;
+  /** The turn, as one prompt or as a conversation ending in one (#20's resume). */
+  prompt: string | readonly TurnMessage[];
   maxSteps?: number;
+  /**
+   * The wire name of the escalation tool — `Approvals_RequestApproval` — so a
+   * successful call to it can be recognised and reported as `waiting`.
+   *
+   * Passed in rather than hard-coded because the toolkit name is an
+   * environment variable measured off a real deployment (`ARCADE_APPROVALS_TOOLKIT`),
+   * and this file is the wrong place to have an opinion about it. Unset, the
+   * run behaves exactly as it did before #20: every tool result is a
+   * `tool-result` and nothing else.
+   */
+  requestApprovalTool?: string;
+  /**
+   * Where a tool call made after the turn had already ended is recorded.
+   *
+   * Not an event: no hook fired, nothing was denied and nothing broke, so the
+   * three kinds that describe a tool which did not return would each be a claim
+   * this one cannot make (`events.ts`). It goes to the server log, where a
+   * person debugging a turn can find it, and nowhere else.
+   */
+  log?: (line: string) => void;
   /** Fires for every event, in order. The caller writes them to the wire. */
   emit: (event: ChatEvent) => void | Promise<void>;
+}
+
+/** One message in a conversation handed to the agent. Mastra takes an array of these. */
+export interface TurnMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 /**
@@ -121,10 +173,38 @@ export async function runTurn(options: RunOptions): Promise<void> {
   const emit = options.emit;
   let calls = 0;
 
+  /**
+   * Ends the agent loop from here.
+   *
+   * Aborting is the *first* of two things the escalation does, and the one that
+   * matters: it stops Mastra before the next step, so the model is never asked
+   * again and no further tool is executed. Breaking out of the loop below only
+   * stops us reading — on its own it would leave the agent running in a
+   * detached pipeline, still free to call `Loan_ApproveLoan` against a control
+   * plane that has no grant yet. Round 1 of this PR's review reproduced exactly
+   * that: a later `tool-call` after the `waiting` event.
+   */
+  const endOfTurn = new AbortController();
+  /** Set when the escalation ended the turn, so an abort is not reported as a failure. */
+  let endedOnEscalation = false;
+  /**
+   * True from the escalation's result onwards: the turn is over and only its
+   * closing words are still welcome.
+   *
+   * Text still streams — the model's last step is where *"Approval requested
+   * from Riley Chen, VP Credit. Waiting."* comes from, and issue #20 asks for
+   * that sentence by name. What does not is another tool call, and the first
+   * one ends the reading here. It cannot execute in any case
+   * (`closeTurnOnEscalation` shut the toolset the moment the escalation
+   * returned); this is what keeps it off the screen and stops the loop.
+   */
+  let closing = false;
+
   try {
     const result = await options.agent.stream(options.prompt, {
       maxSteps: options.maxSteps ?? MAX_STEPS,
       modelSettings: { temperature: TEMPERATURE },
+      abortSignal: endOfTurn.signal,
     });
 
     for await (const chunk of streamOf(result.fullStream)) {
@@ -137,17 +217,57 @@ export async function runTurn(options: RunOptions): Promise<void> {
       }
 
       if (chunk.type === "tool-call") {
+        const tool = String(payload.toolName ?? "unknown");
+        if (closing) {
+          // Asked for after the turn ended. The toolset already refused to run
+          // it, so nothing reached the gateway and no hook was asked anything;
+          // putting it on screen as a call that happened would be the UI
+          // narrating an action the system declined to take.
+          options.log?.(
+            `[chat] ${tool} was asked for after the turn ended on the approval request; ` +
+              `the turn's toolset refused it and nothing reached the gateway`,
+          );
+          endedOnEscalation = true;
+          endOfTurn.abort();
+          break;
+        }
         calls += 1;
         await emit({
           kind: "tool-call",
-          tool: String(payload.toolName ?? "unknown"),
+          tool,
           inputs: (payload.args ?? {}) as Record<string, unknown>,
         });
         continue;
       }
 
       if (chunk.type === "tool-result") {
-        await emit({ kind: "tool-result", tool: String(payload.toolName ?? "unknown") });
+        const tool = String(payload.toolName ?? "unknown");
+        if (closing) {
+          endedOnEscalation = true;
+          endOfTurn.abort();
+          break;
+        }
+        await emit({ kind: "tool-result", tool });
+
+        // The escalation landed, so **the turn is over**. Nothing waits for the
+        // decision; the page is given the request id so it can recognise the
+        // decision when it comes down the governance stream as *this* browser's
+        // rather than somebody else's, and the next turn is a new one.
+        //
+        // Ending here is the acceptance criterion, not a tidiness: a turn that
+        // carried on could call `Loan_ApproveLoan` again while the approval is
+        // still pending, which is a governed write attempted on an authority
+        // nobody has granted yet. The hook would refuse it — that is what the
+        // hook is for — but the demo's claim is that the *agent stops*, and an
+        // extra denial on the panel between the escalation and the resume says
+        // the opposite of what act 2 is about.
+        if (options.requestApprovalTool !== undefined && tool === options.requestApprovalTool) {
+          const requested = approvalRequested(payload.result);
+          if (requested !== null) {
+            await emit({ kind: "waiting", tool, ...requested });
+            closing = true;
+          }
+        }
         continue;
       }
 
@@ -157,6 +277,18 @@ export async function runTurn(options: RunOptions): Promise<void> {
       // the text, and nothing is assumed from the fact that a tool failed.
       if (chunk.type === "tool-error") {
         const tool = String(payload.toolName ?? "unknown");
+        if (closing) {
+          // The turn's own toolset refusing a call it was asked for after the
+          // escalation. Neither a denial nor a fault: no rule ran, nothing
+          // broke, and nothing was recorded anywhere.
+          options.log?.(
+            `[chat] ${tool} was refused by this turn's toolset after the turn ended on the ` +
+              `approval request; nothing reached the gateway`,
+          );
+          endedOnEscalation = true;
+          endOfTurn.abort();
+          break;
+        }
         const text = failureText(payload.error ?? payload);
 
         // Layer 2 first: it arrives in the same `isError` envelope as a hook
@@ -193,7 +325,10 @@ export async function runTurn(options: RunOptions): Promise<void> {
       }
     }
   } catch (cause) {
-    await emit({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
+    // An abort we asked for is not a failure. Anything else is, and says so.
+    if (!endedOnEscalation) {
+      await emit({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
+    }
   }
 
   await emit({ kind: "done", calls });
@@ -202,13 +337,23 @@ export async function runTurn(options: RunOptions): Promise<void> {
 /** `for await` over a web `ReadableStream`, which Node's typings do not make iterable. */
 async function* streamOf<T>(stream: ReadableStream<T>): AsyncGenerator<T> {
   const reader = stream.getReader();
+  let drained = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) return;
+      if (done) {
+        drained = true;
+        return;
+      }
       if (value !== undefined) yield value;
     }
   } finally {
+    // A consumer that stopped early — the escalation ending the turn — has to
+    // *cancel*, not merely let go. Releasing the lock leaves the producer
+    // running with nobody reading it; cancelling propagates back through the
+    // pipeline. Skipped when the stream ended on its own, where cancelling an
+    // already-closed stream is a no-op with a rejection attached.
+    if (!drained) await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
