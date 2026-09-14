@@ -1174,20 +1174,29 @@ describe("the token endpoint says why it refused", () => {
     });
     expect(response.status).toBeGreaterThanOrEqual(400);
 
-    const line = await waitForLogLine(/client_id=\(not the registered client\)/, from);
+    const line = await waitForLogLine(/rejected:.*client_id=\(not the registered client\)/, from);
     expect(line).toMatch(rejection);
-    expect(line).not.toContain("someone-elses-client-id");
-    expect(line).not.toContain("someone-elses-secret");
+
+    // Not just the rejection line: since #100 every token request also leaves a
+    // census line carrying a client id, and "never echoed" has to hold for the
+    // whole log or it does not hold at all.
+    const written = (await Bun.file(logPath).text()).slice(from);
+    expect(written).toContain("client_id=(not the registered client)");
+    expect(written).not.toContain("someone-elses-client-id");
+    expect(written).not.toContain("someone-elses-secret");
   });
 
-  test("a token request that succeeds logs nothing", async () => {
+  test("a token request that succeeds is never reported as a rejection", async () => {
     const before = (await Bun.file(logPath).text()).split("\n").filter((l) => rejection.test(l)).length;
 
     const { accessToken } = await authorizeAs(new Browser(), creds, dana, { expectConsent: false });
     expect(accessToken).toBeTruthy();
 
-    // A line per rejection, not a line per request: an access log would bury
-    // the four rejections above in the noise of a working demo.
+    // Round 2 of #100 added a census line to every token request, successes
+    // included, so this is no longer "logs nothing" — it is that the *rejection*
+    // vocabulary stays reserved for rejections. A success that tripped this
+    // counter would put a `rejected:` line under a working demo and send the
+    // next reader of this log somewhere there is no bug.
     await Bun.sleep(250);
     const after = (await Bun.file(logPath).text()).split("\n").filter((l) => rejection.test(l)).length;
     expect(after).toBe(before);
@@ -1421,6 +1430,164 @@ describe("a replayed authorization code is named as one", () => {
 
     const line = await waitForLogLine(/error=invalid_client/, from);
     expect(line).not.toContain("code=");
+  });
+});
+
+/**
+ * #100 round 2 — the census line, which is what makes a double exchange
+ * countable instead of inferable.
+ *
+ * The first round could only say "something is fetching the authorization
+ * callback twice", because this service logged rejections and nothing else: the
+ * successful first exchange left no trace, so two hits looked like one rejection
+ * with no partner, and the caller behind either was never named. On Render at
+ * 21:05:28Z the missing half was the whole answer — cg-web's single `next_uri`
+ * fetch was already in *its* log, and the 290 ms gap to cg-idp's rejection could
+ * not be attributed to anyone.
+ *
+ * So every request leaves one line carrying when, which grant, which code, what
+ * happened, who asked and from where.
+ */
+describe("every token request leaves a line, successes included", () => {
+  const census = /POST \/oauth2\/token at=/;
+
+  /** The census line a single request produced, found by its unique code prefix. */
+  async function lineFor(prefix: string, from: number): Promise<string> {
+    return waitForLogLine(new RegExp(`POST /oauth2/token at=.*code=${prefix}\\b`), from);
+  }
+
+  async function exchange(
+    code: string,
+    verifier: string,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
+    return fetch(`${baseUrl}/oauth2/token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: basicAuth(creds.client_id, creds.client_secret!),
+        ...headers,
+      },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: verifier,
+      }),
+    });
+  }
+
+  test("a successful exchange is logged, with the caller attributed", async () => {
+    const { code, verifier } = await mintCode(dana);
+    const from = await logLength();
+
+    const response = await exchange(code, verifier, {
+      "user-agent": "arcade-engine/test",
+      // Render's proxy appends, so the caller is the left-most entry and the
+      // hops after it are infrastructure.
+      "x-forwarded-for": "203.0.113.7, 10.0.0.1",
+    });
+    expect(response.status).toBe(200);
+
+    const line = await lineFor(code.slice(0, 8), from);
+    expect(line).toContain("grant=authorization_code");
+    expect(line).toContain("outcome=success");
+    expect(line).toContain('ua="arcade-engine/test"');
+    expect(line).toContain("ip=203.0.113.7");
+    // The hop Render added is not the caller, and printing it would put the
+    // same value on every line and attribute nothing.
+    expect(line).not.toContain("10.0.0.1");
+    expect(line).toContain(`client_id=${creds.client_id}`);
+  });
+
+  test("the timestamp is millisecond UTC, so it lines up with cg-web's log", async () => {
+    const { code, verifier } = await mintCode(riley);
+    const from = await logLength();
+
+    const before = Date.now();
+    expect((await exchange(code, verifier)).status).toBe(200);
+    const after = Date.now();
+
+    const line = await lineFor(code.slice(0, 8), from);
+    const at = /at=(\S+)/.exec(line)?.[1];
+    // The exact shape cg-web prints, because the two logs are read side by side
+    // and a reader should not be converting formats in their head.
+    expect(at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+    const parsed = Date.parse(at!);
+    expect(parsed).toBeGreaterThanOrEqual(before);
+    expect(parsed).toBeLessThanOrEqual(after);
+  });
+
+  test("the code is identified by a prefix, never printed in full", async () => {
+    const { code, verifier } = await mintCode(morgan);
+    const from = await logLength();
+
+    // Both hits of the same code, which is the pair #100 needed to count.
+    expect((await exchange(code, verifier)).status).toBe(200);
+    expect((await exchange(code, verifier)).status).toBe(400);
+
+    await waitForLogLine(/outcome=invalid_grant/, from);
+    await Bun.sleep(100);
+    const written = (await Bun.file(logPath).text()).slice(from);
+    const lines = written.split("\n").filter((l) => census.test(l));
+
+    expect(lines).toHaveLength(2);
+    for (const line of lines) expect(line).toContain(`code=${code.slice(0, 8)}`);
+    expect(lines[0]).toContain("outcome=success");
+    // The second hit is named as the replay it is, on the census line itself,
+    // so counting and classifying do not need two different greps.
+    expect(lines[1]).toContain("outcome=invalid_grant");
+    expect(lines[1]).toContain("code_state=already_consumed");
+
+    // A prefix is enough to pair two requests and not enough to spend a code.
+    expect(written).not.toContain(code);
+  });
+
+  test("a refresh exchange is logged without leaking the refresh token", async () => {
+    const { refreshToken } = await authorizeAs(new Browser(), creds, riley, {
+      expectConsent: false,
+    });
+    expect(refreshToken).toBeTruthy();
+    const from = await logLength();
+
+    const response = await fetch(`${baseUrl}/oauth2/token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: basicAuth(creds.client_id, creds.client_secret!),
+        "user-agent": "arcade-engine/refresh",
+      },
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken! }),
+    });
+    expect(response.status).toBe(200);
+
+    const line = await waitForLogLine(/POST \/oauth2\/token at=.*grant=refresh_token/, from);
+    expect(line).toContain("outcome=success");
+    expect(line).toContain('ua="arcade-engine/refresh"');
+    // No `code` parameter on this grant, and the refresh token is a long-lived
+    // credential — eight characters of it would be eight more than belong in a
+    // log file, so the field says so rather than improvising.
+    expect(line).toContain("code=(none)");
+    expect(line).not.toContain(refreshToken!.slice(0, 8));
+  });
+
+  test("a request with no proxy header and no user agent still leaves a line", async () => {
+    // A local dev server and this test suite are both direct connections. The
+    // fields are absent, so they read `(none)` — a line that silently dropped
+    // them would be a different shape to parse on the one deployment where
+    // somebody is debugging by eye.
+    const from = await logLength();
+
+    const response = await exchange(`not-a-code-${crypto.randomUUID()}`, pkce().verifier, {
+      "user-agent": "",
+    });
+    expect(response.status).toBe(400);
+
+    const line = await waitForLogLine(/POST \/oauth2\/token at=.*outcome=invalid_grant/, from);
+    expect(line).toContain('ua="(none)"');
+    expect(line).toContain("ip=(none)");
+    expect(line).toContain("code_state=unknown");
   });
 });
 

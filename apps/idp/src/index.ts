@@ -19,6 +19,7 @@ import { countPeople, openPeople } from "./db.ts";
 import { renderConsentPage, renderLoginPage, renderMessagePage } from "./pages.ts";
 import { tolerateAuthorizationCodeReplay } from "./replay-tolerance.ts";
 import { OAuthClientRotatedError, RESET_PATH, resetSummary, runIdpReset } from "./reset.ts";
+import { formatTokenLine } from "./token-log.ts";
 
 const SERVICE = "idp";
 const config = readConfig();
@@ -429,6 +430,25 @@ function mixedCredentialsRefusal(): Response {
 }
 
 /**
+ * Which of the registered clients the request claims to be, or a fixed string
+ * saying it is none of them.
+ *
+ * The id is never echoed from the request. Under Basic it shares one base64
+ * blob with the secret, so a caller that swapped the two fields would have us
+ * print a secret; and an unknown id is attacker-controlled text on its way into
+ * a log a human reads. Comparing and naming is enough to answer the question
+ * anyone reading these lines is asking — "is Arcade pointed at a different
+ * client, or does it have the wrong secret?" — without echoing either.
+ *
+ * Shared by the census line and the rejection line so the two cannot disagree
+ * about who the caller was.
+ */
+function clientLabel(token: TokenRequest, registered: string[]): string {
+  const claimed = requestClientId(token);
+  return claimed !== null && registered.includes(claimed) ? claimed : "(not the registered client)";
+}
+
+/**
  * One line per `/oauth2/token` rejection: the status, the OAuth error, its
  * description, and the client authentication method the caller used.
  *
@@ -454,14 +474,13 @@ async function logTokenFailure(
   const body = (await response.clone().json().catch(() => null)) as
     | { error?: string; error_description?: string }
     | null;
-  const claimed = requestClientId(token);
 
   console.log(
     `[${SERVICE}] POST ${TOKEN_PATH} rejected: status=${response.status} ` +
       `error=${body?.error ?? "(none)"} ` +
       `error_description=${JSON.stringify(body?.error_description ?? "(none)")} ` +
       `client_auth=${JSON.stringify(observedClientAuth(token))} ` +
-      `client_id=${claimed !== null && registered.includes(claimed) ? claimed : "(not the registered client)"}` +
+      `client_id=${clientLabel(token, registered)}` +
       (code === null ? "" : ` code=${code}`),
   );
 
@@ -646,11 +665,41 @@ const server = Bun.serve({
       const sent: TokenRequest = { authorization, form: new URLSearchParams(body) };
       const dual = classifyDualCredentials(sent);
 
+      // When the request arrived, not when it finished. This is the field that
+      // gets lined up against cg-web's `[verifier] next_uri answered` line, and
+      // a completion time would fold this service's own latency into the gap
+      // being measured (#100: 290 ms between the two, on Render).
+      const at = new Date().toISOString();
+
+      /**
+       * The census line, emitted for every outcome including success.
+       *
+       * Deferred into a closure because there are two exits below — this
+       * service's own `mixed` refusal and whatever Better Auth answers — and a
+       * request that left by one of them without a line would be exactly the
+       * blind spot #100 was.
+       */
+      const census = (status: number, error: string | undefined, code: CodeState | null) =>
+        console.log(
+          formatTokenLine(SERVICE, TOKEN_PATH, {
+            at,
+            grantType: sent.form.get("grant_type"),
+            code: sent.form.get("code"),
+            codeState: code,
+            status,
+            error,
+            clientId: clientLabel(sent, registeredClientIds),
+            userAgent: request.headers.get("user-agent"),
+            forwardedFor: request.headers.get("x-forwarded-for"),
+          }),
+        );
+
       // Two different identities in one request. The plugin would refuse this
       // too, one line later and for a less specific reason; refusing it here is
       // what keeps the tolerance below down to "the same credentials twice".
       if (dual === "mixed") {
         const refusal = mixedCredentialsRefusal();
+        census(refusal.status, "invalid_request", null);
         await logTokenFailure(sent, refusal, registeredClientIds);
         return refusal;
       }
@@ -677,20 +726,25 @@ const server = Bun.serve({
           body: forwardedBody,
         }),
       );
+      // Read once for both lines below. The code classification rides along
+      // only when the plugin's own answer is the ambiguous one: on any other
+      // rejection — wrong secret, wrong redirect_uri, PKCE — the code's history
+      // is not the question, and a `code_state=unknown` beside `invalid_client`
+      // would send a reader looking in the wrong place.
+      const answered =
+        response.status >= 400
+          ? ((await response.clone().json().catch(() => null)) as
+              | { error?: string; error_description?: string }
+              | null)
+          : null;
+      const ambiguous =
+        answered?.error === "invalid_grant" && answered?.error_description === "invalid code";
+      census(response.status, answered?.error, ambiguous ? presentedState : null);
+
       if (response.status >= 400) {
         // Logged as what the plugin was asked, not as what arrived: after the
         // strip this *is* a `client_secret_basic` request, and saying anything
         // else would send a reader looking for a method problem that is gone.
-        // The code classification rides along only when the plugin's own answer
-        // is the ambiguous one. On any other rejection — wrong secret, wrong
-        // redirect_uri, PKCE — the code's history is not the question, and a
-        // `code=unknown` beside `invalid_client` would send a reader looking in
-        // the wrong place.
-        const answered = (await response.clone().json().catch(() => null)) as
-          | { error?: string; error_description?: string }
-          | null;
-        const ambiguous =
-          answered?.error === "invalid_grant" && answered?.error_description === "invalid code";
         await logTokenFailure(
           { authorization, form: forwardedForm },
           response,

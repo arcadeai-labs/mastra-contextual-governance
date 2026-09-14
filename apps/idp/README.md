@@ -18,7 +18,7 @@ plugin as an OAuth 2.1 authorization server, owning `idp.db` on its own disk.
 | Path | What |
 |---|---|
 | `GET /oauth2/authorize` | Authorization endpoint. Sends the browser to `/login`, then `/consent`, then back to the client with a code. |
-| `POST /oauth2/token` | Token endpoint. `client_secret_basic` (HTTP Basic), PKCE `S256` required. Tolerates Arcade's duplicated credentials — see below. Access tokens are opaque; the ID token is an RS256 JWT. Rejections are logged; a replayed code is refused without revoking the first exchange's tokens. |
+| `POST /oauth2/token` | Token endpoint. `client_secret_basic` (HTTP Basic), PKCE `S256` required. Tolerates Arcade's duplicated credentials — see below. Access tokens are opaque; the ID token is an RS256 JWT. Every request is logged, successes included; a replayed code is refused without revoking the first exchange's tokens. |
 | `GET /oauth2/userinfo` | The persona's identity. `email` is the claim Arcade extracts. |
 | `GET /jwks` | The key set the ID token is verified against. One RSA key, `alg: RS256`. |
 | `POST /oauth2/introspect`, `POST /oauth2/revoke` | For a resource server that needs to validate or revoke an opaque token. |
@@ -253,6 +253,38 @@ One more trap, measured: the `authorization_code` grant consumes the code **befo
 authenticates the client. Reproducing a client-auth failure by hand with a placeholder code
 returns `invalid_grant: invalid code` and never reaches the check. Use a real code, or ask
 `/oauth2/introspect`, which authenticates the client first.
+
+### Every token request leaves a line
+
+Since #100 round 2, **every** `/oauth2/token` request writes a census line — successes
+included:
+
+```
+[idp] POST /oauth2/token at=2026-09-14T21:05:28.383Z grant=authorization_code \
+  code=Ab3xK9pQ code_state=already_consumed outcome=invalid_grant client_id=<id> \
+  ua="arcade-engine/1.4" ip=203.0.113.7
+```
+
+| Field | What it is |
+| --- | --- |
+| `at` | Millisecond UTC, captured when the request **arrived**. The same shape `apps/web` prints, so the two logs read side by side. |
+| `grant` | `authorization_code`, `refresh_token`, or `(none)`. |
+| `code` | The first 8 characters of the authorization code — enough to pair two requests, not enough to spend one. `(none)` on a grant that carries no code. |
+| `code_state` | `already_consumed` / `unknown`, only when the answer was the ambiguous `invalid_grant "invalid code"`. |
+| `outcome` | `success`, the OAuth error code, or `http_<status>`. |
+| `client_id` | The registered id, or `(not the registered client)`. Never echoed from the request. |
+| `ua` | `User-Agent`, quoted and capped at 120 characters. |
+| `ip` | The **first** hop of `X-Forwarded-For` — Render's proxy appends, so the left-most entry is the caller. `(none)` on a direct connection. |
+
+This exists because round 1 of #100 could not be finished without it. The log showed two
+`invalid_grant` rejections 216 ms apart and nothing else: the *successful* first exchange
+left no trace, so a double exchange could be inferred but never counted, and neither caller
+was ever attributed. On Render at 21:05:28Z the missing half was the whole answer — cg-web's
+single `next_uri` fetch was already in its own log, and the 290 ms gap to cg-idp's rejection
+belonged to nobody.
+
+The detailed `rejected:` line above is unchanged and still follows a failure. This line is
+the census; that one is the diagnosis.
 
 ### A replayed code is named as one, and no longer costs anything
 
