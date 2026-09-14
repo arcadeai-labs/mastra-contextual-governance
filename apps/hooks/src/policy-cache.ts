@@ -179,11 +179,22 @@ export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}
       const snapshot = readPolicy(db);
       revision = snapshot.revision;
       const policy = compilePolicy({ catalogue: snapshot.catalogue, rules: snapshot.rules });
-      const outputRules = disarm(snapshot.output_rules, setting);
-      const outputPolicy = compileOutputPolicy({
+      // Compiled as written first, whatever the switch says. Disarming drops
+      // rules from what is evaluated, and a rule that is not evaluated is a
+      // rule whose diagnostics are not raised — so a control run would quietly
+      // buy silence about an output policy that no longer compiles. The
+      // scanners are a demo control; the loudness is not.
+      const asWritten = compileOutputPolicy({
         catalogue: snapshot.catalogue,
-        rules: outputRules,
+        rules: snapshot.output_rules,
       });
+      const outputPolicy =
+        setting === "armed"
+          ? asWritten
+          : compileOutputPolicy({
+              catalogue: snapshot.catalogue,
+              rules: disarm(snapshot.output_rules),
+            });
       const scanners = describeScanners(setting, snapshot.output_rules);
       const subjects = new Map(snapshot.subjects.map((s) => [subjectKey(s.user_id), s] as const));
       state = {
@@ -287,8 +298,7 @@ export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}
  * would be refused by `compileOutputPolicy` — correctly, since it could never
  * redact anything — so it is dropped here instead.
  */
-function disarm(rules: readonly OutputRule[], setting: ScannerSetting): OutputRule[] {
-  if (setting === "armed") return [...rules];
+function disarm(rules: readonly OutputRule[]): OutputRule[] {
   return rules
     .map((rule) => ({ ...rule, patterns: [] }))
     .filter((rule) => rule.fields.length > 0);

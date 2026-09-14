@@ -202,6 +202,38 @@ describe("disarmed by the switch, which is the control run", () => {
     );
   });
 
+  test("an output policy that no longer compiles still fails closed", async () => {
+    // Disarming drops rules from what is evaluated, and a rule that is not
+    // evaluated is a rule whose diagnostics are not raised. The control run is
+    // allowed to switch a control off; it is not allowed to buy silence about a
+    // policy that is broken, because that silence outlasts the control run.
+    const instance = start("disarmed");
+    instance.db.run("UPDATE output_rules SET patterns = ? WHERE id = 'post.strip-injected-instructions'", [
+      JSON.stringify([
+        { id: "pattern.broken", regex: "(unclosed", flags: "i", strategy: "remove", replacement: "" },
+      ]),
+    ]);
+    await Bun.sleep(POLL_MS * 8);
+
+    const response = await fetch(`${instance.base}/post`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
+      body: JSON.stringify({
+        execution_id: "tc_switch_broken",
+        tool: { name: "GetLoan", toolkit: "Loan", version: "1.0.0" },
+        success: true,
+        output: LOAN,
+        context: { user_id: DANA },
+      }),
+    });
+    const body = PostHookResult.parse(await response.json());
+    expect(body.code).toBe("CHECK_FAILED");
+    expect(body.override).toBeUndefined();
+
+    const health = await fetch(`${instance.base}/health`);
+    expect(health.status).toBe(503);
+  });
+
   test("but act 3 still redacts, so the contrast is about act 4 and nothing else", async () => {
     const instance = start("disarmed");
     const output = await getLoan(instance.base);
