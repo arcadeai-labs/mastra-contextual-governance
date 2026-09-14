@@ -240,8 +240,14 @@ describe("fails closed, and the failure is audited", () => {
       ["*", "Loan.ApproveLoan", "Loan.DenyLoan", "Loan.GetLoan", "Loan.SearchLoans"],
     );
     expect(rows.every((r) => r.decision === "deny" && r.rule_id === null)).toBe(true);
-    expect(rows.filter((r) => r.tool !== "*").every((r) => /FAIL-CLOSED/.test(r.reason))).toBe(true);
+    // **Every** row, summary included. A listing refused because the control
+    // plane could not decide has to read that way on every row it wrote, or
+    // `hook=access decision=deny` cannot be told from a policy that hid things
+    // on purpose — round 1 of the review found the summary missing this.
+    expect(rows.every((r) => /FAIL-CLOSED/.test(r.reason))).toBe(true);
     const summary = rows.find((r) => r.tool === "*")!;
+    expect(summary.reason).toContain("could not load its policy");
+    expect(summary.reason).toContain("2 tools in 1 toolkit outside the catalogue are hidden");
     expect(summary.reason).toContain("2 tools in 1 toolkit");
     db.run("UPDATE policy_rules SET tool = 'ApproveLoan' WHERE id = 'pre.approve-within-clearance'");
     await settle();

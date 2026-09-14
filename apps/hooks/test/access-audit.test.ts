@@ -2,19 +2,26 @@
  * #107 — how many audit rows one `/access` call is worth.
  *
  * `/access` is asked about the whole Arcade project catalogue, not about the
- * tools anybody is using: spike #2 measured one `tools/list` producing four
- * `/access` calls, one of them enumerating every toolkit in the project —
- * 1,200 entries, ~1.6 MB. Appending a row per entry is what put 413,832 rows
- * on the Render disk with nothing looping.
+ * tools anybody is using. Two measurements: spike #2 saw one `tools/list`
+ * produce **four** `/access` calls, one of them enumerating every toolkit in
+ * the project (~1.6 MB), and spike #5 counted what that costs on the deployed
+ * gateway — **8,278 `/access` frames per `tools/list`**, six `allow` and 8,272
+ * `deny` (`docs/spikes/05-custom-verifier.md` §11.3). Appending a row per
+ * entry is what put 413,832 rows on the Render disk with nothing looping:
+ * `413,832 / 8,278 ≈ 50 listings`.
+ *
+ * The figures divide **per list** and this module works **per call**: a summary
+ * row is written once per `/access` call, so one listing is at most four.
  *
  * **This file is where the answer to "one row per tool or one per list" is
  * pinned, and it is deliberately the only place.** Three answers were on the
  * table (`src/access-audit.ts` has the argument):
  *
- *   A  one row per tool — what was here, ~1,200 rows per listing
- *   B  one row per `/access` call — cheap, and act 1 stops being evidence
- *   C  one row per tool in a governed toolkit, plus one summary row for the
- *      rest — what landed
+ *   A  one row per tool — what was here, ~8,278 rows per listing
+ *   B  one row per `/access` call — four a listing, and act 1 stops being
+ *      evidence
+ *   C  one row per tool in a governed toolkit, plus one summary row per call
+ *      for the rest — what landed, and what the human chose on #107
  *
  * Every assertion below that would change under A or B is in this file. The
  * rest of the suite asserts things all three share: what Arcade is told, which
@@ -175,5 +182,63 @@ describe("one /access call, one row per governed tool plus one summary", () => {
     }
     expect(events.at(-1)!.tool).toBe("*");
     expect(events.at(-1)!.reason).toContain("800 tools in 20 toolkits");
+  });
+
+  /**
+   * Round 1 of the review, finding 1.
+   *
+   * The summary used to say only where the line between governed and catalogue
+   * was drawn. On a fail-closed path that made a control plane which could not
+   * load its policy indistinguishable, in the log, from one that was working:
+   * every per-tool row said `FAIL-CLOSED` and the row standing for the other
+   * eight thousand did not.
+   */
+  describe("a fail-closed listing reads as fail-closed on every row it wrote", () => {
+    const failed: CacheState = {
+      status: "failed",
+      revision: 7,
+      failed_at: "2026-01-01T00:00:00.000Z",
+      error: "Policy failed to compile: rule x",
+    };
+
+    test.each([
+      ["cold", { status: "cold" } as CacheState, "has not loaded its policy yet"],
+      ["failed", failed, "could not load its policy (Policy failed to compile: rule x)"],
+    ])("%s: the summary carries the same reason the per-tool rows carry", (_label, state, cause) => {
+      const { events } = handleAccess({ user_id: DANA, toolkits: projectCatalogue(3, 100) }, state, ctx);
+
+      // Not "every row except the one standing for three hundred decisions".
+      expect(events.every((event) => event.reason.startsWith("FAIL-CLOSED:"))).toBe(true);
+      expect(events.every((event) => event.decision === "deny")).toBe(true);
+      expect(events.every((event) => event.reason.includes(cause))).toBe(true);
+
+      const summary = events.at(-1)!;
+      expect(summary.tool).toBe("*");
+      // The group sits in the slot a tool name sits in on the rows above, so
+      // the two sentences are the same sentence.
+      expect(summary.reason).toContain("300 tools in 3 toolkits outside the catalogue are hidden");
+      // And the accounting is still there, after the cause rather than instead of it.
+      expect(summary.reason).toContain("SUMMARY: 300 tools in 3 toolkits");
+      expect(summary.reason).toContain("300 hidden, 0 allowed");
+    });
+
+    test("a call with nothing governed in it still says why, with no per-tool row to lean on", () => {
+      const { events } = handleAccess(
+        { user_id: DANA, toolkits: { Stock0: { tools: { A: V, B: V } } } },
+        { status: "cold" },
+        ctx,
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]!.tool).toBe("*");
+      expect(events[0]!.reason).toStartWith("FAIL-CLOSED: the control plane has not loaded its policy yet,");
+    });
+
+    test("the ordinary path does not borrow the marker — a policy that hid things says so", () => {
+      const { events } = handleAccess({ user_id: SAM, toolkits: projectCatalogue(3, 100) }, ready(), ctx);
+      const summary = events.at(-1)!;
+      expect(summary.tool).toBe("*");
+      expect(summary.reason).not.toContain("FAIL-CLOSED");
+      expect(summary.reason).toStartWith("SUMMARY: 300 tools in 3 toolkits outside this control plane's catalogue");
+    });
   });
 });

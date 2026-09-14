@@ -193,7 +193,7 @@ export function createServer(deps: ServerDeps) {
       // Deny everything the request named, audited the way the normal path
       // audits it — one row per tool in a governed toolkit, one summary row
       // for the rest (#107). A control plane that is failing closed is the
-      // last place that should be writing 1,200 rows per call. If even that
+      // last place that should be writing thousands of rows per call. If even that
       // cannot be read, one row for the request and a 5xx: the one signal
       // left, and Arcade's fail_closed mode makes it a denial.
       const parsed = AccessHookRequest.safeParse(body);
@@ -212,6 +212,11 @@ export function createServer(deps: ServerDeps) {
             governed: governedFor(cache.current(), ctx),
             base: { ts, execution_id: str(body.execution_id), hook, user_id: userId },
             newId: newEventId,
+            // Everything in this call was refused for one reason, so the
+            // summary carries it too: a fail-closed listing must read as
+            // fail-closed on every row it wrote, or the log cannot tell one
+            // from a normal one.
+            summaryReason: reasonFor,
           }),
         );
         const response: AccessHookResult = { deny: parsed.data.toolkits };

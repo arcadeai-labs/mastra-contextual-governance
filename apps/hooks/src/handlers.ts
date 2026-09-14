@@ -167,6 +167,14 @@ export function handleAccess(
       governed: governedFor(state, ctx),
       base,
       newId: ctx.newId,
+      // With no policy loaded, every tool in the call — governed or not — was
+      // refused because the control plane could not decide, so the summary row
+      // says so in the same words the per-tool rows use. Otherwise the
+      // summarised tools really were refused for being outside the catalogue,
+      // and the module's own sentence is the accurate one.
+      ...(state.status === "ready"
+        ? {}
+        : { summaryReason: (what: string) => failClosedReason(state, what) }),
     }),
   };
 }
