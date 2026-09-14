@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "bun scripts/next.ts start",
     "typecheck": "tsc --noEmit",
+    "verify:standalone": "bun scripts/verify-standalone.ts",
     "test": "bun test"
   },
   "//": "`dev` and `start` go through `scripts/next.ts` so that PORT comes from this service's own `.env.local`, the way it does for the three Bun services. `next dev --port ${PORT:-3000}` did not: the shell expanded it before anything read the file, and the service bound 3000 in a worktree that owns 4410. See #50 and the comment at the top of that script; `test/dev-port.test.ts` fails if the shell-expanded form comes back.",
