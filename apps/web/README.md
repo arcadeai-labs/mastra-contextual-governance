@@ -1,12 +1,11 @@
 # apps/web — the demo UI
 
-Next.js. Eventually the split screen: a deliberately boring enterprise loan app on the
-left, the Arcade control plane on the right (#22). Today it carries the identity
-(#82), the control-plane panel (#21), the approval page (#19), and the scaffold's
-placeholder home page.
+Next.js, and since #22 `/` is the demo: a deliberately boring enterprise loan app on
+the left, the Arcade control plane on the right. It carries the identity (#82), the
+chat with the agent (#14), the control-plane panel (#21) and the approval page (#19).
 
 ```sh
-bun run --cwd apps/web dev               # then open /panel or /approvals/<id>
+bun run --cwd apps/web dev               # then open / — or /panel, /chat, /approvals/<id>
 bun test apps/web
 bun run --cwd apps/web build
 bun run --cwd apps/web verify:standalone # drives the Docker image, not `next start`
@@ -441,6 +440,87 @@ back, and makes the whole path testable against a real server instead of a stub.
 `lib/governance/subscribe.ts` is the only file that knows the wire contract, and
 `apps/hooks/src/events.ts` is the only file that writes it — #54 implemented that shape
 rather than negotiating a new one, so the two halves have never had to be reconciled.
+
+## The split screen — `/`
+
+`components/shell/SplitScreen.tsx`. Two halves, a chartreuse rule between them, and
+nothing embedded in anything: the layout is the argument, because the claim is that the
+controls live *outside* the system being controlled.
+
+It **composes**, and every piece of it was built by another slice. `app/page.tsx` is the
+one file where they meet:
+
+| region | component | slice |
+|---|---|---|
+| left · chrome, tabs, the signed-in email | `components/bank/BankPane.tsx` | #22 |
+| left · applications under review | `components/bank/LoanFiles.tsx` | #22 |
+| left · assistant | `components/chat/Chat.tsx` | #14 |
+| left · user access (`data-slot="tool-list"`) | `components/identity/PersonaToolList.tsx` | #15 |
+| left · user session | `components/identity/SignInPanel.tsx` | #82 |
+| right | `components/governance/ControlPlanePanel.tsx` | #21, #81 |
+
+The tool list is #15's, hosted rather than reimplemented, and the slot exists so that it
+can be: a client-side list that merely hid a tool would look exactly like one the access
+hook shortened, which is the failure this project keeps naming. `sessionTools` is called
+in this server component so the persona's bearer never leaves the process, and the result
+arrives at the widget as data — the arrangement `PersonaToolList`'s own docstring asks
+for. Act 1 survives the layout: as Sam, `Loan_ApproveLoan` is absent from the list, and
+nothing in the shell draws it as hidden (`test/split-screen.test.tsx`, *"the shell hosts
+#15's gateway-sourced list, and act 1's absence survives it"*).
+
+The widget keeps its own card and is drawn in the left half's colours, because `--line`
+and `--muted` reach it from `.bank`. That is as far as this stylesheet goes: the card's
+frame is set inline, and flattening it would mean `!important` against another slice's
+component. `components/bank/bank.css` says so where the rule would have gone.
+
+The one thing the shell adds is a join: when the chat shows a denial, the panel outlines
+the audit rows it came from. #6 built that seam and #21 wired the panel to accept a key;
+nothing had handed it one before, because the two surfaces had never been on the same
+page.
+
+### The left half reads the loan book through the governed path
+
+`GET /api/loan-context` (`lib/loan-context/`) is an MCP client of the gateway carrying
+the signed-in persona's bearer — the same path `lib/agent/tools.ts` takes — and calls
+`Loan_GetLoan` for `LN-2291` and `LN-2299`. **There is no direct read of `loans.db` in
+this service and there must never be one.** A second, ungoverned path into the bank's
+system of record sitting inches from a panel claiming there is only one would be a
+screen that lies, and once `/post` redaction lands (#16) the chat would show a masked
+account number beside a file that never had one masked.
+
+The honest cost: opening `/` makes two real governed tool calls plus the two `tools/list`
+requests behind #15's widget and this route's own tool lookup, so `access` rows and two
+`Loan.GetLoan` `pre` rows land on the panel before the presenter has said anything. That
+is what reading a loan file costs when reading one is governed.
+
+A read that does not produce a file is classified exactly as a failed tool call in the
+chat is, by importing that judgement rather than repeating it: a denial needs positive
+evidence that a hook decided, and everything else is a fault.
+
+### A denial is a decision, not an error state
+
+A red alert box reads to a room as *the demo broke*, when what happened is the system
+working as designed — and denials are the product. So a `denied` event is drawn as a
+filed decision (parchment, a dated maroon rule, the tool and the word, the rule
+author's sentence verbatim with its `[ref evt_…]` token), while a `fault`, an `error`
+and a failed request are drab grey and say no decision was made and nothing was
+recorded. Before #22 all four wore the same red.
+
+### Projected
+
+Wide screens only; mobile is out of scope per #1. Both halves size in `em` off one
+`clamp()` — `.bank` in `components/bank/bank.css` and `.cg-panel` scaled for half width
+in `components/shell/shell.css` — so the whole screen scales from two numbers.
+Measured at 1920x1080: `.bank` 20.2px, `.cg-panel` 18.2px, the borrower line 30px, the
+smallest label 14.5px, every piece of body text at 8:1 or better.
+
+### The fork seam
+
+A developer restyles the left half and keeps the right entirely. `test/split-screen.test.tsx`
+enforces it rather than trusting it: nothing under `components/bank` or
+`components/chat` imports a governance component or uses a `cg-` class name, `bank.css`
+styles nothing but `.bank-*`, and the shell may use the panel's two public entry points
+(`ControlPlanePanel`, `PanelStreamError`) and none of its parts.
 
 ## Fonts
 

@@ -91,6 +91,17 @@ export interface AgentHarness {
   /** The control plane's audit rows, newest first. */
   audit(): Promise<Array<Record<string, unknown>>>;
   /**
+   * Where this harness's `governance.db` is.
+   *
+   * Exposed for #22, which needs a rule that refuses a **read** in order to
+   * prove the split screen renders one as a decision rather than as a crash.
+   * The seeded policy has no such rule and should not grow one for a test, so
+   * the test writes it into the policy database and waits for the cache to poll
+   * it up — which is the same mechanism `DESIGN.md` calls "editable live on
+   * stage", exercised rather than described.
+   */
+  governanceDbPath: string;
+  /**
    * Take the loan book away, for the one test that needs a tool to fail for a
    * reason no hook had anything to do with.
    *
@@ -203,6 +214,7 @@ export async function startAgentHarness(): Promise<AgentHarness> {
     gateway,
     hooksHost,
     loanAppHost,
+    governanceDbPath: join(workspace, "governance.db"),
     calls,
     lists,
     tokenFor: (email) => gateway.issueToken(email),

@@ -1,0 +1,63 @@
+/*
+ * The split itself — and nothing else.
+ *
+ * Two columns, full viewport height, a hard rule between them. The layout *is*
+ * the argument: your business system on the left, Arcade's control plane on the
+ * right, neither embedded in the other. Everything about how each half looks
+ * lives on its own side of that rule — `components/bank/bank.css` for the left,
+ * `app/globals.css` for the panel — so replacing the enterprise app means
+ * deleting one stylesheet and one directory.
+ *
+ * Wide screens only. `DESIGN.md` and #1 put mobile out of scope; a stacked
+ * version of this screen would not make the argument the screen exists to make.
+ */
+
+.cg-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--ink);
+}
+
+.cg-split-left,
+.cg-split-right {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The seam. Chartreuse, three pixels, the full height of the screen: the one
+   piece of Arcade's chrome that crosses into the left half's territory, because
+   it is the boundary that is the point. It is also the only rule in this file
+   that names a brand colour — the two halves each own their own palette. */
+.cg-split-right {
+  border-left: 3px solid var(--chartreuse);
+  display: flex;
+  flex-direction: column;
+}
+
+.cg-split-right > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+ * The panel at half width.
+ *
+ * `app/globals.css` sizes the whole panel in `em` off one `clamp()` on
+ * `.cg-panel`, and says why: "the panel is half a screen in the split-screen
+ * shell (#22) and a whole one on its own page, and both are read from across a
+ * room; scaling one root rather than every rule is what lets it do both." This
+ * is the shell taking that offer. Three lanes in 960px want a smaller root than
+ * three lanes in 1920px, and one number moves all of it.
+ *
+ * Measured at 1920x1080: 18.2px, against 25.3px for the same panel on its own
+ * full-width page. Not half, deliberately — the stream badge and the event meta
+ * line are the smallest things on the panel and they are also the two that carry
+ * the claim "this is the live control plane, and here is whose call it was".
+ * They set the floor; the lanes had room to spare.
+ */
+.cg-split-right .cg-panel {
+  font-size: clamp(14px, 0.95vw, 22px);
+}
