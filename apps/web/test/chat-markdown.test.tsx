@@ -1,7 +1,7 @@
 /**
  * #99 — what the chat is allowed to draw out of text it did not write.
  *
- * Two claims, and only the first is about legibility:
+ * Three separate claims, and only the first is about legibility:
  *
  * 1. **Markdown renders**, as a subset: links, emphasis, strong, inline code,
  *    paragraphs. The model emitted `[Authorize access](…)` on the Render URL and
@@ -12,6 +12,11 @@
  *    not vouch for is shown as text too. That second half is the one people
  *    forget: escaping every tag and then emitting `javascript:` in an `href` has
  *    escaped nothing.
+ * 3. **The authorization card prints the name and the link and stops.** Arcade's
+ *    `llm_instructions` are words for the model, they carry the full authorize
+ *    URL, and on the Render URL they overflowed the card by several hundred
+ *    pixels. They stay in the event, where `test/gateway-token-rejected.test.ts`
+ *    reads them; they are off the screen.
  *
  * Markup-level, through `renderToStaticMarkup`, the way every other React test
  * in this service works — these are properties of a pure render.
@@ -189,7 +194,78 @@ describe("consecutive text events are one block", () => {
   });
 });
 
+describe("the authorization card is a name and a link", () => {
+  const LLM_INSTRUCTIONS =
+    "Please show the following link to the end user formatted as markdown: " +
+    "https://cg-idp-sa31.onrender.com/oauth2/authorize?client_id=abc123&redirect_uri=" +
+    "https%3A%2F%2Fcloud.arcade.dev%2Fapi%2Fv1%2Foauth%2Fcallback&response_type=code&state=xyz";
+
+  const layer2 = renderToStaticMarkup(
+    <EventView
+      event={{
+        kind: "authorization",
+        tool: "Loan_GetLoan",
+        url: "https://cloud.arcade.dev/api/v1/oauth/flow/abc",
+        instructions: LLM_INSTRUCTIONS,
+      }}
+    />,
+  );
+
+  test("the tool is named and the link is the only link", () => {
+    expect(layer2).toContain("Loan_GetLoan");
+    expect(layer2).toContain(`href="https://cloud.arcade.dev/api/v1/oauth/flow/abc"`);
+    expect([...layer2.matchAll(/<a /g)]).toHaveLength(1);
+  });
+
+  test("neither the URL nor the instructions are printed", () => {
+    // The overflow #99 measured: hundreds of pixels of query string in a card
+    // that had a working link two lines above it.
+    expect(layer2).not.toContain("Please show the following link");
+    expect(layer2).not.toContain("cg-idp-sa31.onrender.com");
+    expect(layer2).not.toContain("client_id");
+    // The `href` is the one place the URL belongs, and nowhere in the text.
+    expect(text(layer2)).not.toContain("https://");
+  });
+
+  test("it still says that nothing was refused and nothing was recorded", () => {
+    expect(layer2).toContain("A credential is missing");
+    expect(layer2).toContain("Nothing was refused");
+    expect(layer2).toContain("no rule ran and nothing was written to the audit log");
+    expect(layer2).not.toContain("denied");
+  });
+
+  test("hop 1 is told from layer 2 by the name, not by reading the words", () => {
+    // Since #94 the same event kind also carries the gateway refusing this
+    // browser's bearer. `tool` is the structured field that distinguishes them
+    // and the card prints it; it does not sniff the instructions for a URL or
+    // guess a hop from a spelling.
+    const hop1 = renderToStaticMarkup(
+      <EventView
+        event={{
+          kind: "authorization",
+          tool: "cg-demo-us",
+          url: "/api/arcade/start?next=%2Fchat",
+          instructions:
+            "The gateway rejected this browser's bearer with a 401 for dana.okafor@bank.example.",
+        }}
+      />,
+    );
+
+    expect(hop1).toContain("cg-demo-us — authorization needed");
+    expect(hop1).toContain(`href="/api/arcade/start?next=%2Fchat"`);
+    // Ours are still instructions for the model. Off the screen too — the wire
+    // keeps them, and `test/gateway-token-rejected.test.tsx` reads them there.
+    expect(hop1).not.toContain("401");
+    expect(hop1).not.toContain("dana.okafor@bank.example");
+  });
+});
+
 /** Source with `/* … *\/` and `//` comments removed. */
 function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
+/** Markup with the tags removed, so an assertion can be about what is readable. */
+function text(markup: string): string {
+  return markup.replace(/<[^>]*>/g, " ");
 }
