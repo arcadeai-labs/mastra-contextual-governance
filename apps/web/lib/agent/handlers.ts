@@ -26,7 +26,8 @@
  *   - the environment is not configured   → 503, naming the variables
  *   - nobody is signed in                 → 401, pointing at sign-in
  *   - signed in, never ran hop 1          → 401, pointing at the gateway hop
- *   - the gateway will not take this browser's bearer → a `re-authorize` turn
+ *   - the gateway will not take this browser's bearer → one server-side refresh,
+ *     and a `re-authorize` turn only if that refresh fails too (#113)
  *   - the gateway could not be reached at all  → 502, as plumbing
  *   - the gateway listed nothing at all        → 502, naming the control plane
  *   - the gateway advertised no *governed* tools → 502, naming the toolkit
@@ -89,7 +90,7 @@ import { planResume, readResumeRequest, type ResumeRequest } from "./resume.ts";
 import { anthropicModel, buildAgent } from "./agent.ts";
 import { CHAT_PATH, encodeEvent, NDJSON, type ChatEvent } from "./events.ts";
 import { serverFault } from "./fault.ts";
-import { liveGatewayToken, GATEWAY_START_PATH, SIGNIN_PATH } from "../identity/handlers.ts";
+import { liveGatewayToken, refreshedGatewayToken, GATEWAY_START_PATH, SIGNIN_PATH } from "../identity/handlers.ts";
 import { mcpUrl, probeGatewayToken } from "../identity/gateway.ts";
 import { gatewayClient, governedToolset } from "./tools.ts";
 import { gatewayTokenRejected, readSession, writeSession, type Session } from "../identity/session.ts";
@@ -138,9 +139,18 @@ export interface ChatOptions {
  * One JSON object, for a refusal that is not a turn. Never a stream — there is
  * nothing to stream. The one pre-stream outcome that *is* a stream is
  * `reauthorize`, and it is a stream because it has a link to carry.
+ *
+ * `headers` carries the resealed session cookie when there is one. A refusal is
+ * still a response, and a turn that refreshed the gateway token and then
+ * refused for some *other* reason has to hand the new token back to the browser
+ * anyway — otherwise the refresh is spent and lost, and with an authorization
+ * server that rotates refresh tokens, losing it costs the session (#113).
  */
-function refuse(status: number, message: string, detail?: unknown): Response {
-  return Response.json({ error: message, ...(detail === undefined ? {} : { detail }) }, { status });
+function refuse(status: number, message: string, detail?: unknown, headers?: Headers): Response {
+  return Response.json(
+    { error: message, ...(detail === undefined ? {} : { detail }) },
+    { status, ...(headers ? { headers } : {}) },
+  );
 }
 
 /**
@@ -156,9 +166,10 @@ export const PRE_STREAM = {
   token: "refresh this browser's gateway token",
   client: "build the MCP client for the gateway",
   probe: "ask the gateway whether it accepts this browser's token",
-  agent: "build the agent and its model",
+  retry: "refresh the token the gateway just refused, and ask it once more",
   seal: "reseal the refreshed session cookie",
   approval: "read the approval this turn resumes",
+  agent: "build the agent and its model",
 } as const;
 
 /**
@@ -230,11 +241,18 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       return reauthorize(request, config, session, live.reason);
     }
 
+    // The bearer and the session this turn runs with, from here on. Both can
+    // change once — see the refusal branch below — and everything downstream
+    // reads these rather than `live`, so a turn that refreshed mid-flight
+    // reseals the session it actually used.
+    let bearer = live.token;
+    let current = live.session;
+
     step = PRE_STREAM.client;
     client = gatewayClient({
       arcadeApiUrl: config.arcadeApiUrl,
       gatewayId: config.identity.gatewayId,
-      token: live.token,
+      token: bearer,
       timeoutMs: MCP_TIMEOUT_MS,
     });
 
@@ -245,22 +263,77 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
     // the step that names it.
     step = PRE_STREAM.probe;
     const gatewayUrl = mcpUrl(config.arcadeApiUrl, config.identity.gatewayId);
-    const probe = await probeGatewayToken(gatewayUrl, live.token);
+    let probe = await probeGatewayToken(gatewayUrl, bearer);
+
     if (probe.outcome === "rejected") {
+      // #113. A refusal here is not yet a reason to fetch a human. `live` was
+      // built from `expires_at`, and the gateway has just said that number is
+      // wrong — so refresh against the refresh token in the sealed cookie and
+      // ask exactly once more.
+      //
+      // **Once.** The retry is not a loop and there is no second one: if the
+      // gateway refuses a bearer it minted seconds ago, nothing this service
+      // can do unassisted will change that, and turning the failure into a
+      // retry storm would spend a person's credentials against a gateway
+      // already saying no.
+      //
+      // The old client goes first. It holds the refused bearer in its auth
+      // provider and there is no way to put a different one into it, so the
+      // retry needs a new client rather than a reconnect — which is also why
+      // nothing here is ever cached across requests (`tools.ts`).
       await client.disconnect().catch(() => undefined);
-      // The status, never the token. This line is the one a Render log needs.
-      console.warn(`[chat] ${gatewayUrl} answered ${probe.status} to this browser's gateway token`);
-      return reauthorize(
-        request,
-        config,
-        live.session,
-        `the gateway answered ${probe.status} to this browser's gateway token`,
-      );
+      client = null;
+      // The status, never the token. This line is the one a Render log needs,
+      // and it is the first half of every sentence below: the gateway's own
+      // word about the credential (#94).
+      const refusal = `the gateway answered ${probe.status} to this browser's gateway token`;
+      console.warn(`[chat] ${gatewayUrl} answered ${probe.status} to this browser's gateway token; refreshing it once`);
+
+      step = PRE_STREAM.retry;
+      const renewed = await refreshedGatewayToken(current, config);
+      if (renewed.token === null) {
+        // The refresh itself failed. *Now* the card is the truthful answer, and
+        // it carries both halves: what the gateway said, and why the refresh
+        // could not answer it (#94).
+        return reauthorize(request, config, current, `${refusal}, and ${renewed.reason}`);
+      }
+      bearer = renewed.token;
+      current = renewed.session;
+
+      client = gatewayClient({
+        arcadeApiUrl: config.arcadeApiUrl,
+        gatewayId: config.identity.gatewayId,
+        token: bearer,
+        timeoutMs: MCP_TIMEOUT_MS,
+      });
+      probe = await probeGatewayToken(gatewayUrl, bearer);
+      if (probe.outcome === "rejected") {
+        await client.disconnect().catch(() => undefined);
+        console.warn(
+          `[chat] ${gatewayUrl} answered ${probe.status} to a freshly refreshed gateway token; ` +
+            `this browser has to authorize hop 1 again`,
+        );
+        return reauthorize(
+          request,
+          config,
+          current,
+          `${refusal}, and ${probe.status} to the refreshed one`,
+        );
+      }
     }
+
+    // The bearer is settled, so the cookie can be. Built here rather than just
+    // before the stream because every exit below this line is also an exit for
+    // a token that may have just been refreshed, and a `Set-Cookie` is the only
+    // way to carry it out of a response whose body is already decided.
+    step = PRE_STREAM.seal;
+    const resealed = new Headers();
+    if (current !== session) await writeSession(resealed, request, current as Session, config);
+
     if (probe.outcome === "unreachable") {
       await client.disconnect().catch(() => undefined);
       // Not a credential and not a toolkit name. Nobody refused anything.
-      return refuse(502, `The gateway at ${gatewayUrl} could not be reached: ${probe.detail}`);
+      return refuse(502, `The gateway at ${gatewayUrl} could not be reached: ${probe.detail}`, undefined, resealed);
     }
 
     let selected: Awaited<ReturnType<typeof governedToolset>>;
@@ -268,7 +341,7 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       selected = await governedToolset(client, { toolkits: config.agent.toolkits });
     } catch (cause) {
       await client.disconnect().catch(() => undefined);
-      return refuse(502, `The gateway would not list its tools: ${String(cause)}`);
+      return refuse(502, `The gateway would not list its tools: ${String(cause)}`, undefined, resealed);
     }
 
     options.onToolSurface?.({
@@ -282,7 +355,7 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
     // same wrong sentence #94 is about, one cause further along (#94).
     if (selected.error) {
       await client.disconnect().catch(() => undefined);
-      return refuse(502, `The gateway would not list its tools: ${selected.error}`);
+      return refuse(502, `The gateway would not list its tools: ${selected.error}`, undefined, resealed);
     }
 
     // A listing that *did* arrive and carried nothing at all — not even the
@@ -296,6 +369,8 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
         `The gateway listed no tools at all — not even its own built-ins, which every answer ` +
           `carries. That is the list failing to come back rather than a persona who may use ` +
           `nothing; check that the control plane is answering /access.`,
+        undefined,
+        resealed,
       );
     }
 
@@ -308,6 +383,7 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
           `nothing to call. Check ARCADE_LOAN_TOOLKIT and ARCADE_APPROVALS_TOOLKIT against a real ` +
           `tools/list.`,
         selected.dropped,
+        resealed,
       );
     }
 
@@ -320,14 +396,14 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       opening: [],
     };
     if (resume !== null) {
-      const planned = await resolveResume(resume, live.session.email, options, config);
+      const planned = await resolveResume(resume, current.email, options, config);
       if (!planned.ok) {
         await client.disconnect().catch(() => undefined);
         // A `fault`, not a `denied` and not a 500: nothing decided anything
         // here, and the UI must not claim a control-plane action that did not
         // happen (`events.ts`). A stream because the page renders one; the
         // status is 200 for the same reason `reauthorize` is.
-        return faultStream(request, config, live.session, session, {
+        return faultStream(request, config, current, session, {
           kind: "fault",
           tool: "resume",
           message: planned.problem,
@@ -374,11 +450,12 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
     }) as unknown as Streamable;
 
     // A refreshed gateway token has to be resealed, and the only place to do it
-    // is a header on this response — the stream body cannot set one later. So the
-    // cookie is written before the first byte, whether or not the turn succeeds.
-    step = PRE_STREAM.seal;
-    const headers = new Headers({ "content-type": NDJSON, "cache-control": "no-store" });
-    if (live.session !== session) await writeSession(headers, request, live.session as Session, config);
+    // is a header on this response — the stream body cannot set one later. The
+    // cookie was written above, before the first of the refusals that also have
+    // to carry it; here it only gains the stream's own two headers.
+    const headers = new Headers(resealed);
+    headers.set("content-type", NDJSON);
+    headers.set("cache-control", "no-store");
 
     return streamTurn({
       agent,
