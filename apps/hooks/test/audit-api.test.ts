@@ -281,7 +281,7 @@ describe("the filters", () => {
 
 describe("the limit is a bound, not a suggestion", () => {
   test("the default is AUDIT_DEFAULT_LIMIT and total says what was left behind", async () => {
-    // The question #62 exists to answer: was that burst 8,259 denials, or a
+    // The question #62 exists to answer: was that burst 8,278 denials, or a
     // runaway loop? A page with no count beside it cannot tell you.
     seed(250, { hook: "access", decision: "deny", user_id: SAM });
 

@@ -4,7 +4,7 @@
  *     GET /audit?user_id=dana.okafor@bank.example&hook=pre&decision=deny&limit=20
  *     Authorization: Bearer $ARCADE_HOOK_SIGNING_SECRET
  *
- *     { "rows": [ …GovernanceEvent… ], "count": 20, "total": 8259,
+ *     { "rows": [ …GovernanceEvent… ], "count": 20, "total": 8278,
  *       "limit": 20, "order": "newest_first",
  *       "filters": { "user_id": "dana.okafor@bank.example", "hook": "pre", "decision": "deny" } }
  *
@@ -26,8 +26,8 @@
  * - **A `limit` over the bound is a 400**, not a clamp. Clamping answers a
  *   question nobody asked and looks like an answer to the one they did.
  * - **`total` is counted without the limit.** A page that stops at the bound
- *   cannot, on its own, tell 8,259 denials from a runaway loop — which is
- *   precisely the question #62 was opened to answer.
+ *   cannot, on its own, tell one listing's 8,278 denials from a runaway loop,
+ *   which is precisely the question #62 was opened to answer — and #107's.
  *
  * ## Bearer, and which one
  *
@@ -53,7 +53,9 @@ export const AUDIT_DEFAULT_LIMIT = 100;
 /**
  * The most rows one request may ask for.
  *
- * A whole-project `/access` writes ~10,844 rows in one decision, so a page
+ * A whole-project `/access` used to write a row per catalogue entry — 10,804
+ * in the bench's 1.6 MB fixture, and 8,278 across the four calls of one live
+ * `tools/list` — so a page
  * cannot promise to hold a burst; `total` is what says how much was left
  * behind, and `since` is how you walk the rest.
  */

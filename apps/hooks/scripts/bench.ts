@@ -100,7 +100,8 @@ await time("/access whole-project catalogue", "/access", { user_id: SAM, toolkit
 /**
  * Rows per whole-project call, measured rather than assumed (#107).
  *
- * It used to be one per catalogue entry — 10,844 — and the disk arithmetic
+ * It used to be one per catalogue entry — 10,844 in this fixture — and the
+ * disk arithmetic
  * below was written against that constant. It is now one row per governed tool
  * plus one summary, and the point of measuring it here is that a change to
  * `src/access-audit.ts` moves this line rather than leaving a stale number in

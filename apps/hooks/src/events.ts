@@ -97,7 +97,9 @@ export const GOVERNANCE_EVENT_NAME = "governance";
  * The cap on both a replay and a live backlog, in events.
  *
  * Sized to the largest batch the control plane can produce in one decision: a
- * whole-project `/access` writes one row per tool, measured at 10,844 (`bun run
+ * whole-project `/access` used to write one row per tool, measured at 10,804 in
+ * the bench's 1.6 MB fixture and 8,278 across one live `tools/list`'s four
+ * calls; since #107 it writes one per governed tool plus one summary (`bun run
  * --cwd apps/hooks bench`). A limit under that would make a single legitimate
  * call truncate a resume, so this is that number with room to spare.
  */
@@ -242,9 +244,11 @@ export function handleEvents(request: Request, deps: EventStreamDeps): Response 
    *
    * It is what makes the backlog limit mean "how far behind the writer you may
    * fall" rather than "the largest batch you may receive". A whole-project
-   * `/access` arrives as ~10,844 events in one call; an idle writer is about to
-   * take all of them, so counting them against the cap would disconnect a
-   * perfectly healthy panel for the crime of watching a big decision.
+   * `/access` used to arrive as ~10,804 events in one call, and one live
+   * `tools/list` as 8,278 across four; an idle writer is about to take all of
+   * them, so counting them against the cap would disconnect a perfectly
+   * healthy panel for the crime of watching a big decision. #107 made that
+   * batch small, and this reasoning is why the cap stays where it is anyway.
    */
   let writerIdle = false;
 
