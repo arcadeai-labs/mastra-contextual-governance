@@ -8,7 +8,12 @@
  * criterion rather than decoration:
  *
  * 1. **It streams.** The reply appears as it is produced, so a tool call that
- *    takes two seconds looks like work rather than like a hang.
+ *    takes two seconds looks like work rather than like a hang. Streaming is
+ *    about *when* the words arrive and not about how they are broken up:
+ *    consecutive `text` events are one message that grows (`transcript.ts`),
+ *    rendered as a safe subset of markdown (`markdown.ts`). #99 found the
+ *    opposite live — one block per delta, so the first reply on the Render URL
+ *    read "It / looks like the lo / an system / need / s you".
  * 2. **It shows the tool calls.** A denial that only appeared as prose would
  *    leave nothing on screen distinguishing "the hook refused" from "the model
  *    decided not to" — and those are the two readings this whole demo exists to
@@ -58,6 +63,8 @@ import { useRef, useState } from "react";
 // `lib/agent/handlers.ts` instead pulls `@mastra/mcp` — and its stdio
 // transport's `fs` import — into the browser bundle, and `next build` fails.
 import { CHAT_PATH, type ChatEvent } from "../../lib/agent/events.ts";
+import { Markdown } from "./Markdown.tsx";
+import { transcript } from "./transcript.ts";
 
 const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
@@ -226,9 +233,17 @@ export function Chat({ signedInAs, onEvent, onTurnStart }: ChatProps) {
         </div>
       )}
 
-      {events.map((event, index) => (
-        <EventView key={index} event={event} />
-      ))}
+      {/* Grouped, not one-per-event. A `text` event is a delta; the deltas
+          either side of a tool call are two messages and the deltas between
+          them are one. `transcript.ts` says why that distinction is the whole
+          bug #99 was filed for. */}
+      {transcript(events).map((block, index) =>
+        block.kind === "reply" ? (
+          <Markdown key={index} source={block.text} />
+        ) : (
+          <EventView key={index} event={block.event} />
+        ),
+      )}
     </section>
   );
 }
@@ -248,7 +263,10 @@ function detailOf(detail: unknown): string {
 export function EventView({ event }: { event: ChatEvent }) {
   switch (event.kind) {
     case "text":
-      return <p style={{ margin: "0.5em 0", whiteSpace: "pre-wrap" }}>{event.text}</p>;
+      // One event on its own. `Chat` folds consecutive ones first and renders
+      // the fold through the same component, so a reply looks the same whether
+      // it arrived whole or three characters at a time.
+      return <Markdown source={event.text} />;
 
     case "tool-call":
       return (
