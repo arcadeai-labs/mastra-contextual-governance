@@ -20,21 +20,27 @@
  *
  * ## What it refuses, and why each refusal is separate
  *
- * Four different things can be wrong before a single token is spent, and they
- * have four different fixes:
+ * Five different things can be wrong before a single token is spent, and they
+ * have five different fixes:
  *
  *   - the environment is not configured   → 503, naming the variables
  *   - nobody is signed in                 → 401, pointing at sign-in
  *   - signed in, but no gateway token     → 401, pointing at the gateway hop
- *   - the gateway advertised no governed tools → 502
+ *   - the gateway listed nothing at all       → 502, naming the control plane
+ *   - the gateway advertised no *governed* tools → 502, naming the toolkit
  *
- * The last one is the interesting one. An agent with no tools still answers —
- * fluently, from memory, about a loan book it never read. That is the worst
- * possible output of this demo, so an empty toolset is an error rather than a
- * turn. It is also the shape a wrong `ARCADE_LOAN_TOOLKIT` or
- * `ARCADE_APPROVALS_TOOLKIT` takes.
+ * The last two are one symptom with two causes, and #15 split them because
+ * naming the wrong one sends somebody to check a toolkit variable while the
+ * control plane is down. An agent with no tools still answers — fluently, from
+ * memory, about a loan book it never read — which is the worst possible output
+ * of this demo, so either is an error rather than a turn. The difference is
+ * that a live `tools/list` always carries the gateway's own two built-ins, even
+ * when policy hides every project tool, so **zero** advertised entries is the
+ * list failing to come back rather than a narrow persona. `listToolsets()` does
+ * not throw on a JSON-RPC error — it logs and returns `{}` — so this is the
+ * only place that failure is visible at all.
  *
- * ## And the fifth thing, which nobody anticipated
+ * ## And the sixth thing, which nobody anticipated
  *
  * Everything above is a refusal: a sentence, a status, a fix. Anything else
  * that throws before the first byte is not — it is a bug — and #92 is the
@@ -160,6 +166,22 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       governed: Object.keys(selected.tools),
       dropped: selected.dropped,
     });
+
+    // Nothing at all came back. A different fault from "none of them are ours",
+    // and naming the wrong one sends somebody to check a toolkit variable while
+    // the control plane is down. `listToolsets()` does not throw on a JSON-RPC
+    // error — it logs and returns `{}` — so this is the only place that failure
+    // is visible, and a live answer always carries the gateway's own built-ins
+    // even when policy hides every project tool (#15).
+    if (selected.advertised.length === 0) {
+      await client.disconnect().catch(() => undefined);
+      return refuse(
+        502,
+        `The gateway listed no tools at all — not even its own built-ins, which every answer ` +
+          `carries. That is the list failing to come back rather than a persona who may use ` +
+          `nothing; check that the control plane is answering /access.`,
+      );
+    }
 
     if (Object.keys(selected.tools).length === 0) {
       await client.disconnect().catch(() => undefined);

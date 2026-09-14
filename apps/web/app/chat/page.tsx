@@ -1,16 +1,27 @@
 /**
- * `/chat` — the tracer bullet's whole user interface.
+ * `/chat` — the agent, and the tool list it was given.
  *
  * A server component, so the session is unsealed on the server and the only
  * thing that reaches the browser is the persona's email. The gateway token
  * never leaves this process; the chat route reads it from the cookie on each
  * turn.
+ *
+ * The tool list (#15) is fetched here for the same reason: it is one real
+ * `tools/list` against the gateway with this session's bearer, which needs a
+ * token the browser is never shown. What crosses to the client is the answer,
+ * as data.
+ *
+ * ⚠️ **Layout is #22's.** This page is the tracer bullet's bare scaffold and the
+ * split-screen shell replaces it; the widget below is a component with a
+ * two-prop surface precisely so that move is a re-parent rather than a rewrite.
  */
 import { cookies } from "next/headers";
 
 import { Chat } from "../../components/chat/Chat.tsx";
 import { configurationProblems, readIdentitySurface } from "../../lib/config.ts";
 import { ConfigurationBanner } from "../../components/identity/SignInPanel.tsx";
+import { PersonaToolList } from "../../components/identity/PersonaToolList.tsx";
+import { sessionTools } from "../../lib/agent/tool-list.ts";
 import { readSessionFromCookies } from "../../lib/identity/session.ts";
 import { SIGNIN_PATH, GATEWAY_START_PATH } from "../../lib/identity/handlers.ts";
 
@@ -24,6 +35,7 @@ export default async function ChatPage() {
     new Map(jar.getAll().map((cookie) => [cookie.name, cookie.value])),
     config,
   );
+  const tools = await sessionTools(session, { config });
 
   return (
     <main style={{ maxWidth: "42rem", margin: "0 auto", padding: "3rem 1.5rem" }}>
@@ -47,6 +59,8 @@ export default async function ChatPage() {
           <a href={GATEWAY_START_PATH}>Authorize the gateway</a>.
         </p>
       ) : null}
+
+      <PersonaToolList session={session} tools={tools} />
 
       <Chat signedInAs={session?.email ?? null} />
     </main>

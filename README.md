@@ -198,3 +198,13 @@ committing them. `.env.example` says where to obtain each one.
 The domain swap is structural, not a README instruction: replace `apps/loan-app`,
 `tools/loan` and the seed data, leave `packages/` alone. Full guide lands in
 [#24](https://github.com/ArcadeAI-labs/mastra-contextual-governance/issues/24).
+
+**Identity is one seam**, and it is the other thing a fork replaces. `readSession` /
+`readSessionFromCookies` in `apps/web/lib/identity/session.ts` return a
+`Session { email, gateway?, signed_in_at }` or `null`, and every route handler and server
+component that needs to know who is acting calls one of them. Point it at your own Okta,
+Auth0 or NextAuth session, return the email your directory knows the person by, and
+delete `apps/idp` — nothing downstream reads an identity from anywhere else, and the
+verifier route refuses a request that tries to carry one. The table of what to keep and
+what to delete is in
+[`apps/web/README.md`](./apps/web/README.md#the-identity-seam-a-forker-replaces).
