@@ -9,7 +9,16 @@ placeholder home page.
 bun run --cwd apps/web dev               # then open /panel or /approvals/<id>
 bun test apps/web
 bun run --cwd apps/web build
+bun run --cwd apps/web verify:standalone # drives the Docker image, not `next start`
 ```
+
+The last one needs a Docker daemon and takes about a minute. It is not a nicety:
+`next start` resolves imports against a full `node_modules` and the deployed image
+resolves them against whatever Next's file tracing carried, and #92 is what lives in
+that gap — `POST /api/chat` answered 500 on Render, with `Cannot find module 'ws'`,
+after passing the tracer bullet locally and three reviewers. Anything that changes
+`apps/web`'s runtime dependencies should be run past it. `-- --image <tag>` drives an
+image that already exists instead of building one, which is how you watch it fail.
 
 `PORT` comes from this directory's own `.env.local`, the way it does for the three Bun
 services: `dev` and `start` go through `scripts/next.ts`, which is a process Bun runs
@@ -588,7 +597,14 @@ exactly why it has a test: the first person it breaks for is a forker on their f
 | the environment is not configured | `503`, naming the variables |
 | nobody is signed in | `401`, pointing at `/api/auth/signin` |
 | signed in, no gateway token | `401`, pointing at `/api/arcade/start` |
+| the gateway listed nothing at all | `502`, naming the control plane |
 | the toolkit name matched nothing | `502`, naming `ARCADE_LOAN_TOOLKIT` |
+
+The last two are one symptom with two causes and are told apart on a measured
+fact: a live `tools/list` always carries the gateway's own two built-ins, even
+when policy hides every project tool. **Zero** entries is the list failing to
+come back, and saying "check `ARCADE_LOAN_TOOLKIT`" about a control plane that
+is down sends somebody a long way in the wrong direction.
 
 ### The stream
 
