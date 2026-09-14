@@ -1,36 +1,42 @@
 /**
- * #100 — `next_uri` is walked once, by the server, and the browser is sent
- * somewhere else.
+ * Where the browser goes after hop 2 — #100, and then #118.
  *
- * The bug this file exists to keep out is not a failure to authorize. It is
- * worse, and that is why it took three sittings to find: the verifier fetched
- * `next_uri` server-side (required, measured on #75) and *then* redirected the
- * browser to the same URL. Arcade's provider exchanged the authorization code
- * at `cg-idp` twice, and Better Auth's token endpoint does not merely refuse the
- * replay — `checkVerificationValue` calls
- * `revokeTokensIssuedForAuthorizationCode`, which deletes the access and refresh
- * tokens the *first*, successful exchange minted. So the visible outcome was a
- * verifier that said "authorized", an Arcade grant that existed, and a tool that
- * failed three layers away at `GET /oauth2/userinfo` with "The identity provider
- * rejected the token." Measured in the cg-idp log as two `invalid_grant "invalid
- * code"` rejections 216 ms apart.
+ * #100's bug was not a failure to authorize. It is worse, and that is why it
+ * took three sittings to find: the verifier fetched `next_uri` server-side
+ * (required, measured on #75) and *then* redirected the browser to the same
+ * URL. Arcade's provider exchanged the authorization code at `cg-idp` twice,
+ * and Better Auth's token endpoint does not merely refuse the replay —
+ * `checkVerificationValue` calls `revokeTokensIssuedForAuthorizationCode`,
+ * which deletes the access and refresh tokens the *first*, successful exchange
+ * minted. So the visible outcome was a verifier that said "authorized", an
+ * Arcade grant that existed, and a tool that failed three layers away at
+ * `GET /oauth2/userinfo` with "The identity provider rejected the token."
+ * Measured in the cg-idp log as two `invalid_grant "invalid code"` rejections
+ * 216 ms apart.
  *
- * So the assertions here are about *counting*, not about success:
+ * #100 fixed that by sending the browser to the **continuation** Arcade handed
+ * the server fetch, guarded so that a continuation which was `next_uri` written
+ * differently was refused. #118 removes the fork instead: the browser always
+ * lands on cg-web's own Authorized page, and Arcade's `Location` is read for
+ * one log line and nothing else. Decided by the human at the #100 merge gate.
  *
- * - `next_uri` is hit exactly once per verification, and the browser walking the
- *   whole chain to its end does not add a second hit;
- * - the verifier's `Location` is never `next_uri`;
- * - both verifier paths — session present, and parked flow completed from the
- *   sign-in callback — behave the same, because both go through one function.
+ * So the assertions here are about *counting* and about *ending up here*:
+ *
+ * - `next_uri` is hit exactly once per verification, and the browser walking
+ *   the whole chain to its end does not add a second hit;
+ * - every verifier path — session present, and parked flow completed from the
+ *   sign-in callback — ends on this app's Authorized page;
+ * - no `Location` Arcade answered with is ever handed to the browser, whether
+ *   the browser would have replayed `next_uri` by following it or not.
  *
  * And one test proves the count is load-bearing rather than decorative: the
- * stand-in refuses a replayed code and revokes the grant, exactly as Better Auth
- * does, so "exactly one hit" is a statement about a thing that would otherwise
- * break. A control that cannot fail is not a control.
+ * stand-in refuses a replayed code and revokes the grant, exactly as Better
+ * Auth does, so "exactly one hit" is a statement about a thing that would
+ * otherwise break. A control that cannot fail is not a control.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
-import { continuationOf, followNextUri, loggable } from "../lib/identity/verifier.ts";
+import { followNextUri, loggable } from "../lib/identity/verifier.ts";
 import {
   Browser,
   PEOPLE,
@@ -56,15 +62,19 @@ beforeEach(() => {
   harness.arcade.confirmations.length = 0;
   harness.arcade.nextUriFetches.length = 0;
   harness.arcade.nextUriHits.length = 0;
+  harness.arcade.continuations.length = 0;
 });
 
 /**
  * Whatever the handlers wrote to `console.info` while `run` was in flight.
  *
- * The log line is the deliverable for one of this slice's criteria — before it,
- * the status and the continuation were computed and discarded — so it is
- * asserted on rather than eyeballed. The handlers run in this process behind the
- * harness's own `Bun.serve`, which is what makes that possible.
+ * The log line is the deliverable for one of #100's criteria — before it, the
+ * status and the continuation were computed and discarded — and #118 keeps it
+ * for the same reason it stops using the value: the continuation is now
+ * *only* visible in this line, so a line that stopped being written would take
+ * the last evidence of Arcade's half of the flow with it. It is asserted on
+ * rather than eyeballed. The handlers run in this process behind the harness's
+ * own `Bun.serve`, which is what makes that possible.
  */
 async function captureInfo<T>(run: () => Promise<T>): Promise<{ result: T; lines: string[] }> {
   const lines: string[] = [];
@@ -79,24 +89,51 @@ async function captureInfo<T>(run: () => Promise<T>): Promise<{ result: T; lines
   }
 }
 
-describe("the browser is never sent to next_uri", () => {
-  test("with a session: one hit on next_uri, and the Location is the continuation", async () => {
+/** Every URL this browser was answered from, as an origin+path string. */
+function visitedPaths(browser: Browser): string[] {
+  return browser.visited.map((entry) => entry.split(" ").at(-1) ?? "");
+}
+
+describe("the browser ends on this app's Authorized page", () => {
+  test("with a session: one hit on next_uri, and the page is cg-web's own", async () => {
     const browser = new Browser();
     await signInAs(browser, harness, "dana", { stopAt: "/api/arcade/start" });
 
     const flowId = `flow-${crypto.randomUUID()}`;
     const verified = await browser.fetch(`${harness.webUrl}/api/arcade/verify?flow_id=${flowId}`);
 
-    const nextUri = harness.arcade.nextUriOf(flowId);
-    expect(nextUri).toBeTruthy();
-    expect(verified.status).toBe(303);
-
-    const location = verified.headers.get("location");
-    expect(location).not.toBe(nextUri);
-    // Not merely a different string: not the same *URL*. A `Location` that
-    // differed only in query-parameter order would be the same replay.
-    expect(new URL(location!).href).not.toBe(new URL(nextUri!).href);
+    expect(verified.status).toBe(200);
+    expect(verified.headers.get("location")).toBeNull();
+    const html = await verified.text();
+    expect(html).toContain("Authorized");
+    // Named, because binding the grant to the wrong persona is the failure hop
+    // 2 exists to prevent, and a page that does not say who is no evidence.
+    expect(html).toContain(PEOPLE.dana.email);
+    expect(html).toContain('href="/chat"');
     expect(harness.arcade.nextUriHits).toEqual([flowId]);
+    expect(harness.arcade.confirmations).toEqual([
+      { flow_id: flowId, user_id: PEOPLE.dana.email, authorized: true },
+    ]);
+  });
+
+  test("Arcade did offer a continuation, and the browser was not given it", async () => {
+    const browser = new Browser();
+    await signInAs(browser, harness, "sam", { stopAt: "/api/arcade/start" });
+
+    const flowId = `flow-${crypto.randomUUID()}`;
+    const verified = await browser.fetch(`${harness.webUrl}/api/arcade/verify?flow_id=${flowId}`);
+
+    // The premise: this is not a test that passes because there was nothing to
+    // forward. The stand-in answered the server's fetch with a `Location`, the
+    // way the live service does.
+    expect(harness.arcade.continuations).toHaveLength(1);
+    const offered = harness.arcade.continuations[0]!;
+
+    expect(verified.status).toBe(200);
+    expect(verified.headers.get("location")).toBeNull();
+    // And not smuggled into the page either: the only link on it is the
+    // same-origin return path.
+    expect(await verified.text()).not.toContain(new URL(offered).origin);
   });
 
   test("and walking the chain to its end still leaves exactly one hit", async () => {
@@ -112,13 +149,19 @@ describe("the browser is never sent to next_uri", () => {
     );
 
     expect(ended.response.status).toBe(200);
+    expect(ended.html).toContain("Authorized");
     expect(harness.arcade.nextUriHits).toEqual([flowId]);
     expect(harness.arcade.confirmations).toEqual([
       { flow_id: flowId, user_id: PEOPLE.dana.email, authorized: true },
     ]);
-    // Nothing in the chain the browser walked was `next_uri`.
+    // Nothing in the chain the browser walked was `next_uri`, and nothing in it
+    // was Arcade's continuation either.
     const nextUriPath = new URL(harness.arcade.nextUriOf(flowId)!).pathname;
-    expect(browser.visited.filter((entry) => entry.includes(nextUriPath))).toEqual([]);
+    expect(visitedPaths(browser).filter((entry) => entry.includes(nextUriPath))).toEqual([]);
+    const offered = new URL(harness.arcade.continuations[0]!);
+    expect(
+      visitedPaths(browser).filter((entry) => entry.startsWith(`${offered.origin}${offered.pathname}`)),
+    ).toEqual([]);
   });
 
   test("the parked-flow path behaves the same, because it is the same function", async () => {
@@ -135,12 +178,18 @@ describe("the browser is never sent to next_uri", () => {
     });
 
     expect(ended.response.status).toBe(200);
+    expect(ended.html).toContain("Authorized");
+    expect(ended.html).toContain(PEOPLE.morgan.email);
     expect(harness.arcade.nextUriHits).toEqual([flowId]);
     expect(harness.arcade.confirmations).toEqual([
       { flow_id: flowId, user_id: PEOPLE.morgan.email, authorized: true },
     ]);
     const nextUriPath = new URL(harness.arcade.nextUriOf(flowId)!).pathname;
-    expect(fresh.visited.filter((entry) => entry.includes(nextUriPath))).toEqual([]);
+    expect(visitedPaths(fresh).filter((entry) => entry.includes(nextUriPath))).toEqual([]);
+    const offered = new URL(harness.arcade.continuations[0]!);
+    expect(
+      visitedPaths(fresh).filter((entry) => entry.startsWith(`${offered.origin}${offered.pathname}`)),
+    ).toEqual([]);
   });
 
   test("a second hit on next_uri would revoke the grant — so the count is load-bearing", async () => {
@@ -162,7 +211,7 @@ describe("the browser is never sent to next_uri", () => {
     expect(harness.arcade.confirmations.at(-1)?.authorized).toBe(false);
   });
 
-  test("a next_uri that ends the chain lands on a local page, not on a blank 200", async () => {
+  test("a next_uri that ends the chain lands on the same page, not on a blank 200", async () => {
     harness.arcade.nextUriAnswer = "terminal";
     const browser = new Browser();
     await signInAs(browser, harness, "riley", { stopAt: "/api/arcade/start" });
@@ -173,8 +222,6 @@ describe("the browser is never sent to next_uri", () => {
     expect(verified.status).toBe(200);
     const html = await verified.text();
     expect(html).toContain("Authorized");
-    // Named, because binding the grant to the wrong persona is the failure hop
-    // 2 exists to prevent, and a page that does not say who is no evidence.
     expect(html).toContain(PEOPLE.riley.email);
     expect(html).toContain('href="/chat"');
     // Still exactly one, and still authorized.
@@ -220,68 +267,11 @@ describe("the verifier says what next_uri answered", () => {
   });
 });
 
-describe("continuationOf — what the browser may be handed", () => {
-  const next = "https://cloud.arcade.dev/api/v1/oauth/callback_success?flow_id=f1";
-
-  test("a Location that resolves back to next_uri is refused", () => {
-    expect(continuationOf(next, next)).toBeNull();
-    // The relative form of the same URL, which is what a `Location: ./…` gives.
-    expect(continuationOf(next, "callback_success?flow_id=f1")).toBeNull();
-  });
-
-  /**
-   * Round 1 of this PR's review. The first version compared `href` strings, so
-   * a `Location` that serialises differently but makes the *same request* read
-   * as a continuation — and the browser replayed the single-use endpoint.
-   * Everything in this block was a pass before the comparison moved to the
-   * request target.
-   */
-  test("the same request target in a different serialisation is still refused", () => {
-    const two = "https://cloud.arcade.dev/cb?a=1&b=2";
-
-    // Reordered query. The reviewer's reproduction, and the one that mattered:
-    // the browser sends the same path and the same pairs.
-    expect(continuationOf(two, "https://cloud.arcade.dev/cb?b=2&a=1")).toBeNull();
-    expect(continuationOf(two, "/cb?b=2&a=1")).toBeNull();
-
-    // A fragment, which a browser never puts on the wire.
-    expect(continuationOf(next, `${next}#done`)).toBeNull();
-    expect(continuationOf(two, "https://cloud.arcade.dev/cb?b=2&a=1#done")).toBeNull();
-
-    // Percent-encoding of a query value, and of a path segment.
-    expect(continuationOf(two, "https://cloud.arcade.dev/cb?a=%31&b=2")).toBeNull();
-    expect(continuationOf(two, "https://cloud.arcade.dev/%63b?a=1&b=2")).toBeNull();
-    // `+` and `%20` are the same space once decoded.
-    const spaced = "https://cloud.arcade.dev/cb?q=a+b";
-    expect(continuationOf(spaced, "https://cloud.arcade.dev/cb?q=a%20b")).toBeNull();
-
-    // The default port, written out.
-    expect(continuationOf(two, "https://cloud.arcade.dev:443/cb?b=2&a=1")).toBeNull();
-  });
-
-  test("a difference the wire would actually carry is still a continuation", () => {
-    const two = "https://cloud.arcade.dev/cb?a=1&b=2";
-
-    // A repeated key is a different multiset, not a reordering.
-    expect(continuationOf(two, "https://cloud.arcade.dev/cb?a=1&a=1&b=2")).toBe(
-      "https://cloud.arcade.dev/cb?a=1&a=1&b=2",
-    );
-    // A trailing slash is a different path to most servers; normalising it away
-    // would refuse a legitimate continuation.
-    expect(continuationOf(two, "https://cloud.arcade.dev/cb/?a=1&b=2")).toBe(
-      "https://cloud.arcade.dev/cb/?a=1&b=2",
-    );
-    // A different value, a missing pair, a different host.
-    expect(continuationOf(two, "https://cloud.arcade.dev/cb?a=2&b=2")).toBeTruthy();
-    expect(continuationOf(two, "https://cloud.arcade.dev/cb?a=1")).toBeTruthy();
-    expect(continuationOf(two, "https://elsewhere.example/cb?a=1&b=2")).toBeTruthy();
-  });
-
-  test("over HTTP: a reordered-query continuation costs the endpoint one hit, not two", async () => {
-    // The reviewer's reproduction, as a test. A single-use endpoint that 302s
-    // to itself with the query written the other way round — which is what a
-    // load balancer or a framework that rebuilds the URL will do — and answers
-    // every hit after the first the way Better Auth does.
+describe("followNextUri — the server walks the leg, and only the server", () => {
+  test("the redirect is read, not followed, so a single-use endpoint is spent once", async () => {
+    // A single-use endpoint that 302s onward and answers every hit after the
+    // first the way Better Auth does. Following the `Location` server-side, or
+    // handing it to a browser, is what costs the grant.
     let hits = 0;
     const single = Bun.serve({
       port: 0,
@@ -289,7 +279,7 @@ describe("continuationOf — what the browser may be handed", () => {
         hits += 1;
         const url = new URL(request.url);
         if (hits === 1) {
-          return new Response(null, { status: 302, headers: { location: `${url.pathname}?b=2&a=1` } });
+          return new Response(null, { status: 302, headers: { location: `${url.pathname}?done=1` } });
         }
         return Response.json({ error: "invalid_grant", error_description: "invalid code" }, { status: 400 });
       },
@@ -299,30 +289,12 @@ describe("continuationOf — what the browser may be handed", () => {
       const nextUri = `http://localhost:${single.port}/callback?a=1&b=2`;
       const followed = await followNextUri(nextUri);
       expect(followed.status).toBe(302);
-      expect(followed.location).toBe("/callback?b=2&a=1");
-
-      const continuation = continuationOf(nextUri, followed.location);
-      expect(continuation).toBeNull();
-
-      // The server fetch spent the code. Nothing followed it there.
+      expect(followed.location).toBe("/callback?done=1");
+      // The server fetch spent the code, and stopped there.
       expect(hits).toBe(1);
     } finally {
       single.stop(true);
     }
-  });
-
-  test("no Location is nowhere to send the browser", () => {
-    expect(continuationOf(next, null)).toBeNull();
-  });
-
-  test("a scheme a browser should not be pointed at is refused", () => {
-    expect(continuationOf(next, "javascript:alert(1)")).toBeNull();
-    expect(continuationOf(next, "data:text/html,<script>1</script>")).toBeNull();
-  });
-
-  test("an ordinary continuation is resolved against next_uri and handed back", () => {
-    expect(continuationOf(next, "https://cloud.arcade.dev/auth/done")).toBe("https://cloud.arcade.dev/auth/done");
-    expect(continuationOf(next, "/auth/done")).toBe("https://cloud.arcade.dev/auth/done");
   });
 });
 
