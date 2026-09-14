@@ -213,7 +213,7 @@ describe("payloads the panel might be handed", () => {
     expect(rows[0]?.before).toBe("object withheld");
   });
 
-  test("annotation is null everywhere until GovernanceEvent carries redactions[]", () => {
+  test("annotation is null everywhere until the panel reads redactions[] (#21)", () => {
     const rows = maskedDiff({ a: "x", b: "y" }, { a: "1", b: "2" });
 
     expect(rows.every((row) => row.annotation === null)).toBe(true);

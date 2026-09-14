@@ -18,11 +18,15 @@
  * carries `before` and `after` as opaque payloads and nothing on it says which
  * leaf was masked for being a secret and which was rewritten for carrying an
  * injected instruction. With no way to tell them apart, the safe reading of
- * every removed value is "secret". #8 has landed `RedactionRecord` — path,
- * `rule_id`, `pattern_id`, kind, and deliberately never the removed value — but
- * `GovernanceEvent` does not carry a `redactions[]` array yet, so there is
- * still nothing to read. When one arrives it is purely additive: see
- * {@link DiffRow.annotation}, which exists for exactly that.
+ * every removed value is "secret".
+ *
+ * ⚠️ **Since #16 a `/post` event carries `redactions[]` and no payload at all** —
+ * not `before`, not `after`, because the audit log is durable and `GET /events`
+ * is unauthenticated. So this function has nothing to diff for a redaction
+ * event, and the panel's post lane has to be built from `redactions[]` (path,
+ * `rule_id`, `pattern_id`, kind) instead: the path names the row, the kind
+ * names the mask, and the rule id is {@link DiffRow.annotation}'s chip. That is
+ * #21's to wire; nothing in #16 changed this file's behaviour.
  */
 
 /** What happened to one leaf of the payload. */
@@ -41,10 +45,10 @@ export interface DiffRow {
   /** What the model actually received here. */
   readonly after: string | null;
   /**
-   * Extension point for a `redactions[]` array on `GovernanceEvent`: the
-   * `rule_id`/`pattern_id` chip naming *why* this leaf changed. #8 has landed
-   * the `RedactionRecord` type but the event does not carry them yet, so this
-   * is always `null` and the renderer omits the chip.
+   * Extension point for the `redactions[]` array `GovernanceEvent` carries
+   * since #16: the `rule_id`/`pattern_id` chip naming *why* this leaf changed.
+   * Nothing reads it yet, so this is always `null` and the renderer omits the
+   * chip; wiring it is #21's.
    */
   readonly annotation: string | null;
 }

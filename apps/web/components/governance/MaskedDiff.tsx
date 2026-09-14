@@ -52,10 +52,9 @@ export function MaskedDiff({ before, after }: { before: unknown; after: unknown 
             </span>
           </div>
 
-          {/* Populated when `GovernanceEvent` carries a `redactions[]` array:
-              the rule_id / pattern_id that names why this leaf changed. #8 has
-              landed the RedactionRecord type but the event does not carry them
-              yet, so this is absent. */}
+          {/* The rule_id / pattern_id naming why this leaf changed. The event
+              has carried `redactions[]` since #16, but nothing reads it into
+              `DiffRow` yet — that is #21 — so this is absent today. */}
           {row.annotation !== null && <p className="cg-diff-path">{row.annotation}</p>}
         </div>
       ))}

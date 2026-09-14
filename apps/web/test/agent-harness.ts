@@ -58,12 +58,13 @@ export const WITHIN_LIMIT_LOAN = "LN-2292";
  * seeded prompt injection**, which only `LN-2291` carries.
  *
  * The control. `LN-2291`'s `underwriter_notes` ends in an instruction aimed at
- * whatever model reads the record, and until #16's `/post` rule strips it the
- * model sees it: it correctly refuses the injected instruction, flags it, and
- * then about half the time ends the turn asking the officer whether to go
- * ahead — so `ApproveLoan` is never called and `/pre` never fires. Measured
+ * whatever model reads the record. Before #16's `/post` rule stripped it the
+ * model saw it: it correctly refused the injected instruction, flagged it, and
+ * then about half the time ended the turn asking the officer whether to go
+ * ahead — so `ApproveLoan` was never called and `/pre` never fired. Measured
  * live on #88 round 2: 4 of 9 runs reached the hook on `LN-2291`, and 6 of 6
- * on this one, with an identical prompt and an identical system prompt.
+ * on this one, with an identical prompt and an identical system prompt. With
+ * `/post` live (#16) both are 5 of 5.
  *
  * Both loans are exercised. `LN-2291` is #14's beat as written and stays; this
  * one is what isolates the cause, so a future failure can be read as "the
