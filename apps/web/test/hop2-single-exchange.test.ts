@@ -30,7 +30,7 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
-import { continuationOf, loggable } from "../lib/identity/verifier.ts";
+import { continuationOf, followNextUri, loggable } from "../lib/identity/verifier.ts";
 import {
   Browser,
   PEOPLE,
@@ -227,6 +227,88 @@ describe("continuationOf — what the browser may be handed", () => {
     expect(continuationOf(next, next)).toBeNull();
     // The relative form of the same URL, which is what a `Location: ./…` gives.
     expect(continuationOf(next, "callback_success?flow_id=f1")).toBeNull();
+  });
+
+  /**
+   * Round 1 of this PR's review. The first version compared `href` strings, so
+   * a `Location` that serialises differently but makes the *same request* read
+   * as a continuation — and the browser replayed the single-use endpoint.
+   * Everything in this block was a pass before the comparison moved to the
+   * request target.
+   */
+  test("the same request target in a different serialisation is still refused", () => {
+    const two = "https://cloud.arcade.dev/cb?a=1&b=2";
+
+    // Reordered query. The reviewer's reproduction, and the one that mattered:
+    // the browser sends the same path and the same pairs.
+    expect(continuationOf(two, "https://cloud.arcade.dev/cb?b=2&a=1")).toBeNull();
+    expect(continuationOf(two, "/cb?b=2&a=1")).toBeNull();
+
+    // A fragment, which a browser never puts on the wire.
+    expect(continuationOf(next, `${next}#done`)).toBeNull();
+    expect(continuationOf(two, "https://cloud.arcade.dev/cb?b=2&a=1#done")).toBeNull();
+
+    // Percent-encoding of a query value, and of a path segment.
+    expect(continuationOf(two, "https://cloud.arcade.dev/cb?a=%31&b=2")).toBeNull();
+    expect(continuationOf(two, "https://cloud.arcade.dev/%63b?a=1&b=2")).toBeNull();
+    // `+` and `%20` are the same space once decoded.
+    const spaced = "https://cloud.arcade.dev/cb?q=a+b";
+    expect(continuationOf(spaced, "https://cloud.arcade.dev/cb?q=a%20b")).toBeNull();
+
+    // The default port, written out.
+    expect(continuationOf(two, "https://cloud.arcade.dev:443/cb?b=2&a=1")).toBeNull();
+  });
+
+  test("a difference the wire would actually carry is still a continuation", () => {
+    const two = "https://cloud.arcade.dev/cb?a=1&b=2";
+
+    // A repeated key is a different multiset, not a reordering.
+    expect(continuationOf(two, "https://cloud.arcade.dev/cb?a=1&a=1&b=2")).toBe(
+      "https://cloud.arcade.dev/cb?a=1&a=1&b=2",
+    );
+    // A trailing slash is a different path to most servers; normalising it away
+    // would refuse a legitimate continuation.
+    expect(continuationOf(two, "https://cloud.arcade.dev/cb/?a=1&b=2")).toBe(
+      "https://cloud.arcade.dev/cb/?a=1&b=2",
+    );
+    // A different value, a missing pair, a different host.
+    expect(continuationOf(two, "https://cloud.arcade.dev/cb?a=2&b=2")).toBeTruthy();
+    expect(continuationOf(two, "https://cloud.arcade.dev/cb?a=1")).toBeTruthy();
+    expect(continuationOf(two, "https://elsewhere.example/cb?a=1&b=2")).toBeTruthy();
+  });
+
+  test("over HTTP: a reordered-query continuation costs the endpoint one hit, not two", async () => {
+    // The reviewer's reproduction, as a test. A single-use endpoint that 302s
+    // to itself with the query written the other way round — which is what a
+    // load balancer or a framework that rebuilds the URL will do — and answers
+    // every hit after the first the way Better Auth does.
+    let hits = 0;
+    const single = Bun.serve({
+      port: 0,
+      fetch(request) {
+        hits += 1;
+        const url = new URL(request.url);
+        if (hits === 1) {
+          return new Response(null, { status: 302, headers: { location: `${url.pathname}?b=2&a=1` } });
+        }
+        return Response.json({ error: "invalid_grant", error_description: "invalid code" }, { status: 400 });
+      },
+    });
+
+    try {
+      const nextUri = `http://localhost:${single.port}/callback?a=1&b=2`;
+      const followed = await followNextUri(nextUri);
+      expect(followed.status).toBe(302);
+      expect(followed.location).toBe("/callback?b=2&a=1");
+
+      const continuation = continuationOf(nextUri, followed.location);
+      expect(continuation).toBeNull();
+
+      // The server fetch spent the code. Nothing followed it there.
+      expect(hits).toBe(1);
+    } finally {
+      single.stop(true);
+    }
   });
 
   test("no Location is nowhere to send the browser", () => {

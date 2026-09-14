@@ -144,7 +144,11 @@ Two measured facts shape the rest of it:
   fetch was handed, and to a local page when there is none. Redirecting to
   `next_uri` after fetching it is #100: a verifier that says "authorized", an
   Arcade grant that exists, and `get_loan` failing a turn later at
-  `GET cg-idp/oauth2/userinfo`. The `next_uri` status and continuation are logged
+  `GET cg-idp/oauth2/userinfo`. "Is this the same place?" is decided on the
+  **request target** — origin, path, and the query as an unordered multiset of
+  decoded pairs, fragment ignored — not on the URL string, because a `Location`
+  of `?b=2&a=1` against a `next_uri` of `?a=1&b=2` is a different string and the
+  same replay. The `next_uri` status and continuation are logged
   as `[verifier] next_uri answered …` — origin, path and parameter *names* only,
   never a value.
 
