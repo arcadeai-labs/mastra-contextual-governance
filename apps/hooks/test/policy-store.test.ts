@@ -91,8 +91,15 @@ describe("the seed", () => {
     ]);
     expect(data.output_rules.every((r) => r.match.toolkit === "LoanBook")).toBe(true);
     const escalation = data.policy_rules.find((r) => r.hook === "pre");
-    expect(escalation?.reason).toContain("Escalations.RequestApproval");
-    expect(escalation?.reason).toContain("LoanBook.ApproveLoan");
+    // The remediation sentence is addressed to the model, so it carries the
+    // wire spelling — and it carries the *configured* toolkit name in it, which
+    // is the half of #89 a deployment that renamed its toolkits would break
+    // silently. `match` above stays dot-free and split in two; the reason is
+    // the only place the separator is a decision.
+    expect(escalation?.reason).toContain("Escalations_RequestApproval");
+    expect(escalation?.reason).toContain("LoanBook_ApproveLoan");
+    expect(escalation?.reason).not.toContain("Escalations.RequestApproval");
+    expect(escalation?.reason).not.toContain("LoanBook.ApproveLoan");
     expect(JSON.stringify(data)).not.toContain("$LOAN");
     expect(JSON.stringify(data)).not.toContain("$APPROVALS");
     expect(() => compilePolicy({ catalogue: data.catalogue, rules: data.policy_rules })).not.toThrow();

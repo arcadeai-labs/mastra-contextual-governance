@@ -191,6 +191,31 @@ describe("/access — act 1", () => {
 });
 
 describe("/pre — act 2", () => {
+  /**
+   * The whole sentence, byte for byte, minus the correlation token that
+   * changes every run.
+   *
+   * `toContain` is what the tests around this one use and it is the right tool
+   * for asking whether a fact survived. It is the wrong tool for #89, because
+   * the bug it is guarding against is not an absence: `Approvals.RequestApproval`
+   * and `Approvals_RequestApproval` both contain "RequestApproval", and a rule
+   * regressed to the dot spelling would keep every other assertion in this file
+   * green. So this one pins the string — the literal below is what a live model
+   * reads, and changing the rule means changing it here and looking at it.
+   */
+  test("the remediation sentence the model reads, exactly", () => {
+    const { response } = handlePre(pre(DANA, "ApproveLoan", { loan_id: "LN-2291", amount: 95_000 }), ready(), ctx);
+    const message = (response.error_message ?? "").replace(CORRELATION_TOKEN, "[ref]");
+
+    expect(message).toBe(
+      "DENIED: approving LN-2291 for 95000 exceeds your approval authority of 50000. " +
+        "To proceed, call Approvals_RequestApproval with action=approve_loan, " +
+        "resource_id=LN-2291, amount=95000 and justification=<why this loan should be " +
+        "approved>, then wait for the approval and retry Loan_ApproveLoan with " +
+        "loan_id=LN-2291 and amount=95000 unchanged. [ref]",
+    );
+  });
+
   test("blocks Dana's $95K with the remediation instruction and a correlation token", () => {
     const { response, events } = handlePre(pre(DANA, "ApproveLoan", { loan_id: "LN-2291", amount: 95_000 }), ready(), ctx);
 
@@ -198,9 +223,15 @@ describe("/pre — act 2", () => {
     expect(PreHookResult.parse(response)).toEqual(response);
     const message = response.error_message ?? "";
     expect(message).toContain("95000 exceeds your approval authority of 50000");
-    expect(message).toContain("Approvals.RequestApproval");
+    // Underscores, because this sentence is read by the model and the model's
+    // own tool list spells both tools that way (#89). A dot here names a tool
+    // it cannot see, and measured on #14 it refuses the instruction rather
+    // than acting on it.
+    expect(message).toContain("Approvals_RequestApproval");
     expect(message).toContain("resource_id=LN-2291");
-    expect(message).toContain("Loan.ApproveLoan");
+    expect(message).toContain("Loan_ApproveLoan");
+    expect(message).not.toContain("Approvals.RequestApproval");
+    expect(message).not.toContain("Loan.ApproveLoan");
     expect(message).toMatch(CORRELATION_TOKEN);
 
     // The token is the audit row's id, so the panel can join exactly.
