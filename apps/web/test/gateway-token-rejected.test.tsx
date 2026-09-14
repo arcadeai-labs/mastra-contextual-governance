@@ -23,6 +23,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { decodeEvents, NDJSON, type ChatEvent } from "../lib/agent/events.ts";
 import { chat } from "../lib/agent/handlers.ts";
+import { sessionTools } from "../lib/agent/tool-list.ts";
 import { gatewayClient, governedToolset, SERVER_KEY } from "../lib/agent/tools.ts";
 import { configurationProblems, readIdentitySurface, type IdentitySurface } from "../lib/config.ts";
 import { forgetGatewayClients, probeGatewayToken } from "../lib/identity/gateway.ts";
@@ -48,7 +49,9 @@ type Shape =
   /** A real `tools/list`, carrying the project's toolkits. */
   | "serves-the-toolkits"
   /** A real `tools/list` that genuinely carries none of ours. */
-  | "serves-no-toolkits";
+  | "serves-no-toolkits"
+  /** A real `tools/list` carrying nothing at all — #15's dead-control-plane shape. */
+  | "serves-nothing";
 
 interface Stub {
   url: string;
@@ -94,7 +97,12 @@ function startGateway(shape: Shape): Stub {
       if (message?.method === "tools/list") {
         const schema = { type: "object", properties: {}, required: [], additionalProperties: false };
         const builtins = ["System_ManageAuthorization", "Arcade_ListApps"];
-        const names = shape === "serves-the-toolkits" ? ["Loan_GetLoan", ...builtins] : builtins;
+        const names =
+          shape === "serves-the-toolkits"
+            ? ["Loan_GetLoan", ...builtins]
+            : shape === "serves-nothing"
+              ? []
+              : builtins;
         return Response.json({
           jsonrpc: "2.0",
           id: message.id,
@@ -526,6 +534,51 @@ describe("liveGatewayToken never hands back a stale bearer", () => {
     } finally {
       as.stop();
       forgetGatewayClients();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The same distinction, on the page that lists a persona's tools (#15)
+// ---------------------------------------------------------------------------
+
+describe("the persona tool list", () => {
+  test("a rejected token names the token, not the control plane", async () => {
+    // #15's `sessionTools` reads the same `listToolsets()` this issue is about,
+    // so it inherits the same ambiguity: a refused bearer and a dead `/access`
+    // both arrive as `{}`. Composing rather than duplicating — the probe answers
+    // which, and only then does the `/access` sentence get used.
+    const gateway = startGateway("refuses-the-bearer");
+    const config = surfaceFor(gateway.url);
+    try {
+      const listed = await sessionTools(signedInWithToken(), { config });
+
+      expect(listed.ok).toBe(false);
+      if (!listed.ok) {
+        expect(listed.reason).toContain("401");
+        expect(listed.reason).toContain(GATEWAY_START_PATH);
+        expect(listed.reason).not.toContain("/access");
+        expect(listed.reason).not.toContain(TOKEN);
+      }
+    } finally {
+      gateway.stop();
+    }
+  });
+
+  test("an accepted token that lists nothing at all still names the control plane", async () => {
+    // #15's sentence, kept for the one cause it is true for.
+    const gateway = startGateway("serves-nothing");
+    const config = surfaceFor(gateway.url);
+    try {
+      const listed = await sessionTools(signedInWithToken(), { config });
+
+      expect(listed.ok).toBe(false);
+      if (!listed.ok) {
+        expect(listed.reason).toContain("/access");
+        expect(listed.reason).not.toContain("401");
+      }
+    } finally {
+      gateway.stop();
     }
   });
 });

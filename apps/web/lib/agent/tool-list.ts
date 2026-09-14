@@ -31,9 +31,17 @@
  * them means "the control plane hid everything" while the other means nothing
  * at all. So the result is a union: either tools, or a sentence saying what
  * went wrong. Nothing here returns `[]` to mean "we could not ask".
+ *
+ * **Three sentences, not one, for the empty case (#94).** A gateway that has
+ * stopped accepting this browser's bearer answers `listToolsets()` with the
+ * same `{}` a dead control plane does, so an empty list asks the gateway about
+ * the credential before it names `/access`. Telling a presenter to go and check
+ * the control plane when the fix is one click on the gateway hop is the failure
+ * #94 is the record of, arriving on a different screen.
  */
 import { readIdentitySurface, type IdentitySurface } from "../config.ts";
-import { liveGatewayToken } from "../identity/handlers.ts";
+import { GATEWAY_START_PATH, liveGatewayToken } from "../identity/handlers.ts";
+import { mcpUrl, probeGatewayToken } from "../identity/gateway.ts";
 import type { Session } from "../identity/session.ts";
 import { gatewayClient, selectGoverned, SERVER_KEY, GATEWAY_BUILTINS } from "./tools.ts";
 
@@ -113,6 +121,30 @@ export async function sessionTools(
     // no policy of ours reaches (DESIGN.md → Tool surface). So zero is not a
     // small answer, it is no answer, and it is reported as one.
     if (Object.keys(advertised).length === 0) {
+      // Empty is no answer — and there is more than one reason for no answer.
+      // A gateway that refuses the bearer produces this *exact* empty object
+      // (#94), so the bearer is asked about before the control plane is blamed;
+      // otherwise this page tells a presenter to go and check `/access` when the
+      // fix is one click on the gateway hop.
+      //
+      // The token is not cleared here. A server component cannot set a cookie,
+      // so the dropping is `POST /api/chat`'s job and this surface only reports.
+      const probe = await probeGatewayToken(mcpUrl(config.arcadeApiUrl, config.identity.gatewayId), live.token);
+      if (probe.outcome === "rejected") {
+        return {
+          ok: false,
+          reason:
+            `The gateway answered ${probe.status} to this browser's gateway token, so there is ` +
+            `nothing it will list for this persona. Nothing was hidden by policy — this is hop 1, ` +
+            `upstream of every hook. Authorize the gateway again at ${GATEWAY_START_PATH}.`,
+        };
+      }
+      if (probe.outcome === "unreachable") {
+        return {
+          ok: false,
+          reason: `The gateway could not be reached: ${probe.detail}. Nothing was asked of the control plane.`,
+        };
+      }
       return {
         ok: false,
         reason:

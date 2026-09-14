@@ -596,15 +596,62 @@ exactly why it has a test: the first person it breaks for is a forker on their f
 |---|---|
 | the environment is not configured | `503`, naming the variables |
 | nobody is signed in | `401`, pointing at `/api/auth/signin` |
-| signed in, no gateway token | `401`, pointing at `/api/arcade/start` |
+| signed in, hop 1 never run | `401`, pointing at `/api/arcade/start` |
+| the gateway will not take this browser's bearer | a stream carrying one `authorization` event |
+| the gateway could not be reached | `502`, as plumbing |
 | the gateway listed nothing at all | `502`, naming the control plane |
 | the toolkit name matched nothing | `502`, naming `ARCADE_LOAN_TOOLKIT` |
 
-The last two are one symptom with two causes and are told apart on a measured
-fact: a live `tools/list` always carries the gateway's own two built-ins, even
-when policy hides every project tool. **Zero** entries is the list failing to
-come back, and saying "check `ARCADE_LOAN_TOOLKIT`" about a control plane that
-is down sends somebody a long way in the wrong direction.
+The last four are one symptom — an agent with no tools — with four causes, and
+each split was paid for.
+
+The bottom two are told apart on a measured fact: a live `tools/list` always
+carries the gateway's own two built-ins, even when policy hides every project
+tool. **Zero** entries is the list failing to come back, and saying "check
+`ARCADE_LOAN_TOOLKIT`" about a control plane that is down sends somebody a long
+way in the wrong direction.
+
+### A rejected gateway token, and why it is asked about first (#94)
+
+`@mastra/mcp` 1.17.3 does **not** throw when the gateway refuses the bearer.
+`listToolsets()` resolves, with `{}`, because the connection failure is logged
+per server and dropped — so a dead token and a mistyped `ARCADE_LOAN_TOOLKIT`
+arrive as the same value. Live on 2026-09-14 that produced *"The gateway
+advertised 0 tools and none of them belong to \"Loan\" or \"Approvals\" … Check
+ARCADE_LOAN_TOOLKIT and ARCADE_APPROVALS_TOOLKIT"* while both variables were
+correct and the whole fix was one click on `/api/arcade/start`.
+
+So the bearer is asked about before the toolset is read: one raw JSON-RPC
+`initialize` with the token on it (`probeGatewayToken`). `401` or `403` is the
+gateway refusing the credential, `2xx` is acceptance, anything else is
+unreachable and says nothing about the credential.
+
+`MCPClient.getServerAuthState()` was the cheaper candidate and was measured
+rather than assumed. It is right when the 401 surfaces as the SDK's
+`UnauthorizedError` — a stub answering `401` leaves it `'needs-auth'` — and
+`undefined` whenever the streamable POST fails some other way and the client
+falls back to SSE, which is the shape the live cg-web log shows
+(*"Could not connect to server with any available HTTP transport"*). Both
+measurements are in `test/gateway-token-rejected.test.tsx`. An HTTP status is
+the gateway's own word about the credential and it is the same in both shapes.
+
+On a rejection the turn answers **200 with an ndjson stream** carrying one
+`authorization` event pointing at `/api/arcade/start` and a `done` — a stream
+rather than a status because the answer has to carry a clickable link, and
+`authorization` rather than `denied` because hop 1 is upstream of every hook, so
+nothing was refused and no audit row exists. The dead bearer is dropped from the
+sealed session and the sign-in is kept, so the sign-in panel then reads
+**`Gateway token: rejected`** rather than `none` and offers the one link that
+fixes it. The token is never in the event, the cookie, or the log.
+
+`liveGatewayToken` fails the same way: a refresh that answers non-2xx, or 2xx
+with no `access_token` on it, returns `{ token: null, reason }` and logs the
+status alone. It never hands back the bearer it already had — a stale token is
+accepted by the type system, presented to the gateway, refused there, and read
+on screen as a missing toolkit.
+
+The persona tool list on `/` and `/chat` (#15) draws the same distinction for
+the same reason: an empty list asks about the bearer before it names `/access`.
 
 ### The stream
 
