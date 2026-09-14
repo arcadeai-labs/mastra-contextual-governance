@@ -647,9 +647,22 @@ export const GRANT_REJECTION_KINDS = GrantRejectionReason.options.map(
  * panel renders. Same shape for both on purpose — the panel shows the audit
  * log rather than a prettier parallel story.
  *
- * `before` and `after` are the payload either side of a `modify`, which is what
- * makes the redaction and injection-stripping acts visible as a diff. They are
- * absent for `allow` and `deny`, where nothing changed.
+ * `redactions` is what a `/post` `modify` says it did: one `RedactionRecord`
+ * per thing removed — path, `rule_id`, `pattern_id`, kind — and never the
+ * removed value. It is absent everywhere else.
+ *
+ * `before` and `after` are structural context either side of a `modify`, and
+ * **neither ever carries removed content** (decided on #16, driver option A).
+ * The obvious thing to put in `before` is the tool's raw output, which for
+ * `Loan.GetLoan` is the borrower's bank account number and tax id — and this
+ * row is written to `audit_log` and streamed on an unauthenticated `GET
+ * /events`, so it would persist the secret and broadcast it to anyone who can
+ * reach the hook host. `after` is no safer: a rule conditioned on clearance
+ * does not fire for a privileged subject, so the "after" of *their* modify is
+ * a payload still holding the identifiers. So the redaction acts are made
+ * visible by `redactions[]` — where and why — and the panel renders the mask
+ * from the path rather than from a value it was handed. Field names and types
+ * are allowed here; content that a rule took out is not.
  *
  * `execution_id` is Arcade's, and correlates `/pre` with `/post` exactly. It is
  * empty at `/access`, which has no execution to identify, and spike 02 found it
@@ -670,6 +683,8 @@ export const GovernanceEvent = z
     rule_id: z.string().nullable(),
     before: z.unknown().optional(),
     after: z.unknown().optional(),
+    /** What a `/post` `modify` removed. Absent on every other event. */
+    redactions: z.array(RedactionRecord).optional(),
   })
   .strict();
 export type GovernanceEvent = z.infer<typeof GovernanceEvent>;

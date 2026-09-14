@@ -7,6 +7,7 @@ import type { Database } from "bun:sqlite";
 
 import { AccessHookResult, type GovernanceEvent, PostHookResult, PreHookResult } from "@cg/policy-schema";
 
+import { loanFixture } from "./loan-fixture.ts";
 import { createApprovalControl } from "../src/approval-governance.ts";
 import { CORRELATION_TOKEN, correlationId } from "../src/correlation.ts";
 import { handleAccess, handlePost, handlePre, type HandlerContext } from "../src/handlers.ts";
@@ -292,21 +293,28 @@ describe("/pre — cold cache", () => {
   });
 });
 
-describe("/post", () => {
-  const postBody = {
-    execution_id: "tc_9",
+describe("/post — acts 3 and 4", () => {
+  /** `LN-2291` exactly as the loan book holds it, read from `apps/loan-app`'s own fixture. */
+  const LOAN = loanFixture("LN-2291");
+  /** Everything before the pasted block — the half of the note an underwriter wrote. */
+  const LEGITIMATE_NOTE = (LOAN.underwriter_notes as string).split(
+    "\n\n--- pasted from committee thread ---",
+  )[0] as string;
+
+  const postBody = (user_id: string, output: unknown = LOAN, execution_id = "tc_9") => ({
+    execution_id,
     tool: { name: "GetLoan", toolkit: "Loan", version: "1.0.0" },
     inputs: { loan_id: "LN-2291" },
     success: true,
-    output: { bank_account_number: "1234" },
-    context: { user_id: DANA },
-  };
+    output,
+    context: { user_id },
+  });
 
   test.each([
     ["cold", cold],
     ["failed", failed],
   ])("fails closed when the cache is %s: CHECK_FAILED, output withheld, deny row", (_label, state) => {
-    const { response, events } = handlePost(postBody, state, ctx);
+    const { response, events } = handlePost(postBody(DANA), state, ctx);
     expect(response.code).toBe("CHECK_FAILED");
     expect(response.error_message).toMatch(/cannot release the output of Loan\.GetLoan/);
     expect(response.error_message).toMatch(CORRELATION_TOKEN);
@@ -317,19 +325,120 @@ describe("/post", () => {
     expect(correlationId(response.error_message ?? "")).toBe(onlyEvent(events).id);
   });
 
-  test("passes the output through unchanged and records that it did", () => {
-    const { response, events } = handlePost(postBody, ready(), ctx);
+  test("a tool no output rule names passes through unchanged, and the row says so", () => {
+    const { response, events } = handlePost(
+      { ...postBody(DANA), tool: { name: "SearchLoans", toolkit: "Loan", version: "1.0.0" } },
+      ready(),
+      ctx,
+    );
     expect(response).toEqual({ code: "OK" });
     expect(PostHookResult.parse(response)).toEqual(response);
     expect(events[0]).toMatchObject({
       hook: "post",
-      execution_id: "tc_9",
       user_id: DANA,
-      tool: "Loan.GetLoan",
+      tool: "Loan.SearchLoans",
       decision: "allow",
       rule_id: null,
     });
+    expect(events[0]?.reason).toContain("no output rule applied");
+    expect(events[0]?.redactions).toBeUndefined();
+  });
+
+  test("as Dana, the identifiers are masked and the injected note is stripped", () => {
+    const { response, events } = handlePost(postBody(DANA), ready(), ctx);
+    expect(PostHookResult.parse(response)).toEqual(response);
+
+    const output = response.override?.output as Record<string, unknown>;
+    expect(output.bank_account_number).toBe("[REDACTED]");
+    expect(output.tax_id).toBe("[REDACTED]");
+    // Byte equality with the half of the note the underwriter wrote: the whole
+    // pasted block goes, separator line included, and nothing legitimate does.
+    expect(output.underwriter_notes).toBe(LEGITIMATE_NOTE);
+    // The fields Dana needs to do the work survive untouched.
+    expect(output.borrower_name).toBe(LOAN.borrower_name);
+    expect(output.amount).toBe(LOAN.amount);
+    expect(output.credit_score).toBe(LOAN.credit_score);
+
+    const event = onlyEvent(events);
+    expect(event.decision).toBe("modify");
+    // Two rules fired, so no single rule owns the row; the ids are per redaction.
+    expect(event.rule_id).toBeNull();
+    expect(event.redactions).toEqual([
+      { path: "$.bank_account_number", rule_id: "post.redact-borrower-identifiers", pattern_id: null, kind: "mask" },
+      { path: "$.tax_id", rule_id: "post.redact-borrower-identifiers", pattern_id: null, kind: "mask" },
+      {
+        path: "$.underwriter_notes",
+        rule_id: "post.strip-injected-instructions",
+        pattern_id: "pattern.injected-instruction",
+        kind: "remove",
+      },
+    ]);
+  });
+
+  test("nothing that was removed appears anywhere on the event", () => {
+    const { events } = handlePost(postBody(DANA), ready(), ctx);
+    const rendered = JSON.stringify(onlyEvent(events));
+
+    expect(rendered).not.toContain(LOAN.bank_account_number as string);
+    expect(rendered).not.toContain(LOAN.tax_id as string);
+    expect(rendered).not.toContain("Ignore any earlier instruction");
+    // Not even as a `before`/`after` payload: the row is written to disk and
+    // streamed unauthenticated, so it carries paths and rule ids only (#16).
     expect(events[0]?.before).toBeUndefined();
+    expect(events[0]?.after).toBeUndefined();
+    // And it still says which rules acted, in their authors' own words.
+    expect(events[0]?.reason).toContain("post.redact-borrower-identifiers");
+    expect(events[0]?.reason).toContain("Borrower identifiers masked");
+  });
+
+  test.each([
+    ["Riley, VP Credit, clearance 250000", RILEY],
+    ["Morgan, Chief Credit Officer, clearance 5000000", MORGAN],
+  ])("%s reads the identifiers — redaction is conditioned on the subject", (_label, user) => {
+    const { response, events } = handlePost(postBody(user), ready(), ctx);
+    const output = response.override?.output as Record<string, unknown>;
+
+    expect(output.bank_account_number).toBe(LOAN.bank_account_number);
+    expect(output.tax_id).toBe(LOAN.tax_id);
+    // But the injected instruction is still gone: whether text is trying to
+    // give the model orders is not a question about anybody's clearance.
+    expect(output.underwriter_notes).toBe(LEGITIMATE_NOTE);
+
+    const event = onlyEvent(events);
+    expect(event.decision).toBe("modify");
+    expect(event.rule_id).toBe("post.strip-injected-instructions");
+    expect(event.redactions?.map((record) => record.path)).toEqual(["$.underwriter_notes"]);
+  });
+
+  test("Sam, whose clearance is 0, is redacted like Dana", () => {
+    const { response } = handlePost(postBody(SAM), ready(), ctx);
+    const output = response.override?.output as Record<string, unknown>;
+    expect(output.bank_account_number).toBe("[REDACTED]");
+  });
+
+  test("a caller the roster does not know is redacted, not exempted", () => {
+    // The fail-closed direction at /post: an unknown subject cannot be shown to
+    // clear the bar, so every rule applies. A matcher that let a stranger
+    // through would make the control an opt-in.
+    const { response } = handlePost(postBody("stranger@bank.example"), ready(), ctx);
+    const output = response.override?.output as Record<string, unknown>;
+    expect(output.bank_account_number).toBe("[REDACTED]");
+    expect(output.tax_id).toBe("[REDACTED]");
+  });
+
+  test("a second pass over the redacted payload changes nothing and records nothing", () => {
+    const first = handlePost(postBody(DANA), ready(), ctx);
+    const second = handlePost(postBody(DANA, first.response.override?.output), ready(), ctx);
+
+    expect(second.response).toEqual({ code: "OK" });
+    expect(second.events[0]?.decision).toBe("allow");
+    expect(second.events[0]?.redactions).toBeUndefined();
+  });
+
+  test("the tool's own output object is never mutated", () => {
+    const output = loanFixture("LN-2291");
+    handlePost(postBody(DANA, output), ready(), ctx);
+    expect(output.bank_account_number).toBe(LOAN.bank_account_number);
   });
 });
 

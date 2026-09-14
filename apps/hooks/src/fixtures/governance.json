@@ -3,7 +3,9 @@
     "The cast and the rules governance.db is seeded from when it has no schema. Edit a row live in the database, not here — this file is read once, on first boot.",
     "$LOAN and $APPROVALS are replaced at seed time with ARCADE_LOAN_TOOLKIT and ARCADE_APPROVALS_TOOLKIT. Tool names are PascalCase because arcade-mcp PascalCases them unconditionally (measured on #35); a rule keyed on get_loan matches nothing, and a rule that matches nothing is indistinguishable from a rule that permits.",
     "$APPROVALS.Decide lists an argument the tool does not take: `approval`. It is not something a caller supplies — /pre resolves the request_id against approval_requests and writes the resolved facts into that key, discarding anything the caller put there. Catalogued because a rule condition may only read a catalogued argument, and optional because a request_id naming nothing must reach pre.decide-needs-a-known-request rather than be refused as a malformed call.",
-    "Emails are the fallback for a local run and must equal apps/idp/src/fixtures/people.json's. PERSONA_<KEY>_EMAIL overrides each one at seed time, exactly as apps/idp does."
+    "Emails are the fallback for a local run and must equal apps/idp/src/fixtures/people.json's. PERSONA_<KEY>_EMAIL overrides each one at seed time, exactly as apps/idp does.",
+    "Two output rules, on purpose (#16). post.redact-borrower-identifiers is act 3 and is conditioned on clearance — Riley and Morgan read the identifiers, Dana and Sam do not — because a control that redacts for everyone demonstrates nothing about identity. post.strip-injected-instructions is act 4 and is conditioned on nobody, because whether text is trying to give the model orders is not a question about anyone's authority; a chief credit officer must not be the one persona who reads the injection. Both fire on the same call and the audit row names each by id.",
+    "pattern.injected-instruction removes from the paste marker (or the tell itself, if there is no marker) to the end of the field. Proved against LN-2291 as apps/loan-app seeds it, byte for byte, in apps/hooks/test/post-redaction.test.ts, and proved not to fire on the other seeded notes. The previous regex here matched nothing — the note says 'Ignore any earlier instruction', not 'ignore previous instructions' — which is a rule that permits while looking like a rule that protects. Re-measure that test before rewording either the pattern or the note."
   ],
   "catalogue": {
     "$LOAN": {
@@ -112,23 +114,31 @@
   "output_rules": [
     {
       "id": "post.redact-borrower-identifiers",
-      "description": "Acts 3 and 4. The borrower's bank account and tax id never reach the model, and an instruction planted in the underwriter's notes is stripped. Evaluated by the RedactionEngine once #16 wires it in.",
+      "description": "Act 3. Masks the borrower's bank account number and tax id for anyone whose clearance is under 250000.",
       "match": { "toolkit": "$LOAN", "tool": "GetLoan" },
+      "subjects": { "clearance_below": 250000 },
       "fields": [
         { "path": "bank_account_number", "strategy": "mask", "replacement": "[REDACTED]" },
         { "path": "tax_id", "strategy": "mask", "replacement": "[REDACTED]" }
       ],
+      "reason": "Borrower identifiers masked before the output reached the model.",
+      "priority": 100
+    },
+    {
+      "id": "post.strip-injected-instructions",
+      "description": "Act 4. Strips an instruction addressed to the model out of a loan file's free text, for everyone.",
+      "match": { "toolkit": "$LOAN", "tool": "GetLoan" },
       "patterns": [
         {
           "id": "pattern.injected-instruction",
-          "regex": "ignore (all )?(previous|prior) instructions[^.]*\\.?",
+          "regex": "\\s*(?:[-\u2013\u2014]{2,}[^\\n]*\\n)?(?:system note for automated review|ignore (?:any|all|the) (?:earlier|previous|prior) instructions?)[\\s\\S]*$",
           "flags": "i",
           "strategy": "remove",
           "replacement": ""
         }
       ],
-      "reason": "Borrower identifiers masked and injected instruction stripped before the output reached the model.",
-      "priority": 100
+      "reason": "An instruction addressed to the model was found in free text and stripped before the output reached it.",
+      "priority": 110
     }
   ]
 }

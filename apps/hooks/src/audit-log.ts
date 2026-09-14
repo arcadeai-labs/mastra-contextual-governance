@@ -42,6 +42,8 @@ interface AuditRow {
   rule_id: string | null;
   before: string | null;
   after: string | null;
+  /** JSON array of `RedactionRecord`, or NULL. Never a removed value (#16). */
+  redactions: string | null;
 }
 
 /**
@@ -82,9 +84,10 @@ export function record(
 
   const insert = db.prepare(
     `INSERT INTO audit_log
-       (id, ts, execution_id, hook, user_id, tool, decision, reason, rule_id, before, after)
+       (id, ts, execution_id, hook, user_id, tool, decision, reason, rule_id, before, after, redactions)
      VALUES
-       ($id, $ts, $execution_id, $hook, $user_id, $tool, $decision, $reason, $rule_id, $before, $after)`,
+       ($id, $ts, $execution_id, $hook, $user_id, $tool, $decision, $reason, $rule_id, $before, $after,
+        $redactions)`,
   );
 
   // Collected inside the transaction, published only if it commits.
@@ -107,6 +110,7 @@ export function record(
           $rule_id: event.rule_id,
           $before: event.before === undefined ? null : JSON.stringify(event.before),
           $after: event.after === undefined ? null : JSON.stringify(event.after),
+          $redactions: event.redactions === undefined ? null : JSON.stringify(event.redactions),
         });
         committed.push({ seq: Number(lastInsertRowid), event });
       }
@@ -236,6 +240,7 @@ function fromRow(row: AuditRow): GovernanceEvent {
     rule_id: row.rule_id,
     ...(row.before !== null && { before: JSON.parse(row.before) }),
     ...(row.after !== null && { after: JSON.parse(row.after) }),
+    ...(row.redactions !== null && { redactions: JSON.parse(row.redactions) }),
   });
 }
 

@@ -18,6 +18,7 @@
 import {
   consumeGrant,
   evaluatePermission,
+  redact,
   resolveVisibility,
   routeApproval,
   selectGrant,
@@ -37,6 +38,7 @@ import {
   type PostHookResult,
   type PreHookRequest,
   type PreHookResult,
+  type RedactionRecord,
   type Subject,
   type ToolkitInfo,
   type Toolkits,
@@ -410,16 +412,37 @@ function narrateRouting(inputs: Inputs, subject: Subject | null, state: ReadySta
 // ---------------------------------------------------------------------------
 
 /**
- * Pass-through, recorded — while the control plane is healthy. The
- * `RedactionEngine` (#8) wires in at #16; until then every output is allowed
- * unchanged and the audit row says so, so the panel's post lane is live from
- * the first deploy and a reviewer can see that nothing was rewritten rather
- * than wonder whether it was.
+ * What the model is allowed to read of what came back (#16).
  *
- * "Allowed unchanged" is a decision, and a decision needs a policy to be made
- * against. With the cache cold or failed there is no policy, so `/post` fails
- * closed like the other two hooks: `CHECK_FAILED`, the output withheld, a deny
- * row. A pass-through is only correct when the control plane can vouch for it.
+ * The other three control points decide whether a call happens; this one runs
+ * after it has, over a payload that is already on its way into the model's
+ * context. `RedactionEngine` (#8) is pure and does the deciding: named field
+ * paths, and regular expressions over free text. Nothing here inspects a value.
+ *
+ * Three outcomes:
+ *
+ * - **Nothing applied.** `OK` with no override, and an `allow` row. The
+ *   payload is the very object that arrived — the engine returns the same
+ *   reference — so the panel's post lane says "read, nothing removed" rather
+ *   than staying blank.
+ * - **Something was removed.** `OK` with `override.output`, and a `modify` row
+ *   carrying `redactions[]`. Arcade substitutes the override for the tool's
+ *   output, so the model sees only what came back from here.
+ * - **No policy to decide against.** Cold or failed cache: `CHECK_FAILED`, the
+ *   output withheld, a `deny` row. A pass-through is only correct when the
+ *   control plane can vouch for it.
+ *
+ * **The event carries no payload, on purpose** (driver decision on #16, option
+ * A). `audit_log` is persisted and `GET /events` is unauthenticated, so a
+ * `before` holding the raw output would write the borrower's account number to
+ * disk and broadcast it; an `after` is no safer, because a rule conditioned on
+ * clearance does not fire for a privileged subject and *their* "after" still
+ * holds the identifiers. What is recorded is `redactions[]`: path, `rule_id`,
+ * `pattern_id`, kind. Where and why, never what.
+ *
+ * `rule_id` on the row names the rule when exactly one fired, and is `null`
+ * when several did — the per-redaction ids are on `redactions[]`, and picking
+ * one of several for the summary column would attribute the others to it.
  */
 export function handlePost(
   request: PostHookRequest,
@@ -427,20 +450,43 @@ export function handlePost(
   ctx: HandlerContext,
 ): Outcome<PostHookResult> {
   const id = ctx.newId();
-  const qualified = qualify(request.tool.toolkit, request.tool.name);
+  const tool = { toolkit: request.tool.toolkit, name: request.tool.name };
+  const qualified = qualify(tool.toolkit, tool.name);
 
-  const decision: Decision =
-    state.status === "ready"
-      ? {
-          effect: "allow",
-          reason: "Output passed through unchanged; output rules are not evaluated until #16.",
+  if (state.status !== "ready") {
+    const reason = failClosedReason(state, `the output of ${qualified} cannot be released`);
+    return {
+      response: {
+        code: "CHECK_FAILED",
+        error_message: withCorrelation(
+          `DENIED: the control plane cannot release the output of ${qualified} because its ` +
+            `policy is unavailable. Do not retry ${qualified}; report the reference to an administrator.`,
+          id,
+        ),
+      },
+      events: [
+        {
+          id,
+          ts: ctx.now(),
+          execution_id: request.execution_id,
+          hook: "post",
+          user_id: request.context.user_id ?? "",
+          tool: qualified,
+          decision: "deny",
+          reason,
           rule_id: null,
-        }
-      : {
-          effect: "deny",
-          reason: failClosedReason(state, `the output of ${qualified} cannot be released`),
-          rule_id: null,
-        };
+        },
+      ],
+    };
+  }
+
+  const subject = findSubject(state, request.context.user_id);
+  const { output, redactions } = redact({
+    output: request.output,
+    subject,
+    tool,
+    policy: state.outputPolicy,
+  });
 
   const event: GovernanceEvent = {
     id,
@@ -449,22 +495,75 @@ export function handlePost(
     hook: "post",
     user_id: request.context.user_id ?? "",
     tool: qualified,
-    decision: decision.effect,
-    reason: decision.reason,
-    rule_id: decision.rule_id,
+    decision: redactions.length === 0 ? "allow" : "modify",
+    reason: describeRedactions(redactions, state),
+    rule_id: soleRule(redactions),
+    ...(redactions.length === 0 ? {} : { redactions: [...redactions] }),
   };
 
-  const response: PostHookResult =
-    decision.effect === "allow"
-      ? { code: "OK" }
-      : {
-          code: "CHECK_FAILED",
-          error_message: withCorrelation(
-            `DENIED: the control plane cannot release the output of ${qualified} because its ` +
-              `policy is unavailable. Do not retry ${qualified}; report the reference to an administrator.`,
-            id,
-          ),
-        };
+  return {
+    response: redactions.length === 0 ? { code: "OK" } : { code: "OK", override: { output } },
+    events: [event],
+  };
+}
 
-  return { response, events: [event] };
+/**
+ * The audit row's account of a `/post` decision, grouped by the rule that made
+ * it — which is also the line a presenter reads off the panel.
+ *
+ * Each rule appears once, named by id, followed by the sentence its author
+ * wrote and the paths it acted on. Two rules commonly fire on one `Loan.GetLoan`
+ * (act 3's fields and act 4's sweep) and the audience has to be able to tell
+ * which did what, so neither is folded into the other.
+ *
+ * Written from the records and the rules that produced them, so it names paths
+ * and rule ids and cannot accidentally quote a value: nothing in scope here
+ * holds one. An `unsettled` record is called out by name — it means the output
+ * policy is rewriting its own output and the value was withheld rather than
+ * redacted, which is a defect to fix and not a secret that was found.
+ */
+function describeRedactions(
+  redactions: readonly RedactionRecord[],
+  state: ReadyState,
+): string {
+  if (redactions.length === 0) {
+    return "Output released unchanged: no output rule applied to this call.";
+  }
+
+  const byRule = new Map<string, RedactionRecord[]>();
+  for (const record of redactions) {
+    const key = record.rule_id ?? "";
+    const group = byRule.get(key);
+    if (group === undefined) byRule.set(key, [record]);
+    else group.push(record);
+  }
+
+  const sentences = [...byRule].map(([ruleId, records]) => {
+    const name = ruleId === "" ? "the engine itself" : ruleId;
+    const reason = ruleId === "" ? "" : ` ${state.outputRules.get(ruleId)?.reason ?? ""}`;
+    const what = records
+      .map(
+        (record) =>
+          `${record.kind} ${record.path}` +
+          (record.pattern_id === null ? "" : ` via ${record.pattern_id}`),
+      )
+      .join(", ");
+    return `${name}:${reason} (${what}).`;
+  });
+
+  const withheld = redactions.filter((record) => record.kind === "unsettled").length;
+  return (
+    `Output rewritten before it reached the model; ${redactions.length} redaction(s) by ` +
+    `${byRule.size} rule(s). ${sentences.join(" ")}` +
+    (withheld > 0
+      ? ` ${withheld} value(s) were withheld rather than redacted because the output policy did not settle.`
+      : "")
+  );
+}
+
+/** The one rule that fired, or `null` when none or several did. */
+function soleRule(redactions: readonly RedactionRecord[]): string | null {
+  const ids = new Set(redactions.map((record) => record.rule_id));
+  const [only] = [...ids];
+  return ids.size === 1 && only !== undefined ? only : null;
 }
