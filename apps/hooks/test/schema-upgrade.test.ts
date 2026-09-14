@@ -11,20 +11,32 @@
  */
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { count as auditCount, newEventId, record, recent } from "../src/audit-log.ts";
+import type { HooksConfig } from "../src/config.ts";
+import { createPolicyCache } from "../src/policy-cache.ts";
+import { createServer } from "../src/server.ts";
+import {
+  count as auditCount,
+  maxSeq,
+  newEventId,
+  pageAfter,
+  record,
+  recent,
+} from "../src/audit-log.ts";
 import {
   SCHEMA_VERSION,
   counts,
+  describeMigration,
   hasSchema,
   loadSeed,
   openGovernance,
   readPolicy,
   readSchemaVersion,
   seed,
+  type MigrationReport,
   type SeedOptions,
 } from "../src/policy-store.ts";
 
@@ -404,5 +416,366 @@ describe("a database newer than this build", () => {
         check.close();
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #103: the payload columns go, and so do their bytes
+// ---------------------------------------------------------------------------
+
+/**
+ * The account number a pre-#101 row carried in `audit_log.before`. Long enough
+ * and odd enough that finding it in a 300KB file means it is *that* value and
+ * not a coincidence of digits.
+ */
+const ACCOUNT = "4738299104857321";
+const TAX_ID = "86-7530912";
+
+/**
+ * A disk at version 2 — the schema #16 left — carrying rows whose `before`
+ * and `after` hold raw `Loan.GetLoan` output. This is the shape of the live
+ * Render disk: ~745,000 rows, most of them written before #101 stopped
+ * binding those columns.
+ *
+ * `rows` is a knob rather than a constant because two of the tests below want
+ * a file big enough that the drop cannot happen entirely inside one page.
+ */
+function writeDiskAtVersion2(path: string, rows = 200): void {
+  const legacy = new Database(path, { create: true });
+  legacy.exec("PRAGMA journal_mode = WAL");
+  legacy.exec(`
+    ${SCHEMA_BEFORE_APPROVAL_REQUESTS}
+    ALTER TABLE audit_log ADD COLUMN redactions TEXT;
+  `);
+  const insert = legacy.prepare(
+    `INSERT INTO audit_log
+       (id, ts, execution_id, hook, user_id, tool, decision, reason, rule_id, before, after)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+  );
+  legacy.transaction(() => {
+    for (let i = 0; i < rows; i++) {
+      // The account number sits *after* 4KB of notes, so it lands on an
+      // overflow page rather than in the row's b-tree page. That is not
+      // decoration: measured, a bare `DROP COLUMN` zeroes what it defragments
+      // inside a page and leaves the freed overflow pages verbatim, so the
+      // same value ahead of the filler comes back clean and behind it does
+      // not. The real `Loan.GetLoan` output has `underwriter_notes` in it.
+      const payload = JSON.stringify({
+        loan_id: "LN-2291",
+        borrower: "Northwind Bakery LLC",
+        underwriter_notes: "x".repeat(4096),
+        bank_account_number: ACCOUNT,
+        tax_id: TAX_ID,
+      });
+      insert.run(
+        `evt_payload${i.toString().padStart(6, "0")}`,
+        new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString(),
+        `tc_${i}`,
+        "post",
+        "dana.okafor@bank.example",
+        "Loan.GetLoan",
+        "modify",
+        "Sensitive field masked.",
+        "post.redact-borrower-identifiers",
+        payload,
+        payload.replace(ACCOUNT, "****"),
+      );
+    }
+  })();
+  insert.finalize();
+  legacy.exec("PRAGMA user_version = 2");
+  legacy.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  legacy.close();
+}
+
+/** How many times `needle` appears in the raw bytes of the db and its WAL. */
+function occurrencesInFile(path: string, needle: string): number {
+  let hits = 0;
+  for (const suffix of ["", "-wal"]) {
+    if (!existsSync(path + suffix)) continue;
+    hits += readFileSync(path + suffix).toString("latin1").split(needle).length - 1;
+  }
+  return hits;
+}
+
+/** Every object in `sqlite_master`, as SQLite itself spells it. */
+function schemaOf(db: Database): Array<{ type: string; name: string; sql: string | null }> {
+  return db
+    .query<{ type: string; name: string; sql: string | null }, []>(
+      "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+    )
+    .all();
+}
+
+describe("a database carrying the retired payload columns (#103)", () => {
+  test("loses the columns, keeps every row", () => {
+    withPath("drop-columns", (path) => {
+      writeDiskAtVersion2(path);
+
+      const db = openGovernance(path, OPTIONS);
+      try {
+        const columns = db
+          .query<{ name: string }, []>("PRAGMA table_info(audit_log)")
+          .all()
+          .map((row) => row.name);
+        expect(columns).not.toContain("before");
+        expect(columns).not.toContain("after");
+        expect(columns).toEqual([
+          "seq",
+          "id",
+          "ts",
+          "execution_id",
+          "hook",
+          "user_id",
+          "tool",
+          "decision",
+          "reason",
+          "rule_id",
+          "redactions",
+        ]);
+
+        // The decisions themselves are not what #103 removes. 200 payload rows
+        // plus the one `SCHEMA_BEFORE_APPROVAL_REQUESTS` writes.
+        expect(auditCount(db)).toBe(201);
+        expect(readSchemaVersion(db)).toBe(SCHEMA_VERSION);
+
+        // And a SELECT naming them now fails, from this connection or any other.
+        expect(() => db.query("SELECT before FROM audit_log").all()).toThrow(/no such column/);
+      } finally {
+        db.close();
+      }
+    });
+  });
+
+  test("leaves no account number in the file bytes", () => {
+    withPath("residue", (path) => {
+      writeDiskAtVersion2(path);
+      // The premise: before the migration the value is right there in the file,
+      // 200 times over, readable by anything that can open it. A test that
+      // asserts absence without first proving presence proves nothing.
+      expect(occurrencesInFile(path, ACCOUNT)).toBeGreaterThanOrEqual(200);
+
+      const db = openGovernance(path, OPTIONS);
+      db.close();
+
+      expect(occurrencesInFile(path, ACCOUNT)).toBe(0);
+      expect(occurrencesInFile(path, TAX_ID)).toBe(0);
+      // The 4KB filler went with it: nothing of the old payload survives.
+      expect(occurrencesInFile(path, "underwriter_notes")).toBe(0);
+    });
+  });
+
+  test("leaves nothing for the audit read API or the stream to serve", () => {
+    withPath("api-residue", (path) => {
+      writeDiskAtVersion2(path, 5);
+
+      const db = openGovernance(path, OPTIONS);
+      try {
+        // `recent` is what `GET /events`' replay and the audit API both read
+        // rows through, and `pageAfter` is the resumable path.
+        const rows = [...recent(db, 100), ...pageAfter(db, 0, maxSeq(db), 100).map((p) => p.event)];
+        expect(rows.length).toBeGreaterThan(5);
+        const serialised = JSON.stringify(rows);
+        expect(serialised).not.toContain(ACCOUNT);
+        expect(serialised).not.toContain(TAX_ID);
+        for (const row of rows) {
+          expect(Object.keys(row)).not.toContain("before");
+          expect(Object.keys(row)).not.toContain("after");
+        }
+      } finally {
+        db.close();
+      }
+    });
+  });
+
+  test("a second boot is a no-op, and reports no migration", () => {
+    withPath("idempotent", (path) => {
+      writeDiskAtVersion2(path, 20);
+
+      const first: Array<{ from: number; to: number }> = [];
+      const a = openGovernance(path, OPTIONS, (report) => first.push(report));
+      const rowsAfterFirst = auditCount(a);
+      a.close();
+      expect(first).toHaveLength(1);
+      expect(first[0]?.from).toBe(2);
+      expect(first[0]?.to).toBe(SCHEMA_VERSION);
+
+      const second: unknown[] = [];
+      const b = openGovernance(path, OPTIONS, (report) => second.push(report));
+      try {
+        // Nothing ran, so nothing is reported: this is how a reader tells
+        // "migrated on this boot" from "migrated some deploy ago".
+        expect(second).toHaveLength(0);
+        expect(readSchemaVersion(b)).toBe(SCHEMA_VERSION);
+        expect(auditCount(b)).toBe(rowsAfterFirst);
+      } finally {
+        b.close();
+      }
+    });
+  });
+
+  test("ends at the same schema a fresh database is created with", () => {
+    withPath("migrated", (migratedPath) => {
+      withPath("brand-new", (freshPath) => {
+        writeDiskAtVersion2(migratedPath, 10);
+
+        // Twice, because a second pass must not add or reshape anything.
+        openGovernance(migratedPath, OPTIONS).close();
+        const migrated = openGovernance(migratedPath, OPTIONS);
+        const brandNew = openGovernance(freshPath, OPTIONS);
+        try {
+          expect(readSchemaVersion(migrated)).toBe(readSchemaVersion(brandNew));
+
+          // `audit_log` in particular, spelled out, since it is the table #103
+          // reshapes and the one a DROP COLUMN could leave subtly different.
+          const auditColumns = (db: Database) =>
+            db.query<{ name: string; type: string; notnull: number }, []>(
+              "PRAGMA table_info(audit_log)",
+            ).all();
+          expect(auditColumns(migrated)).toEqual(auditColumns(brandNew));
+
+          // And every other object: the migrated disk predates `grants` and
+          // `approval_requests` too, so this covers the whole upgrade path.
+          expect(schemaOf(migrated).map((o) => `${o.type} ${o.name}`)).toEqual(
+            schemaOf(brandNew).map((o) => `${o.type} ${o.name}`),
+          );
+        } finally {
+          migrated.close();
+          brandNew.close();
+        }
+      });
+    });
+  });
+
+  test("the report carries the row count and the duration", () => {
+    withPath("report", (path) => {
+      writeDiskAtVersion2(path, 30);
+
+      let report: MigrationReport | null = null;
+      openGovernance(path, OPTIONS, (r) => {
+        report = r;
+      }).close();
+
+      const seen = report as MigrationReport | null;
+      expect(seen).not.toBeNull();
+      // 30 payload rows plus the one the old disk already had. Counted before
+      // the migration, which is the number that says how much work it was.
+      expect(seen!.auditRows).toBe(31);
+      expect(seen!.from).toBe(2);
+      expect(seen!.to).toBe(SCHEMA_VERSION);
+      expect(seen!.ddlMs).toBeGreaterThan(0);
+      expect(seen!.vacuumMs).toBeGreaterThan(0);
+      // The VACUUM reclaimed the space the 4KB payloads occupied.
+      expect(seen!.bytesAfter!).toBeLessThan(seen!.bytesBefore!);
+
+      const line = describeMigration(seen!);
+      expect(line).toContain("MIGRATED ONCE");
+      expect(line).toContain("schema 2 → 4");
+      expect(line).toContain("31 audit rows");
+      expect(line).toMatch(/DDL \d+ms/);
+      expect(line).toMatch(/VACUUM \d+ms/);
+    });
+  });
+
+  test("an interrupted sweep is retried: a disk left at 3 is vacuumed on the next boot", () => {
+    withPath("half-migrated", (path) => {
+      writeDiskAtVersion2(path);
+
+      // Exactly what a crash between the two halves leaves behind: the columns
+      // dropped and stamped, the file not yet swept. Version 3 exists so this
+      // state is recoverable rather than permanent and silent.
+      const halfway = new Database(path);
+      halfway.exec("PRAGMA journal_mode = WAL");
+      halfway.transaction(() => {
+        halfway.exec('ALTER TABLE audit_log DROP COLUMN "before"');
+        halfway.exec('ALTER TABLE audit_log DROP COLUMN "after"');
+        halfway.exec("PRAGMA user_version = 3");
+      })();
+      halfway.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      halfway.close();
+
+      // The premise again: the drop alone left the account numbers legible.
+      expect(occurrencesInFile(path, ACCOUNT)).toBeGreaterThan(0);
+
+      let report: MigrationReport | null = null;
+      const db = openGovernance(path, OPTIONS, (r) => {
+        report = r;
+      });
+      try {
+        expect((report as MigrationReport | null)?.from).toBe(3);
+        expect((report as MigrationReport | null)?.vacuumMs).toBeGreaterThan(0);
+        expect(readSchemaVersion(db)).toBe(SCHEMA_VERSION);
+      } finally {
+        db.close();
+      }
+
+      expect(occurrencesInFile(path, ACCOUNT)).toBe(0);
+    });
+  });
+});
+
+/**
+ * The migration is not just logged: `/health` carries it over HTTP for the
+ * life of the process. A boot line scrolls out of a Render deploy log; the
+ * question "did this disk get migrated, and how big was it" outlives it.
+ */
+describe("GET /health after a migration (#103)", () => {
+  const config: HooksConfig = {
+    port: 0,
+    dbPath: ":memory:",
+    signingSecret: "test-secret",
+    approvalsStoreToken: "test-store-token",
+    // Unset, so `POST /admin/reset` is not mounted (#106): this file is about
+    // the schema upgrade, not the reset.
+    resetToken: "",
+    loanToolkit: "Loan",
+    approvalsToolkit: "Approvals",
+    personaEmails: {},
+    deadlineMs: 2500,
+    policyPollMs: 250,
+    grantTtlSeconds: 900,
+    injectionDetection: "armed",
+  };
+
+  test("reports the migration on the boot that ran it, and null on the next", async () => {
+    const path = tempPath("health-migration");
+    try {
+      writeDiskAtVersion2(path, 12);
+
+      for (const boot of ["migrating", "already-current"] as const) {
+        let report: MigrationReport | null = null;
+        const db = openGovernance(path, config, (r) => {
+          report = r;
+        });
+        const cache = createPolicyCache(db, { log: () => {}, pollMs: 10_000 });
+        cache.start();
+        const server = createServer({ config, db, cache, log: () => {}, migration: report });
+        try {
+          const body = (await (await fetch(`http://localhost:${server.port}/health`)).json()) as {
+            migration: MigrationReport | null;
+            audit_rows: number;
+          };
+          if (boot === "migrating") {
+            expect(body.migration).not.toBeNull();
+            expect(body.migration?.from).toBe(2);
+            expect(body.migration?.to).toBe(SCHEMA_VERSION);
+            // 12 payload rows plus the one the old disk already carried.
+            expect(body.migration?.auditRows).toBe(13);
+            expect(body.migration?.ddlMs).toBeGreaterThan(0);
+            expect(body.migration?.vacuumMs).toBeGreaterThan(0);
+          } else {
+            expect(body.migration).toBeNull();
+          }
+          // Either way the rows are still there and still counted.
+          expect(body.audit_rows).toBe(13);
+        } finally {
+          cache.stop();
+          server.stop(true);
+          db.close();
+        }
+      }
+    } finally {
+      rmSync(dirname(path), { recursive: true, force: true });
+    }
   });
 });

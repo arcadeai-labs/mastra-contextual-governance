@@ -58,7 +58,7 @@ import {
 } from "./handlers.ts";
 import { driftWarning } from "./fixture-drift.ts";
 import type { PolicyCache } from "./policy-cache.ts";
-import { counts, type Seed } from "./policy-store.ts";
+import { counts, type MigrationReport, type Seed } from "./policy-store.ts";
 import { handleReset, RESET_PATH } from "./reset-api.ts";
 
 export const SERVICE = "hooks";
@@ -80,6 +80,13 @@ export interface ServerDeps {
    */
   notices?: ApprovalNoticeBus;
   log?: (line: string) => void;
+  /**
+   * What this boot's schema upgrade did, or `null`/absent when the disk was
+   * already current (#103). Carried on `/health` so "the migration ran, once,
+   * over this many rows, in this long" has an answer that outlives the boot
+   * line — and so that a boot that did *not* migrate says so just as plainly.
+   */
+  migration?: MigrationReport | null;
   /** Overridden in tests so an idle stream's keep-alive is observable. */
   streamKeepAliveMs?: number;
   /** Overridden in tests to reach the stream's backlog and replay cap cheaply. */
@@ -372,6 +379,10 @@ export function createServer(deps: ServerDeps) {
       reset: resetAvailable ? "enabled" : "disabled",
       warnings,
       counts: counts(db),
+      // Null on every boot that found the disk already current, which is the
+      // point: it distinguishes "migrated here" from "migrated some deploy
+      // ago" without anybody having to go digging in a deploy log (#103).
+      migration: deps.migration ?? null,
       pending_approvals: pendingCount(db),
       audit_rows: auditCount(db),
       // "Did the panel actually connect?" needs an answer that is not the
