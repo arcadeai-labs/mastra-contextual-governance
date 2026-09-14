@@ -1,86 +1,60 @@
 /**
- * Placeholder. The real thing is a split screen: a deliberately boring
- * enterprise loan app on the left, the Arcade control plane on the right.
- * The shell lands in #22, the control-plane panel in #21.
+ * `/` — the demo.
  *
- * Since #82 it carries one real thing: the sign-in panel. A server component,
- * so the session is unsealed on the server and only the email and whether a
- * gateway token exists ever reach the browser.
+ * The split screen #22 asks for: the bank's loan origination system on the
+ * left, Arcade's control plane on the right. It replaces the #4 scaffold's list
+ * of services, which said "every service is a stub that serves a health
+ * endpoint" and had not been true for some weeks.
+ *
+ * A **server** component, and it does exactly two things a client one could not:
+ *
+ * 1. It unseals the session here, so the gateway tokens in the cookie never
+ *    reach the browser. `SignInPanel` is rendered on this side of the boundary
+ *    and handed down as an element, so only what it prints crosses.
+ * 2. It resolves the panel's stream from the environment at request time.
+ *    `next build` inlines `NEXT_PUBLIC_*` into the client bundle while Render
+ *    supplies service variables at runtime, so a public variable would be
+ *    `undefined` in the deployed browser and perfectly fine under `next dev` —
+ *    see `lib/governance/stream-url.ts`.
  */
 import { cookies } from "next/headers";
 
 import { configurationProblems, readIdentitySurface } from "../lib/config.ts";
 import { readSessionFromCookies } from "../lib/identity/session.ts";
+import { resolvePanelStream } from "../lib/governance/stream-url.ts";
 import { SignInPanel } from "../components/identity/SignInPanel.tsx";
-
-const SERVICES = [
-  ["apps/web", "this app — chat, persona switcher, approval page, panel"],
-  ["apps/hooks", "the control plane — /access, /pre, /post, audit, SSE"],
-  ["apps/loan-app", "the governed business system — a plain HTTP API"],
-  ["tools/loan", "Python arcade-mcp toolkit — the loan tools, ships via arcade deploy"],
-  ["tools/approvals", "Python arcade-mcp toolkit — ships via arcade deploy"],
-] as const;
+import { SplitScreen } from "../components/shell/SplitScreen.tsx";
 
 /**
- * Dynamic, because it reads a session cookie. Saying so explicitly rather than
- * relying on `cookies()` to infer it keeps `next build` from evaluating this
- * component at all — a prerender of a page about who is signed in is either
- * wrong or empty, and it runs under `NODE_ENV=production` with none of the
- * deployment's environment.
+ * Dynamic, because it reads a session cookie and the environment. Saying so
+ * explicitly rather than relying on `cookies()` to infer it keeps `next build`
+ * from evaluating this component at all — a prerender of a page about who is
+ * signed in is either wrong or empty, and it runs under `NODE_ENV=production`
+ * with none of the deployment's environment.
  */
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const jar = await cookies();
   const config = readIdentitySurface();
   const session = await readSessionFromCookies(
     new Map(jar.getAll().map((cookie) => [cookie.name, cookie.value])),
     config,
   );
+  // `?fixture=1` and the replay's tuning parameters work here exactly as they do
+  // on `/panel`, which is what lets the whole screen be rehearsed with no
+  // control plane running. The badge on the panel says which it is, always.
+  const stream = resolvePanelStream(process.env, await searchParams);
 
   return (
-    <main
-      style={{
-        maxWidth: "42rem",
-        margin: "0 auto",
-        padding: "4rem 1.5rem",
-      }}
-    >
-      <p
-        style={{
-          margin: 0,
-          fontSize: "0.75rem",
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-          color: "var(--muted)",
-        }}
-      >
-        Scaffold
-      </p>
-      <h1 style={{ fontSize: "1.75rem", margin: "0.5rem 0 1rem" }}>
-        Contextual Governance — Mastra × Arcade
-      </h1>
-      <p style={{ color: "var(--muted)", marginTop: 0 }}>
-        Every service is a stub that serves a health endpoint. Nothing else. The
-        point of this slice is that the deploy pipeline works before any logic
-        goes into it.
-      </p>
-
-      <SignInPanel session={session} problems={configurationProblems(config)} />
-
-      <ul style={{ listStyle: "none", padding: 0, marginTop: "2rem" }}>
-        {SERVICES.map(([name, role]) => (
-          <li
-            key={name}
-            style={{ borderTop: "1px solid var(--line)", padding: "0.75rem 0" }}
-          >
-            <code style={{ fontSize: "0.875rem" }}>{name}</code>
-            <div style={{ color: "var(--muted)", fontSize: "0.875rem" }}>
-              {role}
-            </div>
-          </li>
-        ))}
-      </ul>
-    </main>
+    <SplitScreen
+      stream={stream}
+      signedInAs={session?.email ?? null}
+      identity={<SignInPanel session={session} problems={configurationProblems(config)} />}
+    />
   );
 }
