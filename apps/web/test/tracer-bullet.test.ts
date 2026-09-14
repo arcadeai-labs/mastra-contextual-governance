@@ -500,8 +500,10 @@ describe("#89 measured: the model acts on the remediation instruction", () => {
         `[#89 measured] ${CONTROL_OVER_LIMIT_LOAN}: /pre denied ${denied}/${RUNS}, ` +
           `Approvals_RequestApproval called ${escalated}/${RUNS}`,
       );
+      // Indexed by escalation, not by run: a run that never reached `/pre` had
+      // no instruction to act on and contributes no line here.
       for (const [i, inputs] of arguments_.entries()) {
-        console.log(`[#89 measured] run ${i + 1} escalation arguments: ${JSON.stringify(inputs)}`);
+        console.log(`[#89 measured] escalation ${i + 1} arguments: ${JSON.stringify(inputs)}`);
       }
 
       // The arguments, on every escalation that happened. The denial spells all
