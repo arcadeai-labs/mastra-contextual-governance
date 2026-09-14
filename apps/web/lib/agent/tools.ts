@@ -129,19 +129,36 @@ export function gatewayClient(options: GatewayToolsOptions): MCPClient {
 }
 
 /**
- * The governed toolset for this persona, and what was left out.
+ * The governed toolset for this persona, what was left out, and whether the
+ * gateway answered at all.
  *
- * `listToolsets()` rather than `listTools()` on purpose: the flat form
+ * Toolsets rather than the flat `listTools()` on purpose: the flat form
  * namespaces every tool with the server key, so `Loan_ApproveLoan` would reach
  * the model as `arcade_Loan_ApproveLoan`. The name the model sees should be the
  * name the wire uses and the name a rule is keyed on, modulo the dot.
+ *
+ * **`listToolsetsWithErrors()` rather than `listToolsets()`, and that is the
+ * #94 fix in this file.** `listToolsets()` resolves with `{}` when the server
+ * could not be reached *or* refused the bearer — the failure is logged and
+ * dropped, and what the caller gets back is indistinguishable from a gateway
+ * that answered a perfectly good `tools/list` carrying none of our toolkits.
+ * Those are two different sentences to put on screen and only one of them
+ * mentions `ARCADE_LOAN_TOOLKIT`. The `WithErrors` variant hands back the
+ * per-server failure, so `error` here means *no listing arrived* and an empty
+ * `advertised` with no `error` means *the gateway really advertises nothing*.
  */
 export async function governedToolset(
   client: MCPClient,
   surface: ToolSurface,
-): Promise<{ tools: Record<string, unknown>; advertised: string[]; dropped: string[] }> {
-  const toolsets = await client.listToolsets();
+): Promise<{ tools: Record<string, unknown>; advertised: string[]; dropped: string[]; error?: string }> {
+  const { toolsets, errors } = await client.listToolsetsWithErrors();
   const advertisedTools = (toolsets[SERVER_KEY] ?? {}) as Record<string, unknown>;
   const { governed, dropped } = selectGoverned(advertisedTools, surface);
-  return { tools: governed, advertised: Object.keys(advertisedTools), dropped };
+  const failure = errors[SERVER_KEY];
+  return {
+    tools: governed,
+    advertised: Object.keys(advertisedTools),
+    dropped,
+    ...(failure ? { error: failure } : {}),
+  };
 }

@@ -40,10 +40,46 @@ export interface GatewayToken {
 export interface Session {
   /** The persona's email, lowercase. The join key: Arcade `user_id`, OAuth subject, loan-book actor. */
   email: string;
-  /** Absent between sign-in and hop 1 completing. */
+  /** Absent between sign-in and hop 1 completing, and after the gateway refuses what hop 1 produced. */
   gateway?: GatewayToken;
+  /**
+   * When the gateway last refused this browser's bearer, epoch ms. Absent
+   * otherwise.
+   *
+   * "No token yet" and "the token we had was refused" are the same absence and
+   * want different words on screen: the first is a hop nobody has run, the
+   * second is a hop that has to be run again. #94 is the record of them being
+   * one state — a rejected token read as a configuration mistake, and a person
+   * sent to check environment variables that were right all along.
+   */
+  gateway_rejected_at?: number;
   /** When this session was established, epoch ms. Informational; the cookie's own Max-Age expires it. */
   signed_in_at: number;
+}
+
+/**
+ * Store a freshly-issued bearer.
+ *
+ * The rejection marker goes with it: a token that has just been issued has not
+ * been refused, and leaving the flag behind would leave the panel saying
+ * *rejected* about a credential that works. Spreading `...session` by hand is
+ * what did that — the field survives the spread, silently.
+ */
+export function withGatewayToken(session: Session, gateway: GatewayToken): Session {
+  const { gateway_rejected_at: _cleared, ...rest } = session;
+  return { ...rest, gateway };
+}
+
+/**
+ * Drop the bearer the gateway refused, and remember that it did.
+ *
+ * The sign-in survives on purpose. The person is still whoever the IdP said they
+ * are; only hop 1 needs doing again, and signing them out would charge a
+ * password for a token (`DESIGN.md` → Gateway token storage).
+ */
+export function gatewayTokenRejected(session: Session, at = Date.now()): Session {
+  const { gateway: _refused, ...rest } = session;
+  return { ...rest, gateway_rejected_at: at };
 }
 
 export const SESSION_COOKIE = "cg_session";

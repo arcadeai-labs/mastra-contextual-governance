@@ -205,8 +205,11 @@ function EventView({ event }: { event: ChatEvent }) {
         <div style={{ ...box, borderColor: "#8a6100", background: "#fff6e0", color: "#5a3f00" }}>
           <strong style={{ fontFamily: mono }}>{event.tool} — authorization needed</strong>
           <p style={{ margin: "0.5rem 0 0" }}>
+            {/* "Authorize", not "authorize this tool": since #94 the same event
+                also carries hop 1, where the thing to authorize is the gateway
+                and not a tool. The heading already names which. */}
             <a href={event.url} target="_blank" rel="noreferrer">
-              Authorize this tool
+              Authorize
             </a>
             , then ask again.
           </p>

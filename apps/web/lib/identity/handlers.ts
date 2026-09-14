@@ -35,8 +35,8 @@
 import { gatewayProblems, readIdentitySurface, signinProblems, verifierProblems,
   type IdentitySurface } from "../config.ts";
 import { clearLeg, clearSession, GATEWAY_COOKIE, PENDING_FLOW_COOKIE, readLeg, readSession,
-  SIGNIN_COOKIE, writeLeg, writeSession, type GatewayLeg, type PendingFlow, type Session,
-  type SigninLeg } from "./session.ts";
+  SIGNIN_COOKIE, withGatewayToken, writeLeg, writeSession, type GatewayLeg, type PendingFlow,
+  type Session, type SigninLeg } from "./session.ts";
 import { escapeHtml, notConfigured, page, redirect, verbatim } from "./pages.ts";
 import { authorizeUrl, exchangeCode, fetchUserinfo, nonce, pkce } from "./oidc.ts";
 import { exchangeGatewayCode, expiryOf, gatewayAuthorizeUrl, gatewayClient, isExpiring, mcpUrl,
@@ -345,15 +345,12 @@ export async function gatewayCallback(request: Request, config: IdentitySurface 
   await writeSession(
     headers,
     request,
-    {
-      ...session,
-      gateway: {
-        access_token: exchanged.token.access_token,
-        ...(exchanged.token.refresh_token && { refresh_token: exchanged.token.refresh_token }),
-        expires_at: expiryOf(exchanged.token),
-        client_id: leg.client_id,
-      },
-    },
+    withGatewayToken(session, {
+      access_token: exchanged.token.access_token,
+      ...(exchanged.token.refresh_token && { refresh_token: exchanged.token.refresh_token }),
+      expires_at: expiryOf(exchanged.token),
+      client_id: leg.client_id,
+    }),
     config,
   );
   return redirect(leg.next, headers);
@@ -368,6 +365,13 @@ export async function gatewayCallback(request: Request, config: IdentitySurface 
  * returned only a string would make "the token was refreshed and then thrown
  * away" the easy mistake. #14 is the first caller; this slice's job is to make
  * the token exist and stay live.
+ *
+ * **It fails loudly or not at all (#94).** Every path that cannot produce a live
+ * bearer returns `{ token: null, reason }` — no token, no expired token, a
+ * refresh that answered non-2xx, a refresh that answered 2xx with no
+ * `access_token` on it. The one thing it never does is hand back the token it
+ * already had: a stale bearer is accepted by the type system, presented to the
+ * gateway, refused there, and read on screen as a missing toolkit.
  */
 export async function liveGatewayToken(
   session: Session,
@@ -391,18 +395,35 @@ export async function liveGatewayToken(
     resource,
   });
   if (!refreshed.ok) {
-    return { token: null, reason: `refreshing the gateway token answered ${refreshed.status}: ${refreshed.body}` };
+    // The status, and nothing else. A refusal body belongs to the authorization
+    // server and may carry anything, including a credential; the number is the
+    // whole diagnosis and it is safe to write down (#94).
+    console.warn(`[gateway] refreshing this browser's gateway token answered ${refreshed.status}`);
+    return { token: null, reason: `refreshing the gateway token answered ${refreshed.status}` };
   }
 
+  // A 2xx with no `access_token` on it is not a refresh, and it is the shape
+  // that made #94 expensive: the field is `undefined`, it flows into the session
+  // and out to `MCPClient` as the bearer, and the gateway's refusal surfaces
+  // three layers later as "the gateway advertised 0 tools". Nothing usable came
+  // back, so nothing is returned — and the token already held is *not* handed
+  // back in its place, because a stale bearer fails the same way.
+  const access = refreshed.token.access_token;
+  if (typeof access !== "string" || access.trim() === "") {
+    console.warn(`[gateway] refreshing this browser's gateway token answered ${refreshed.status} with no access_token`);
+    return { token: null, reason: `refreshing the gateway token answered ${refreshed.status} with no access_token` };
+  }
+  console.info(`[gateway] refreshed this browser's gateway token (${refreshed.status})`);
+
   const gateway = {
-    access_token: refreshed.token.access_token,
+    access_token: access,
     // An authorization server may rotate the refresh token or may not; keeping
     // the old one when none comes back is what makes a non-rotating server work.
     refresh_token: refreshed.token.refresh_token ?? session.gateway.refresh_token,
     expires_at: expiryOf(refreshed.token, now),
     client_id: session.gateway.client_id,
   };
-  return { token: gateway.access_token, session: { ...session, gateway } };
+  return { token: access, session: withGatewayToken(session, gateway) };
 }
 
 // ---------------------------------------------------------------------------

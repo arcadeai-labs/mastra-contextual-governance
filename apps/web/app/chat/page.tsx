@@ -55,7 +55,11 @@ export default async function ChatPage() {
       )}
       {session && !session.gateway ? (
         <p style={{ fontSize: "0.875rem" }}>
-          Signed in, but this browser holds no gateway token.{" "}
+          {/* Which of the two absences it is, because they read differently and
+              #94 is what happens when they do not. */}
+          {session.gateway_rejected_at
+            ? "Signed in, but the gateway rejected this browser's token, so it was dropped."
+            : "Signed in, but this browser holds no gateway token."}{" "}
           <a href={GATEWAY_START_PATH}>Authorize the gateway</a>.
         </p>
       ) : null}
