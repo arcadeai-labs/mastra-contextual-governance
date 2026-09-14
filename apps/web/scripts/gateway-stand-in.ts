@@ -225,21 +225,34 @@ function loanTools(toolkit: string): ToolSpec[] {
  * advertised the loan toolkit alone would make that impossible offline and
  * would make it look like a model problem — which is exactly how #89 was found.
  *
- * The descriptions are shortened from `tools/approvals`'s, and like the loan
- * ones they say what each tool does and nothing about who may do it.
+ * **The descriptions state what each tool does and instruct the model in
+ * nothing** — not when to call it, not what to do after it answers, not who
+ * chooses the approver. `DESIGN.md` → No model-side controls bars behavioural
+ * instruction "in either direction: nothing about confirming, refusing,
+ * escalating, retrying, caution or irreversibility", and it bars it in a tool
+ * description exactly as it bars it in the system prompt. Round 1 of this
+ * slice's review caught the first draft here saying *"Escalate an action you
+ * were refused authority for ... You do not choose the approver ... It does not
+ * wait for the answer"*: three behavioural instructions, defended at the time
+ * with the wrong test — "nothing about who may do it" is not the rule.
+ *
+ * It matters more here than anywhere, because the live 5/5 measurement is the
+ * claim that *the hook's sentence* moved the model. A description that already
+ * told it to escalate after a refusal would have been steering the result the
+ * measurement was taken to prove, and the number would have meant nothing.
  */
 function approvalsTools(toolkit: string): ToolSpec[] {
   return [
     {
       name: `${toolkit}_RequestApproval`,
       description:
-        "Escalate an action you were refused authority for to the person who can approve it. You do not choose the approver: this routes the request to the individual holding the lowest authority sufficient to cover it. It records the request, messages that person, and returns the request ID and who was asked. It does not wait for the answer.",
+        "Records a request for one person's approval of an action on a resource, and notifies the approver it routes to. Returns the request ID and who was notified.",
       inputSchema: object(
         {
-          action: str("The action being escalated, as the refusal named it — for example approve_loan."),
+          action: str("The action the approval would cover — for example approve_loan."),
           resource_id: str("What the action would act on, such as a loan application ID."),
           amount: num("The amount the approval would cover, in US dollars."),
-          justification: str("Why this should be approved. The approver reads it verbatim."),
+          justification: str("The case for the action. The approver reads it verbatim."),
         },
         ["action", "resource_id", "amount", "justification"],
       ),
@@ -247,7 +260,7 @@ function approvalsTools(toolkit: string): ToolSpec[] {
     {
       name: `${toolkit}_Decide`,
       description:
-        "Record an approver's answer to an approval request. It records their answer against the request; it does not decide anything itself.",
+        "Records an approver's answer against an approval request.",
       inputSchema: object(
         {
           request_id: str("The approval request being answered."),

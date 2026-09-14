@@ -161,6 +161,47 @@ describe("the tool list comes from the gateway, per signed-in persona", () => {
     ]);
   });
 
+  /**
+   * `DESIGN.md` → No model-side controls, enforced on the sentence the model
+   * actually receives rather than on the source that produced it.
+   *
+   * The rule bars behavioural instruction in a tool description "in either
+   * direction: nothing about confirming, refusing, escalating, retrying,
+   * caution or irreversibility". Round 1 of #89's review found the approvals
+   * descriptions this slice added saying *"Escalate an action you were refused
+   * authority for ... You do not choose the approver ... It does not wait for
+   * the answer"* — three instructions, defended with the wrong test.
+   *
+   * It is worth a test rather than a correction because of what #89 measures.
+   * The live 5/5 is the claim that the *hook's* sentence moved the model. A
+   * description that had already told it to escalate after a refusal would have
+   * been steering the very result the measurement exists to prove.
+   *
+   * Read through `sessionTools`, so what is checked is what a real `tools/list`
+   * put in front of the model, not a string in a file that may not reach it.
+   *
+   * Scoped to the approvals toolkit: the loan descriptions carry "there is no
+   * undo", which is open as #90 and is not this slice's to change. When #90
+   * lands, widen this to every tool the gateway advertises.
+   */
+  test("the approvals descriptions instruct the model in nothing", async () => {
+    const result = await sessionTools(sessionFor(DANA), { config: harness.config });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const approvals = result.tools.filter((tool) => tool.name.startsWith("Approvals_"));
+    // Both of them, so a toolkit that silently stopped being advertised cannot
+    // pass this by having nothing to check.
+    expect(approvals).toHaveLength(2);
+
+    const barred =
+      /\b(escalat\w*|refus\w*|retry|retrying|confirm\w*|caution\w*|irreversib\w*|no undo|you (?:should|must|do not|can)|only then|and stop|wait for)\b/i;
+    for (const tool of approvals) {
+      expect(tool.description.length).toBeGreaterThan(0);
+      expect(tool.description).not.toMatch(barred);
+    }
+  });
+
   test("as Dana, the same call lists it", async () => {
     const result = await sessionTools(sessionFor(DANA), { config: harness.config });
 
