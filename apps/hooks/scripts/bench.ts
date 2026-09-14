@@ -36,6 +36,7 @@ const server = createServer({
     policyPollMs: 250,
     grantTtlSeconds: 900,
     injectionDetection: "armed",
+    resetToken: "",
   },
   db,
   cache,

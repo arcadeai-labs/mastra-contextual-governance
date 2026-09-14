@@ -55,6 +55,13 @@ import {
 import type { OutputRule, Subject } from "@cg/policy-schema";
 
 import type { ScannerSetting } from "./config.ts";
+import {
+  compareToFixture,
+  digestPolicy,
+  driftWarning,
+  type FixtureDrift,
+  type PolicyDigest,
+} from "./fixture-drift.ts";
 import { readPolicy, readRevision } from "./policy-store.ts";
 
 export type CacheState =
@@ -135,6 +142,26 @@ export interface CacheStatus {
    * asking "is the injection strip running?" gets an answer rather than a gap.
    */
   scanners: ScannerStatus;
+  /**
+   * How the four policy tables compare to the fixture shipped in this image
+   * (#106). `null` means row for row identical.
+   *
+   * Recomputed on every reload rather than on every read, which is the same
+   * cadence a policy edit is noticed at: the revision triggers fire on all four
+   * tables, so any change to them reloads, and any change to them is exactly
+   * what could introduce drift. Computed even when the reload *failed* —
+   * "these rows no longer compile" and "these rows are not the fixture's" are
+   * the two halves of #112's outage and a reader needs both.
+   */
+  fixture_drift: FixtureDrift | null;
+  /**
+   * Whether the comparison ran at all. False only for a cache constructed with
+   * no fixture to compare against, which the service never does; `/health`
+   * warns rather than reporting an unchecked `null` as "in sync", because a
+   * drift check that silently does not run is the shape of failure this whole
+   * field exists to answer.
+   */
+  fixture_checked: boolean;
 }
 
 export interface PolicyCache {
@@ -160,6 +187,16 @@ export interface PolicyCacheOptions {
    * forgets it gets the protected policy rather than the control run.
    */
   scanners?: ScannerSetting;
+  /**
+   * The shipped fixture's rows, hashed — `fixtureDigest(config)`. Given, every
+   * reload compares the disk against it and `/health` carries the answer.
+   * Omitted, the comparison does not run and says so (`fixture_checked`).
+   *
+   * Optional because it is data the cache is handed rather than something it
+   * can derive: the fixture's rows depend on the configured toolkit names and
+   * persona emails, which live in `HooksConfig` and not here.
+   */
+  fixture?: PolicyDigest;
 }
 
 export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}): PolicyCache {
@@ -168,12 +205,42 @@ export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}
   const maxPollFailures = options.maxPollFailures ?? 20;
   const setting: ScannerSetting = options.scanners ?? "armed";
 
+  const fixture = options.fixture;
+
   let state: CacheState = { status: "cold" };
   let timer: ReturnType<typeof setInterval> | null = null;
   let lastPollAt: string | null = null;
   let pollFailures = 0;
+  let drift: FixtureDrift | null = null;
+
+  /**
+   * The disk against the shipped fixture, on every reload (#106).
+   *
+   * Runs *before* the policy is parsed, and in its own try: the case it was
+   * built for is the one where parsing throws. On 2026-09-14 the live disk
+   * held a rule whose remediation text #89's compiler refuses, and the
+   * question a human needed answered — "are these the fixture's rows or
+   * somebody's stage edit?" — is the question that decides whether reseeding
+   * is safe. Answering it only when the policy is healthy would answer it in
+   * exactly the case nobody has to ask.
+   *
+   * A throw here is reported as drift-unknown rather than as a policy failure:
+   * the compared rows are not the policy in memory, and a comparison that
+   * cannot run must not be the thing that takes hooks down.
+   */
+  const checkDrift = (): void => {
+    if (fixture === undefined) return;
+    try {
+      drift = compareToFixture(digestPolicy(db), fixture);
+      if (drift !== null) log(`FIXTURE DRIFT: ${driftWarning(drift)}`);
+    } catch (cause) {
+      drift = null;
+      log(`fixture drift check failed (policy unaffected): ${String(cause)}`);
+    }
+  };
 
   const reload = (): CacheState => {
+    checkDrift();
     let revision: number | null = null;
     try {
       const snapshot = readPolicy(db);
@@ -284,6 +351,8 @@ export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}
     poll_ms: pollMs,
     last_poll_at: lastPollAt,
     consecutive_poll_failures: pollFailures,
+    fixture_drift: drift,
+    fixture_checked: fixture !== undefined,
   });
 
   return { current: () => state, start, stop, reload, poll, status };

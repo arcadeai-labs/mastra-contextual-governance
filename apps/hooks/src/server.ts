@@ -45,7 +45,7 @@ import { APPROVALS_PREFIX, handleApprovals } from "./approvals-api.ts";
 import { pendingCount } from "./approvals-store.ts";
 import { AUDIT_PATH, handleAudit } from "./audit-api.ts";
 import { count as auditCount, newEventId, record } from "./audit-log.ts";
-import type { HooksConfig } from "./config.ts";
+import { resetEnabled, type HooksConfig } from "./config.ts";
 import { withCorrelation } from "./correlation.ts";
 import { EVENTS_PATH, handleEvents, preflight } from "./events.ts";
 import {
@@ -56,8 +56,10 @@ import {
   type HandlerContext,
   type Outcome,
 } from "./handlers.ts";
+import { driftWarning } from "./fixture-drift.ts";
 import type { PolicyCache } from "./policy-cache.ts";
-import { counts } from "./policy-store.ts";
+import { counts, type Seed } from "./policy-store.ts";
+import { handleReset, RESET_PATH } from "./reset-api.ts";
 
 export const SERVICE = "hooks";
 
@@ -82,6 +84,12 @@ export interface ServerDeps {
   streamKeepAliveMs?: number;
   /** Overridden in tests to reach the stream's backlog and replay cap cheaply. */
   streamBacklogLimit?: number;
+  /**
+   * The fixture compiled into this image, for `POST /admin/reset` (#106).
+   * Without it the endpoint is not mounted, exactly as an unset `RESET_TOKEN`
+   * leaves it unmounted — there is nothing to reset *from*.
+   */
+  seed?: Seed;
 }
 
 type HookPath = (typeof HOOK_ENDPOINT_PATHS)[keyof typeof HOOK_ENDPOINT_PATHS];
@@ -298,12 +306,51 @@ export function createServer(deps: ServerDeps) {
     return response;
   };
 
+  /** Whether `POST /admin/reset` exists on this deployment, and why not. */
+  const resetAvailable = resetEnabled(config) && deps.seed !== undefined;
+
+  /**
+   * **HTTP 200, always** (#112).
+   *
+   * This endpoint used to answer 503 while the policy failed to compile, which
+   * read correctly as "the control plane is unhealthy" and worked out badly:
+   * `render.yaml` points `healthCheckPath` here, so on 2026-09-14 a stale rule
+   * that #89's guard refuses took cg-hooks out of rotation and Render served
+   * its own 502 page over the top. The control plane was not failing closed,
+   * it was unreachable — Arcade reported "tool access policy service could not
+   * be reached", the panel went dark, and the one-off fix could not even be
+   * verified over HTTP.
+   *
+   * So readiness here means "the process is up and can tell you what is
+   * wrong", which is DESIGN.md's Readiness decision for every service in this
+   * repo and the one thing cg-hooks did not do. The refusal lives where it
+   * belongs: `/access`, `/pre` and `/post` keep failing closed on exactly the
+   * same condition, and `status`, `policy.status`, `policy.error` and
+   * `warnings` say so in the body a human can now actually read.
+   */
   const health = (): Response => {
     const policy = cache.status();
+    const drift = policy.fixture_drift;
+    const warnings = [
+      ...(policy.scanners.warning === null ? [] : [policy.scanners.warning]),
+      ...(policy.status === "ready"
+        ? []
+        : [
+            `the policy is ${policy.status} and every /access, /pre and /post call is being ` +
+              `refused${policy.error === null ? "" : `: ${policy.error}`}`,
+          ]),
+      ...(drift === null ? [] : [driftWarning(drift)]),
+      ...(policy.fixture_checked
+        ? []
+        : ["the on-disk policy was never compared to the shipped fixture, so drift is unknown"]),
+    ];
     const body = {
-      // The generated HealthResponse vocabulary, so Arcade's periodic check
-      // reads it; the rest is ours, for a human at the terminal.
-      status: policy.status === "ready" ? "healthy" : "unhealthy",
+      // `healthy` or `degraded`, both at 200 — `unhealthy` is gone, because
+      // the only thing that ever set it is the case this endpoint now exists
+      // to report rather than to disappear over. Both spellings are in the
+      // generated HealthResponse vocabulary, so Arcade's periodic check still
+      // reads it.
+      status: policy.status === "ready" && drift === null ? "healthy" : "degraded",
       service: SERVICE,
       hook_contract: HOOK_CONTRACT_VERSION,
       policy,
@@ -313,7 +360,17 @@ export function createServer(deps: ServerDeps) {
       // reader what is switched off. The warning is what makes it impossible
       // to boot with the scanners off and nobody the wiser.
       injection_detection: policy.scanners,
-      warnings: policy.scanners.warning === null ? [] : [policy.scanners.warning],
+      // The four policy tables against the fixture in this image (#106), by
+      // rule id. `null` is "the same policy, row for row". Anything else is
+      // either a stage edit that is meant to survive a deploy or a fixture
+      // change that never reached this disk, and the two are indistinguishable
+      // from here — which is why this field names the rows instead of judging
+      // them.
+      fixture_drift: drift,
+      // Named even when it is off, so the 404 a presenter gets from the Reset
+      // button has somewhere to be explained.
+      reset: resetAvailable ? "enabled" : "disabled",
+      warnings,
       counts: counts(db),
       pending_approvals: pendingCount(db),
       audit_rows: auditCount(db),
@@ -322,7 +379,7 @@ export function createServer(deps: ServerDeps) {
       stream_clients: bus?.subscribers ?? 0,
       failure_mode: "fail-closed",
     };
-    return json(body, policy.status === "ready" ? 200 : 503);
+    return json(body);
   };
 
   return Bun.serve({
@@ -334,6 +391,18 @@ export function createServer(deps: ServerDeps) {
 
       if (pathname === HOOK_ENDPOINT_PATHS.healthCheck) {
         return request.method === "GET" ? health() : json({ error: "Method not allowed" }, 405);
+      }
+
+      if (pathname === RESET_PATH) {
+        // Unset token, or no fixture to reset from: the route does not exist.
+        // A 404 and not a 403, so an unconfigured deployment is
+        // indistinguishable from one that never had the endpoint — see the
+        // header comment in `reset-api.ts`. /health says `reset: "disabled"`,
+        // which is where the explanation lives.
+        const seed = deps.seed;
+        if (!resetAvailable || seed === undefined) return json({ error: "Not found" }, 404);
+        if (!bearerIs(request, config.resetToken)) return json({ error: "Unauthorized" }, 401);
+        return handleReset(request, url, { db, cache, seed, log });
       }
 
       if (pathname === APPROVALS_PREFIX || pathname.startsWith(`${APPROVALS_PREFIX}/`)) {

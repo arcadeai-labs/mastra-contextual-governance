@@ -14,6 +14,8 @@
  * design review, which is a fair reading: nobody at the back of a room reads a
  * footnote, and the space it took belonged to the lanes.
  */
+import type { ReactNode } from "react";
+
 import type { GovernanceEvent } from "@cg/policy-schema";
 
 import { correlate, isCorrelated, type CorrelationKey } from "../../lib/governance/correlation.ts";
@@ -43,6 +45,20 @@ export interface ControlPlanePanelViewProps {
    * highlight, which is the normal state.
    */
   readonly correlationKey?: CorrelationKey | undefined;
+  /**
+   * The control plane's own health, above the lanes (#106). A slot rather than
+   * something this component fetches, for the reason everything else here is
+   * data: the whole value of this file is that a denial showing its rule, a
+   * removed value never reaching the markup and three states being
+   * distinguishable without colour are all assertable without a socket. The
+   * strip polls, so it is handed down as an element by the component that
+   * already owns a subscription.
+   *
+   * Absent on a fixture replay, and that is the point rather than an
+   * omission: a replay has no control plane behind it, and a health strip over
+   * one would be describing a service these lanes are not watching (#81).
+   */
+  readonly controlPlane?: ReactNode;
 }
 
 export function ControlPlanePanelView({
@@ -50,6 +66,7 @@ export function ControlPlanePanelView({
   status,
   source,
   correlationKey,
+  controlPlane,
 }: ControlPlanePanelViewProps) {
   const correlated: GovernanceEvent[] =
     correlationKey === undefined ? [] : correlate(allEvents(timeline), correlationKey);
@@ -65,6 +82,8 @@ export function ControlPlanePanelView({
           <span>{CONNECTION[status]}</span>
         </div>
       </header>
+
+      {controlPlane}
 
       <div className="cg-tally">
         {DECISION_ORDER.map((decision) => (

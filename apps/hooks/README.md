@@ -9,7 +9,8 @@ POST /pre      may this user make this call         → { code: OK | CHECK_FAILE
 POST /post     what the model may read of the result → { code: OK, override?: { output } }
 GET  /audit    the audit log, filtered              → { rows, count, total, limit, filters }
 GET  /events   the live governance stream, plus `event: approval` (#20) → text/event-stream (no auth)
-GET  /health   policy revision, row counts, 503 while failing closed   (no auth)
+GET  /health   policy revision, row counts, fixture drift — always 200      (no auth)
+POST /admin/reset  put the policy, or the whole demo, back to the fixture (bearer RESET_TOKEN)
 
 GET  /approvals/roster        every subject, so routing can show who was not asked
 POST /approvals               create an escalation; the store mints the id and the clock
@@ -171,7 +172,8 @@ Six tables you can read at a glance, because one gets edited live on stage:
 
 Seeded from `src/fixtures/governance.json` **only when the database has no schema** (decided on
 #29). On Render it sits on a disk at `/data/governance.db`, so a clearance raised in act 1 is
-still raised in act 3 and after a restart. Resetting is `scripts/reset` (#23), never a redeploy.
+still raised in act 3 and after a restart. Resetting is `POST /admin/reset` (below), never a
+redeploy.
 The schema and the seed rows go in as one transaction, so a seed that fails leaves no schema and
 the next boot retries — rather than a green service with an empty cast, permanently, on a disk
 that persists.
@@ -193,6 +195,98 @@ emails (`PERSONA_<KEY>_EMAIL`, the same four variables `apps/idp` reads, so the 
 cannot disagree about who a persona is). Tool names are PascalCase — `ApproveLoan`, not
 `approve_loan` — because that is what `arcade-mcp` produces (measured, #35). A rule keyed on the
 wrong string is refused at boot by `compilePolicy`; it does not silently match nothing.
+
+## Drift, and getting back to the fixture (#106, #112)
+
+Durable policy has a cost, and 2026-09-14 is the invoice: three manual reseeds and one 502
+outage, to get two fixture changes onto one service.
+
+**Drift.** `governance.db` seeds only when empty, so a fixture change does not reach a disk that
+already has rows. Between #16 and that morning the live control plane served **one** output rule
+and **one** injection pattern while `/health` reported `armed` — a control that looks live and
+matches nothing, which is the failure this whole project argues against, shipped by us.
+
+So the four policy tables are hashed row by row against the fixture compiled into the **running
+image**, on boot and on every cache reload, and the answer is `/health`'s `fixture_drift`:
+
+```json
+"status": "degraded",
+"fixture_drift": {
+  "ids": ["output_rules:post.strip-injected-instructions"],
+  "changed": ["output_rules:post.strip-injected-instructions"],
+  "missing": [], "unexpected": []
+}
+```
+
+It is a **warning, not a revert**. A clearance raised on stage looks exactly like a fixture
+change that never landed, and the first of those is meant to survive a deploy (#29). What is
+fixed is the silence.
+
+**The outage.** `/health` used to answer 503 while the policy failed to compile. `render.yaml`
+health-checks that path, so when #89's compile guard met a disk still holding the dot-spelled
+remediation text, Render marked the instance dead and served its own 502 over a control plane
+that was refusing correctly. Arcade reported *"tool access policy service could not be
+reached"*, the panel went dark, and the reset could not even be verified over HTTP. `/health` is
+**200 whatever it finds** now — readiness is "the process is up and can tell you what is wrong".
+The refusal stayed where it belongs: `/access`, `/pre` and `/post` fail closed on exactly the
+same condition.
+
+**The recovery.** On boot, one narrow rule:
+
+> the policy on disk does not compile **and** the failing rows differ from the fixture in this
+> image → replace the four policy tables from that fixture, loudly.
+
+Both halves are load-bearing. Rows that compile are never touched, so a stage edit survives
+whatever it says. Rows the engine refuses can never be served by anything, so a stage edit among
+them is discarded on purpose — and the log says that in those words. When the failing rows
+*already are* the fixture's, reseeding would write the same bytes back and fail again every
+boot; that case gets a different line saying this build cannot compile its own fixture, because
+sending somebody to run a reset that cannot help is worse than sending them nowhere.
+
+### `POST /admin/reset`
+
+```
+curl -fsS -X POST https://cg-hooks.onrender.com/admin/reset \
+  -H "authorization: Bearer $RESET_TOKEN" \
+  -H "content-type: application/json" -d '{"mode":"policy"}'
+```
+
+| mode | replaces | leaves |
+|---|---|---|
+| `policy` (the endpoint's default) | `subjects`, `catalogue`, `policy_rules`, `output_rules` | grants, approval requests, audit log |
+| `demo` | the above, **and empties** `grants`, `approval_requests`, `audit_log` | nothing of the demo's own state |
+
+One transaction, then an immediate cache reload, so the `revision` in the response is the
+revision being served rather than one that will be shortly.
+
+`policy` is what an omitted `mode` means *on this endpoint* — the narrow, conservative
+one, since a caller that did not say has not asked for the audit log to be emptied. The
+panel's **Reset** button is the other way round and says so every time: it posts `demo`
+explicitly, because a presenter between takes wants the rehearsal reset (#106). The
+panel's narrow control is `Resync policy`, offered by the drift warning and posted on
+a single click — it puts the policy back to what the running image ships, so there is
+nothing to confirm that the warning has not already said.
+
+It is an **endpoint** rather than a script for one reason: the fixture it seeds from is the one
+compiled into the image that is *running*. A `sqlite3` session in a Render shell cannot promise
+that, and on 2026-09-14 two of the three manual reseeds were attached to a rolled-back instance
+and wrote the old text back — so the next deploy failed closed again.
+
+Neither mode touches **`idp.db`** (it holds the OAuth client Arcade is registered against —
+DESIGN.md) or **`loans.db`** (it belongs to `apps/loan-app`, which knows nothing about
+governance and must keep not knowing; approved loans are reset by that service's own endpoint,
+#23). Every response names both, so a presenter is not left believing the loan book moved.
+
+`demo` mode drops the trigger that makes `audit_log` append-only, empties it, and puts the
+trigger back inside the same transaction. That is deliberately awkward: the one code path
+allowed to shorten a compliance log should be impossible to skim past, and it holds a secret of
+its own to do it.
+
+**`RESET_TOKEN` is required and has no development default.** Unset, the route does not exist —
+404, and `/health` reports `reset: "disabled"`. A reset endpoint reachable unauthenticated on a
+public URL is a denial-of-demo button, and one that fails open on a missing variable is the same
+button with a longer fuse. It is a *third* secret: `ARCADE_HOOK_SIGNING_SECRET` cannot press it
+and neither can `APPROVALS_STORE_TOKEN`.
 
 ## The policy is served from memory, and edits still reach it
 
@@ -220,10 +314,10 @@ Three states, one of which serves policy:
   the cache was built to avoid.
 - **ready** — serving the policy at `revision`.
 - **failed** — the last reload failed: a hand-edited row that no longer parses, a rule naming a
-  tool the catalogue does not list. Every hook fails closed, `/health` returns 503 with the
-  compiler's problem list, and the next edit triggers the next attempt. Not "keep serving the
-  last good policy": that would be a policy edit silently not taking effect, which is the failure
-  this design exists to prevent.
+  tool the catalogue does not list. Every hook fails closed, `/health` answers **200** with
+  `status: degraded` and the compiler's problem list, and the next edit triggers the next
+  attempt. Not "keep serving the last good policy": that would be a policy edit silently not
+  taking effect, which is the failure this design exists to prevent.
 
 A *poll* that fails is not a *reload* that fails. A transient error reading one integer says
 nothing about the policy in memory, so the cache keeps serving it and retries next tick; only

@@ -49,6 +49,7 @@ const config: HooksConfig = {
   policyPollMs: 10_000,
   grantTtlSeconds: 900,
   injectionDetection: "armed",
+  resetToken: "",
 };
 
 let db: Database;

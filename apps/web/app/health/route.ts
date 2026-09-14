@@ -35,6 +35,7 @@
  * the guard that belongs to a credential this endpoint does not use.
  */
 import { deploymentReadiness, readIdentitySurface } from "../../lib/config.ts";
+import { resetToken } from "../../lib/governance/control-plane.ts";
 import { panelStreamHealth } from "../../lib/governance/stream-url.ts";
 
 export const dynamic = "force-dynamic";
@@ -54,5 +55,14 @@ export function GET() {
   // that satisfies one half and not the other is `degraded`.
   const status = deployment === "ok" && panel_stream !== "unconfigured" ? "ok" : "degraded";
 
-  return Response.json({ status, service: "web", ...capabilities, panel_stream });
+  // Since #106: whether the panel's Reset control is drawn at all. Reported and
+  // deliberately NOT folded into `status` — a deployment nobody is presenting
+  // from is right to leave `RESET_TOKEN` unset, and calling that degraded would
+  // teach a reader to ignore the word. It is here because the alternative is
+  // the one thing this project keeps refusing: a control that is absent, and no
+  // surface that says so. "The Reset button is missing" then has an answer
+  // other than reading the source.
+  const reset = resetToken() === "" ? "disabled" : "enabled";
+
+  return Response.json({ status, service: "web", ...capabilities, panel_stream, reset });
 }
