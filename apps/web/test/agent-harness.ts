@@ -41,6 +41,8 @@ export const STORE_TOKEN = "store-token-for-agent-tests";
 export const SESSION_SECRET = "agent-suite-session-secret-0123456789";
 export const GATEWAY_ID = "cg-demo-us";
 export const LOAN_TOOLKIT = "Loan";
+/** `tool.toolkit` as Arcade files the deployed approvals toolkit (#35). */
+export const APPROVALS_TOOLKIT = "Approvals";
 
 /** The four, as both fixtures seed them. Lower case — the join key (#58). */
 export const DANA = "dana.okafor@bank.example";
@@ -145,6 +147,22 @@ export interface AgentHarnessOptions {
    * being the real service.
    */
   hooksEnv?: Record<string, string>;
+  /**
+   * Advertise the approvals toolkit as well as the loan one, so the agent can
+   * reach `Approvals_RequestApproval` and `Approvals_Decide` (#20's resume
+   * half). The two tools are real clients of the real `/approvals` endpoints on
+   * this harness's own control plane; only Slack is missing.
+   *
+   * **Opt-in, and it is the wider surface that is the truthful one.** A live
+   * `tools/list` for a signed-in persona carries eight entries — the project's
+   * six plus the gateway's two built-ins (`DESIGN.md` → Tool surface) — and the
+   * agent's allow-list has named both toolkits since #88's review. What is
+   * narrow is this stand-in, and the reason it stays narrow by default is
+   * scope rather than accuracy: act 1's suite (#15) asserts on the exact list a
+   * persona is shown, and widening it from here would be #20 editing #15's
+   * claim about act 1. #89 owns that move.
+   */
+  approvals?: boolean;
 }
 
 export async function startAgentHarness(
@@ -215,6 +233,14 @@ export async function startAgentHarness(
     hookSigningSecret: HOOK_SECRET,
     loanAppHost,
     loanToolkit: LOAN_TOOLKIT,
+    // Off unless a suite asks. See `AgentHarnessOptions.approvals`.
+    ...(options.approvals !== true
+      ? {}
+      : {
+          approvalsToolkit: APPROVALS_TOOLKIT,
+          approvalsStoreToken: STORE_TOKEN,
+          webPublicHost: "localhost:1",
+        }),
     onCall: (call) => calls.push(call),
     onList: (list) => lists.push(list),
   });
