@@ -438,7 +438,7 @@ sync prompts for it rather than committing it.
 | `ARCADE_HOOK_SIGNING_SECRET` **SECRET** | `apps/hooks` | Generate any long random string; enter the same one on the Arcade hook extension (step 6) |
 | `ARCADE_LOAN_TOOLKIT` | `apps/hooks`, `apps/web` | **Read back off a real deploy** (step 3). `Loan`. On hooks it keys the rules; on web it is the agent's allow-list |
 | `ARCADE_APPROVALS_TOOLKIT` | `apps/hooks`, `apps/web` | Same, `Approvals`. Required on `cg-web` too, or the agent cannot see the tool its own denial names (#89) |
-| `ARCADE_IDP_PROVIDER_ID` | `tools/loan` (compiled in) | The Arcade auth provider id from step 4. `cg-idp` |
+| `ARCADE_IDP_PROVIDER_ID` | nobody, at runtime | The Arcade auth provider id from step 4, `cg-idp`. Documented here because the value is **compiled into** `tools/loan/loan/__init__.py`'s auth requirement; changing it means changing that file and redeploying |
 | `ARCADE_MCP_CLIENT_ID` | `apps/web` | Optional. Pins the MCP client id hop 1 authorizes under, so a redeploy does not cost every persona another consent click. Blank is correct to start |
 
 ### Service addresses — HOST-form, not URLs
@@ -448,9 +448,9 @@ is read off the Render service page.** See the warning in step 1.
 
 | Variable | Read by | Where the value comes from |
 |---|---|---|
-| `HOOKS_PUBLIC_HOST` | `apps/web`, `tools/approvals` | `cg-hooks`' Render page. This one reaches the browser via the panel, so a bare service name fails in a visitor's DevTools |
-| `LOAN_APP_PUBLIC_HOST` | `apps/hooks`, `tools/loan` | `cg-loan-app`'s Render page. Reaches the toolkit as an Arcade secret |
-| `IDP_PUBLIC_HOST` | `apps/loan-app` | `cg-idp`'s Render page. Where bearer tokens are validated. Locally, also the port `dev:idp-stub` binds |
+| `HOOKS_PUBLIC_HOST` | `apps/web`, `tools/approvals`, `bun run reset` | `cg-hooks`' Render page. This one reaches the browser via the panel, so a bare service name fails in a visitor's DevTools |
+| `LOAN_APP_PUBLIC_HOST` | `apps/hooks`, `tools/loan`, `bun run reset` | `cg-loan-app`'s Render page. Reaches the toolkit as an Arcade secret |
+| `IDP_PUBLIC_HOST` | `apps/loan-app`, `bun run reset` | `cg-idp`'s Render page. Where bearer tokens are validated. Locally, also the port `dev:idp-stub` binds |
 | `WEB_PUBLIC_HOST` | `tools/approvals` | `cg-web`'s Render page. Builds the approval link. Absent from `render.yaml`: Render injects `RENDER_EXTERNAL_HOSTNAME` |
 | `PUBLIC_URL` | `apps/web` | `cg-web`'s Render page, **with the scheme**. Every OAuth `redirect_uri` is built from it and matched byte for byte. Also decides whether the session cookie carries `Secure` |
 | `IDP_ISSUER` | `apps/web` | `cg-idp`'s Render page, with the scheme |
