@@ -317,20 +317,103 @@ convenience someone adds back later. Keep that test.
 
 ---
 
-## 6. The agent — `apps/web`
+## 6. The agent and the left half — `apps/web`
 
-Three files carry the loan domain, and none of them carries a control:
+`apps/web` is mostly domain-free: the chat, the panel, the approval page and the split
+screen's frame all survive a swap untouched. **Fourteen files do not.** None of them
+carries a control, and they fall into five groups.
+
+### The agent
 
 | | |
 |---|---|
-|  `apps/web/lib/agent/agent.ts` | role, tools, how to resolve a record named by amount, how to report verbatim |
-| `apps/web/app/page.tsx` | the left half of the split screen — the boring enterprise app reading your API through the governed path |
+| `apps/web/lib/agent/agent.ts` | the system prompt: role, tools, how to resolve a record named by amount, how to report verbatim |
 | `apps/web/lib/identity/roster.ts` | email → display name and role, label direction only |
 
 **The system prompt carries no behavioural instruction**, and that is the demo's
-methodology rather than a style preference. If your swapped demo needs a sentence in the
-prompt to reach the hook, the run is proving the prompt. Measured on #14 and again on
-#16; round 1 of #88's review removed exactly such a sentence.
+methodology rather than a style preference. Nothing about confirming, refusing,
+escalating, retrying, caution or irreversibility. If your swapped demo needs a sentence
+in the prompt to reach the hook, the run is proving the prompt. Measured on #14 and
+again on #16; round 1 of #88's review removed exactly such a sentence.
+
+### The reads behind the left half (#109)
+
+These are the files that decide *what the boring enterprise app puts on screen*, and
+they are the ones a forker is most likely to miss — the guide missed them until round 2
+of this PR's review.
+
+| | |
+|---|---|
+| `apps/web/lib/loan-context/loans.ts` | the records the left half shows, by id — `DEMO_LOAN_IDS = ["LN-2291", "LN-2299"]` — and the field types one read comes back as |
+| `apps/web/lib/loan-context/read.ts` | runs two `Loan_GetLoan` calls on an already-open gateway session. Rename the tool, keep the shape |
+| `apps/web/lib/home/surface.ts` | one gateway session per page load, answering both of `/`'s questions: the persona's tool list (act 1) and those reads |
+| `apps/web/app/page.tsx` | `/` itself — the server component that calls `apps/web/lib/home/surface.ts` and hands the result to the split screen |
+
+> ⚠️ **Do not replace these with a database read.** Opening your own database, or calling
+> your API with a service credential, is faster and makes the screen a liar. The claim
+> this demo makes is that *every* read of the system of record passes the control plane,
+> keyed on who is asking — so the left half goes through an MCP client of the gateway
+> with the signed-in person's bearer, exactly like the agent, and shows up in the audit
+> log like any other call. With `/post` redaction live, a pane that reached past the
+> hooks would show an unmasked account number inches from a panel asserting there is only
+> one path to the data.
+
+### The bank pane
+
+The whole directory is yours to replace: `apps/web/components/bank/`.
+
+| | |
+|---|---|
+| `apps/web/components/bank/BankPane.tsx` | the left half's chrome — tabs, navy bar, a release number nobody has bumped since 2009 |
+| `apps/web/components/bank/LoanFiles.tsx` | the list of records under review |
+| `apps/web/components/bank/LoanFileCard.tsx` | one record: every field name and every label |
+| `apps/web/components/bank/format.ts` | currency, dates, the masked-field rendering |
+| `apps/web/components/bank/bank.css` | the deliberately dull styling |
+| `apps/web/components/bank/ToolListSlot.tsx` | where act 1's tool list sits inside the pane |
+
+**Keep it ugly.** Square corners, hairline rules, uppercase field labels, four tabs that
+go nowhere. A beautiful left half quietly undoes the argument: it makes the governed
+system look like part of the same product as the thing governing it.
+
+### Two files that are renames rather than replacements
+
+| | |
+|---|---|
+| `apps/web/components/shell/SplitScreen.tsx` | generic frame; carries a `loanFiles` prop typed from `apps/web/lib/loan-context/loans.ts`. Rename the prop, keep the component |
+| `apps/web/lib/governance/access-fanout.ts` | the panel's **fixture replay** — pins the measured access-row fanout using `Loan.GetLoan` and `Loan.ApproveLoan` as sample tool names. Not a live path; update it or leave it as a replay of somebody else's demo |
+
+### Six user-visible strings, in files you otherwise keep
+
+Not seams — one line each, in a file whose logic is entirely generic. They are on this
+list because a heading reading "Loan operations" above somebody else's demo is exactly
+the leftover this guide exists to prevent.
+
+| | |
+|---|---|
+| `apps/web/app/chat/page.tsx` | the page heading, `Loan operations` |
+| `apps/web/components/chat/Chat.tsx` | the placeholder prompt (`Approve the loan for $95K…`) and a denial caption naming the loan book |
+| `apps/web/components/governance/ControlPlaneStatus.tsx` | the Reset confirmation, which names `loans.db` |
+| `apps/web/lib/governance/control-plane.ts` | the Reset result sentence |
+
+`apps/web/lib/agent/handlers.ts` and `apps/web/lib/config.ts` also match, but only on the
+variable name `ARCADE_LOAN_TOOLKIT` — that is §7's configuration seam, not a string to
+edit here.
+
+### The sweep, so you can repeat it
+
+```sh
+grep -ril loan apps/web/lib apps/web/components apps/web/app
+```
+
+**38 files on `a70be04`.** Thirteen of the fourteen named above are in that list
+(`apps/web/lib/identity/roster.ts` is the exception — it carries roles, not loans). Of the
+remaining **25**, six are the strings above and `ARCADE_LOAN_TOOLKIT`'s two readers, and
+**18 have zero non-comment matches** — every occurrence is explanatory prose in a
+docblock.
+
+Run the same sweep against your own vocabulary once the swap is done. Anything still
+holding the old domain is a file this list did not know about, and that is a finding
+worth an issue rather than a quiet edit.
 
 ---
 

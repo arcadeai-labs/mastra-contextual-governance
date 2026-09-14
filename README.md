@@ -308,25 +308,48 @@ without them the second client does not exist.
 | `IDP_OAUTH_CLIENTS` | `web` — the `arcade` client is always present whether or not you name it (`apps/idp/src/config.ts`, `PRIMARY_CLIENT_KEY`), so `arcade,web` is the same thing said longer |
 | `IDP_OAUTH_REDIRECT_URIS_WEB` | `${PUBLIC_URL}/api/auth/callback` — `cg-web`'s, byte for byte. Without it this client falls back to Arcade's callback, which is not `cg-web`'s |
 
-Then, once in `cg-idp`'s Render shell:
+**The service creates both clients on its next boot, and you will never see those
+secrets.** Storage is hashed (#70), so the secret exists for the microsecond it is
+written and is gone. `cg-idp`'s own boot log says so:
 
-```sh
-bun run oauth-client          # prints BOTH clients, each with its secret, exactly once
+```
+[idp] OAuth client secret (arcade): created on this boot and never disclosed
+      — run `bun run oauth-client --rotate` to mint one you can read
 ```
 
-Skip the variables and the script refuses rather than guessing — `bun run oauth-client
---client web` exits **2** with `[idp] --client web: not configured. IDP_OAUTH_CLIENTS
-names arcade.`, which is the whole failure mode: a `web` client that was never created
-is one `cg-web` cannot sign anybody in with.
-
-⚠️ **The secret is printed exactly once** — storage is hashed since #70. Write both down
-then. If one is lost, mint a new secret for that client alone under the same client id:
+So the last step is **one `--rotate` per client**, in `cg-idp`'s Render shell. Each one
+mints a fresh secret under the **same client id** and prints it once:
 
 ```sh
-bun run oauth-client --client web --rotate
+bun run oauth-client --client arcade --rotate   # → paste into the Arcade dashboard now
+bun run oauth-client --client web    --rotate   # → paste into cg-web's IDP_CLIENT_SECRET now
 ```
 
-One `--rotate` and one dashboard field, never a re-registration.
+Paste each value where it goes **before you run the next command**. There is no second
+chance to read it, and nothing anywhere holds the boot-created secret you are replacing,
+so rotating here costs nothing.
+
+Three ways this goes wrong, each with the message you will actually see:
+
+| what you do | what happens |
+|---|---|
+| `bun run oauth-client` with no `--rotate` | exits 0 and prints `client_secret (not shown) — the stored secret is hashed and cannot be printed again` for every client. The ids are real; the secrets are not there |
+| `bun run oauth-client --rotate`, no `--client` | refuses: `--rotate needs --client when more than one client is configured: arcade, web. Rotating costs one field in one Arcade registration, and this script will not choose which.` |
+| skipping `IDP_OAUTH_CLIENTS` above | `bun run oauth-client --client web` exits **2** with `--client web: not configured. IDP_OAUTH_CLIENTS names arcade.` A `web` client that was never created is one `cg-web` cannot sign anybody in with |
+
+`GET /health` reports what the service saw at **its own boot**, without printing anything
+secret, under `oauth.client_secret_state` and per client in `oauth.clients[]`. A rotate
+run from the shell does not move it, because the service did not restart:
+
+| value | means |
+|---|---|
+| `created` | the row was created on this boot; the secret was never disclosed |
+| `unchanged` | the row already existed, hashed. The ordinary steady state |
+| `migrated` | re-hashed in place from the pre-#70 encrypted form. **Client id and secret unchanged** — the Arcade registration is still valid |
+| `rotated` | ⚠️ **not a success.** The pre-#70 secret could not be decrypted with this `BETTER_AUTH_SECRET`, so it was replaced. The Arcade registration is now stale and must be redone — `docs/RUNBOOK.md` §1.1 is the recovery |
+
+A lost secret later is the same command again: one `--rotate`, one dashboard field, and
+never a re-registration, because the client id does not move.
 
 ### 3. `arcade deploy` both toolkits
 
