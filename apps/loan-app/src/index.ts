@@ -7,6 +7,7 @@
  *     POST /loans/:loan_id/approve   { amount }
  *     POST /loans/:loan_id/deny      { reason }
  *     GET  /health
+ *     POST /admin/reset              the seeded book back (bearer RESET_TOKEN)
  *
  * It looks like a bank's internal loan origination API and knows nothing
  * about governance: it does not check authority, withhold fields, or consult
@@ -27,11 +28,16 @@ import { z } from "zod";
 import { ActorError, actorFromRequest } from "./actor.ts";
 import { countLoans, getLoan, openLoanBook, recordDecision, searchLoans } from "./db.ts";
 import { orExitConfig, publicHost } from "./public-host.ts";
+import { bearerIs, handleReset, RESET_PATH } from "./reset.ts";
 
 const SERVICE = "loan-app";
 
 const port = Number(process.env.PORT ?? 8082);
 const dbPath = process.env.LOANS_DB_PATH ?? "./loans.db";
+// Blank is a state, not a default: with no value the reset route does not
+// exist at all and /health says so. There is no development fallback, because
+// a published one would be the same as no bearer. See `reset.ts`.
+const resetToken = process.env.RESET_TOKEN?.trim() ?? "";
 // Before the database is opened and before the port is bound: an address this
 // service cannot possibly reach is a startup failure, not a 503 on the first
 // call. See `public-host.ts` for what Render's `fromService` actually emitted.
@@ -139,7 +145,22 @@ const server = Bun.serve({
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return Response.json({ status: "ok", service: SERVICE, loans: countLoans(db) });
+      return Response.json({
+        status: "ok",
+        service: SERVICE,
+        loans: countLoans(db),
+        // Named even when it is off, so a 404 from POST /admin/reset has
+        // somewhere to be explained rather than looking like a typo.
+        reset: resetToken.length > 0 ? "enabled" : "disabled",
+      });
+    }
+
+    if (url.pathname === RESET_PATH) {
+      // A 404 and not a 403 when unset, so a deployment that never configured
+      // this is indistinguishable from one that never had the route.
+      if (resetToken.length === 0) return error(404, "Not found");
+      if (!bearerIs(request, resetToken)) return error(401, "Unauthorized");
+      return handleReset(request, db);
     }
 
     if (url.pathname === "/loans" || url.pathname.startsWith("/loans/")) {
@@ -158,4 +179,9 @@ const server = Bun.serve({
 console.log(
   `[${SERVICE}] listening on :${server.port} — ${countLoans(db)} loans in ${dbPath}, ` +
     `tokens validated against ${idpHost}`,
+);
+console.log(
+  resetToken.length > 0
+    ? `[${SERVICE}] POST ${RESET_PATH} is enabled (bearer RESET_TOKEN)`
+    : `[${SERVICE}] POST ${RESET_PATH} is disabled: RESET_TOKEN is unset, so the route answers 404`,
 );

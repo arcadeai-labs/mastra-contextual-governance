@@ -446,7 +446,7 @@ the mark belongs to the replay, every row above it is already queued, and the tw
 disjoint. "Exactly the missed rows, in order, nothing duplicated" is a property of that
 construction rather than of the timing.
 
-An id the log cannot place — a panel left open across a `scripts/reset`, a stale tab — is
+An id the log cannot place — a panel left open across a `bun run reset`, a stale tab — is
 not an error and does not replay the whole log. The stream says so in a comment, names the
 `seq` it is resuming from and how to ask for everything, and goes live.
 
@@ -842,7 +842,7 @@ boot log says so, naming the count and the reset:
 
 Three things follow, and the third is the one that bites:
 
-- Getting back under the bound is `scripts/reset` (#23), the same deliberate act that resets
+- Getting back under the bound is `bun run reset` (#23), the same deliberate act that resets
   everything else. There is no truncation endpoint and no rolling window; either would let
   the log lose decisions without anybody deciding that it should.
 - `/health` reports `audit_rows`, so headroom is one unauthenticated `curl` away.
@@ -861,7 +861,7 @@ schema or on the panel should imply otherwise.
 
 ## Not here
 
-- Reset — #23.
+- Reset — #23, `docs/RUNBOOK.md`.
 - The other half of #20: the agent ending its turn after `request_approval`, and an
   `approval.granted` event resuming it. That needs #19 (grants) and #14 (the agent) and
   lands as a second PR against the same issue. This half is the stream.

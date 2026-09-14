@@ -5,15 +5,19 @@
  *
  * Better Auth serves the OAuth 2.1 endpoints; this file serves the two pages
  * the plugin redirects to (login and consent), turns their HTML form posts into
- * the JSON calls Better Auth expects, and answers `/health`. Nothing here knows
- * what a loan is or who is allowed to do what.
+ * the JSON calls Better Auth expects, and answers `/health` and
+ * `POST /admin/reset`. Nothing here knows what a loan is or who is allowed to
+ * do what.
  */
+import { createHash, timingSafeEqual } from "node:crypto";
+
 import { authorizationCodeId, codeState, type CodeState } from "./authorization-code.ts";
 import { createAuth, CONSENT_PAGE, ID_TOKEN_ALG, JWKS_PATH, LOGIN_PAGE } from "./auth.ts";
 import { CLIENT_SECRET_STATE_MESSAGE, ensureOAuthClients, findClientName } from "./client.ts";
-import { readConfig, usingDevSecret } from "./config.ts";
+import { readConfig, resetEnabled, usingDevSecret } from "./config.ts";
 import { countPeople, openPeople } from "./db.ts";
 import { renderConsentPage, renderLoginPage, renderMessagePage } from "./pages.ts";
+import { OAuthClientRotatedError, RESET_PATH, resetSummary, runIdpReset } from "./reset.ts";
 
 const SERVICE = "idp";
 const config = readConfig();
@@ -467,6 +471,63 @@ async function logTokenFailure(
   }
 }
 
+/**
+ * Constant-time bearer check. Both sides are hashed first so the comparison
+ * gets two equal-length buffers whatever was presented.
+ */
+function bearerIs(request: Request, expected: string): boolean {
+  const header = request.headers.get("authorization") ?? "";
+  const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+  const digest = (value: string) => createHash("sha256").update(value).digest();
+  return token.length > 0 && timingSafeEqual(digest(token), digest(expected));
+}
+
+/**
+ * `POST /admin/reset` (#23) — the same work `scripts/reset.ts` does, for a
+ * caller with no shell on this service.
+ *
+ * A rotated OAuth client is a **500**, not a 200 with a warning in the body.
+ * The whole reason this endpoint asserts at all is that the failure it guards
+ * against is silent everywhere else: Arcade would go on holding a dead client
+ * id and the next authorize would fail before any hook ran. `bun run reset`
+ * exits non-zero on a non-2xx, so the one thing a presenter must not miss is
+ * the one thing that stops the command.
+ *
+ * The response names what was **not** reset for the same reason the other two
+ * services do: a presenter who reset one and assumed the rest followed is
+ * about to go on stage with half a demo.
+ */
+async function handleReset(): Promise<Response> {
+  try {
+    const result = await runIdpReset({
+      db,
+      auth,
+      clients: config.clients,
+      secret: config.secret,
+    });
+    console.log(`[${SERVICE}] ${resetSummary(config.dbPath, result)}`);
+    return Response.json({
+      service: SERVICE,
+      reset: "idp.db",
+      ...result,
+      not_reset: {
+        oauthClient:
+          "untouched, and asserted unchanged on both sides of the reset — it is the client id and secret Arcade is registered against",
+        jwks: "untouched — new signing keys would be rejected by anything holding the old key set",
+        other_services:
+          "nothing outside this database: every other service resets its own through its own endpoint, and `bun run reset` at the repo root calls all of them in order",
+      },
+    });
+  } catch (cause) {
+    if (!(cause instanceof OAuthClientRotatedError)) throw cause;
+    console.error(`[${SERVICE}] ${cause.message}`);
+    return Response.json(
+      { service: SERVICE, error: cause.message, oauth_client_rotated: cause.rotations },
+      { status: 500 },
+    );
+  }
+}
+
 const server = Bun.serve({
   port: config.port,
   idleTimeout: 60,
@@ -517,10 +578,28 @@ const server = Bun.serve({
           // What the token endpoint does with Arcade's duplicated credentials
           // (#79). Stated because it is a deviation from RFC 6749 §2.3 and a
           // reviewer should not have to read the source to find its bounds.
-          duplicate_client_credentials:
+            duplicate_client_credentials:
             "accepted when the Authorization: Basic pair and the body client_id/client_secret pair are identical; refused invalid_request when they differ",
         },
+        // Named even when it is off, so the 404 `bun run reset` gets has
+        // somewhere to be explained (#23).
+        reset: resetEnabled(config) ? "enabled" : "disabled",
       });
+    }
+
+    if (pathname === RESET_PATH) {
+      // Unset token: the route does not exist. A 404 and not a 403, so an
+      // unconfigured deployment is indistinguishable from one that never had
+      // the endpoint; /health says `reset: "disabled"`, which is where the
+      // explanation lives.
+      if (!resetEnabled(config)) return Response.json({ error: "Not found" }, { status: 404 });
+      if (!bearerIs(request, config.resetToken)) {
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      }
+      if (request.method !== "POST") {
+        return Response.json({ error: "Method not allowed" }, { status: 405 });
+      }
+      return handleReset();
     }
 
     if (pathname === LOGIN_PAGE) {
@@ -620,6 +699,12 @@ console.log(
     `${clients.map((each) => `${each.clientId} (${each.key}, ${each.created ? "created" : "existing"})`).join(", ")}, ` +
     `JWKS ${config.baseURL}${JWKS_PATH} (${ID_TOKEN_ALG})` +
     (usingDevSecret(config) ? " — using the development secret" : ""),
+);
+
+console.log(
+  resetEnabled(config)
+    ? `[${SERVICE}] POST ${RESET_PATH} is enabled (bearer RESET_TOKEN)`
+    : `[${SERVICE}] POST ${RESET_PATH} is disabled: RESET_TOKEN is unset, so the route answers 404`,
 );
 
 // Its own line, and on stderr when it is the one that costs a human something,
