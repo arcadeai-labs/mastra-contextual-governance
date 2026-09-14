@@ -304,8 +304,13 @@ export function EventView({ event }: { event: ChatEvent }) {
         <div style={pending} data-kind="authorization">
           <strong style={label}>{event.tool} — authorization needed</strong>
           <p style={{ margin: "0.4em 0 0" }}>
+            {/* "Authorize", not "authorize this tool": since #94 the same event
+                also carries hop 1, where the thing to authorize is the gateway
+                and not a tool — `url` is this service's own `/api/arcade/start`
+                rather than Arcade's `authorization_url`. The heading already
+                names which. */}
             <a href={event.url} target="_blank" rel="noreferrer">
-              Authorize this tool
+              Authorize
             </a>
             , then ask again.
           </p>

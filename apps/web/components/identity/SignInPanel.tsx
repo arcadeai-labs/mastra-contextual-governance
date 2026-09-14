@@ -165,9 +165,19 @@ export function SignInPanel({ session, problems }: SignInPanelProps) {
           <dd style={{ margin: 0 }}>
             {/* Never the token, and never a prefix of it. Whether one is held and
                 when it expires is everything anyone needs to see; the value is a
-                bearer for the whole gateway. */}
+                bearer for the whole gateway.
+
+                Three states, not two (#94). "none" and "rejected" are the same
+                absence and a different problem: the first is a hop nobody has
+                run, the second is a hop that ran and whose result the gateway
+                has since refused. Live on 2026-09-14 they were one word, and the
+                person reading it went looking for a missing toolkit. */}
             {session?.gateway ? (
               <>held, expires {new Date(session.gateway.expires_at).toISOString()}</>
+            ) : session?.gateway_rejected_at ? (
+              <span style={{ color: "#8a6100" }}>
+                rejected at {new Date(session.gateway_rejected_at).toISOString()} — authorize again
+              </span>
             ) : (
               <span style={{ color: "var(--muted)" }}>none</span>
             )}

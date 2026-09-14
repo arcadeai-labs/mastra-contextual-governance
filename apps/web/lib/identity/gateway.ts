@@ -63,6 +63,21 @@ export function mcpUrl(arcadeApiUrl: string, gatewayId: string): string {
 }
 
 /**
+ * The JSON-RPC `initialize` every probe in this file sends.
+ *
+ * One body, two callers. `discoverGateway` sends it with no bearer to be told
+ * where the resource metadata lives; `probeGatewayToken` sends it *with* one to
+ * find out whether the gateway still takes it. Sharing the body is what makes
+ * the two requests differ in exactly one header — the one under test.
+ */
+const INITIALIZE = JSON.stringify({
+  jsonrpc: "2.0",
+  id: 1,
+  method: "initialize",
+  params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cg-web", version: "0.1.0" } },
+});
+
+/**
  * Discovery, as the 401 drives it.
  *
  * The unauthenticated `initialize` is not a formality — it is where the
@@ -73,12 +88,7 @@ export async function discoverGateway(url: string): Promise<GatewayMetadata> {
   const probe = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cg-web", version: "0.1.0" } },
-    }),
+    body: INITIALIZE,
   });
   if (probe.status !== 401) {
     throw new Error(`${url} answered ${probe.status} to an unauthenticated initialize, expected 401`);
@@ -100,6 +110,81 @@ export async function discoverGateway(url: string): Promise<GatewayMetadata> {
     throw new Error(`${metadataUrl} did not publish the three endpoints hop 1 needs`);
   }
   return metadata as GatewayMetadata;
+}
+
+/**
+ * What the gateway says about one bearer.
+ *
+ * `rejected` is a decision the gateway made about the credential and has a fix a
+ * person can carry out. `unreachable` is everything else and has not. Keeping
+ * them apart is the whole point — see `probeGatewayToken`.
+ */
+export type GatewayTokenProbe =
+  | { outcome: "accepted"; status: number }
+  | { outcome: "rejected"; status: number }
+  | { outcome: "unreachable"; detail: string };
+
+/**
+ * Ask the gateway, in one request, whether it still accepts this browser's
+ * bearer.
+ *
+ * **Why this exists.** Measured on #94 against `@mastra/mcp` 1.17.3: a gateway
+ * that refuses the bearer does not make `listToolsets()` throw. It *resolves*,
+ * with an empty toolset, because Mastra logs the connection failure per server
+ * and hands back whatever connected. So a rejected token and a gateway carrying
+ * none of our toolkits arrive as the same value — `{}` — and #94's live failure
+ * is the second message being printed for the first cause, on stage, with a link
+ * to nothing in it.
+ *
+ * **Why a raw `initialize` rather than `MCPClient.getServerAuthState()`.** The
+ * client does expose that state, and it is right when the 401 surfaces as the
+ * SDK's `UnauthorizedError`: measured on #94, a stub answering 401 to the
+ * streamable POST leaves `getServerAuthState("arcade") === "needs-auth"`. But it
+ * is `undefined` whenever the POST fails any other way and the client falls back
+ * to SSE — measured with a stub answering 405, which reproduces the live cg-web
+ * log line for line, down to *"Could not connect to server with any available
+ * HTTP transport"*. A control whose answer depends on which error class a
+ * dependency happened to raise is a control that stops answering without saying
+ * so. An HTTP status code is the gateway's own word about the credential and it
+ * is the same number in both shapes.
+ *
+ * The token goes out on the wire and comes back as a number. It is never
+ * returned, logged or put in a message.
+ *
+ * One `initialize` with no `notifications/initialized` after it leaves a session
+ * the gateway will expire on its own; that is the price of one round trip per
+ * turn, and it is paid on the turn rather than on stage.
+ */
+export async function probeGatewayToken(
+  url: string,
+  token: string,
+  timeoutMs = 10_000,
+): Promise<GatewayTokenProbe> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+      },
+      body: INITIALIZE,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (cause) {
+    return { outcome: "unreachable", detail: cause instanceof Error ? cause.message : String(cause) };
+  }
+  // Nothing here reads the result, and on the streamable transport the body may
+  // be an open event stream. Dropped rather than parsed, so the socket closes
+  // with the probe.
+  await response.body?.cancel().catch(() => undefined);
+
+  // 403 alongside 401 because a gateway may spell "this bearer is not good for
+  // this resource" either way, and both end at the same place: hop 1 again.
+  if (response.status === 401 || response.status === 403) return { outcome: "rejected", status: response.status };
+  if (response.ok) return { outcome: "accepted", status: response.status };
+  return { outcome: "unreachable", detail: `the gateway answered ${response.status}` };
 }
 
 /**
@@ -183,7 +268,8 @@ export interface GatewayTokenResponse {
 }
 
 export type GatewayTokenResult =
-  | { ok: true; token: GatewayTokenResponse }
+  /** `status` on this branch too, so a caller can log what a *success* answered without the body. */
+  | { ok: true; status: number; token: GatewayTokenResponse }
   | { ok: false; status: number; body: string };
 
 async function tokenRequest(endpoint: string, form: Record<string, string>): Promise<GatewayTokenResult> {
@@ -195,7 +281,7 @@ async function tokenRequest(endpoint: string, form: Record<string, string>): Pro
   const body = await response.text();
   if (!response.ok) return { ok: false, status: response.status, body };
   try {
-    return { ok: true, token: JSON.parse(body) as GatewayTokenResponse };
+    return { ok: true, status: response.status, token: JSON.parse(body) as GatewayTokenResponse };
   } catch {
     return { ok: false, status: response.status, body };
   }
@@ -237,6 +323,30 @@ export function refreshGatewayToken(options: {
     client_id: options.clientId,
     resource: options.resource,
   });
+}
+
+/**
+ * The usable `access_token` on a token response, or `null` if the body is not
+ * one.
+ *
+ * **Total, and deliberately typed `unknown`.** `tokenRequest` hands back
+ * `JSON.parse(body)` under the `GatewayTokenResponse` type, and that type is a
+ * claim about a remote server's output rather than a fact about it. Round 2 of
+ * #98's review found the gap: an authorization server that answers `200` with
+ * the body `null` parses to `null`, which satisfies the type and throws on the
+ * first property read — `TypeError: null is not an object (evaluating
+ * 'refreshed.token.access_token')` — so the one path this whole issue exists to
+ * build, "no usable token, go and re-authorize", became an unshaped 500.
+ *
+ * So the read is done here, once, against `unknown`, and every shape that is
+ * not an object carrying a non-empty string comes back `null`: `null` itself, a
+ * JSON scalar, an array, a missing field, a field that is not a string, an
+ * empty one. The callers branch on `null` and cannot throw on the way.
+ */
+export function accessTokenOf(token: unknown): string | null {
+  if (typeof token !== "object" || token === null) return null;
+  const value = (token as { access_token?: unknown }).access_token;
+  return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
 /**

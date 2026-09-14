@@ -35,9 +35,18 @@ export type ChatEvent =
    */
   | { kind: "denied"; tool: string; reason: string; ref: string | null }
   /**
-   * Layer 2: a credential is missing, nothing was refused. The page renders the
-   * link as a step to take. **No hook fired and no audit row exists** for this,
-   * which is why it is its own kind and not a `denied`.
+   * A credential is missing or no longer accepted, and nothing was refused. The
+   * page renders the link as a step to take. **No hook fired and no audit row
+   * exists** for this, which is why it is its own kind and not a `denied`.
+   *
+   * Two things arrive here, one layer apart, and the claim about the world is
+   * the same for both: layer 2, where Arcade finds the persona holds no `cg-idp`
+   * token for a tool (`tool` is the wire tool name, `url` is Arcade's own
+   * `authorization_url`, `instructions` are Arcade's words); and hop 1, where
+   * the gateway itself will not take this browser's bearer (`tool` is the
+   * gateway id, `url` is this service's `/api/arcade/start`, `instructions` are
+   * ours). Both are upstream of every hook, and both end with a person clicking
+   * something rather than a rule having decided anything (#94).
    */
   | { kind: "authorization"; tool: string; url: string; instructions?: string }
   /**

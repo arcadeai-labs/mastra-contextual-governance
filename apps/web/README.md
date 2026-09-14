@@ -676,15 +676,87 @@ exactly why it has a test: the first person it breaks for is a forker on their f
 |---|---|
 | the environment is not configured | `503`, naming the variables |
 | nobody is signed in | `401`, pointing at `/api/auth/signin` |
-| signed in, no gateway token | `401`, pointing at `/api/arcade/start` |
+| signed in, hop 1 never run | `401`, pointing at `/api/arcade/start` |
+| the gateway will not take this browser's bearer | a stream carrying one `authorization` event |
+| the gateway could not be reached | `502`, as plumbing |
 | the gateway listed nothing at all | `502`, naming the control plane |
 | the toolkit name matched nothing | `502`, naming `ARCADE_LOAN_TOOLKIT` |
 
-The last two are one symptom with two causes and are told apart on a measured
-fact: a live `tools/list` always carries the gateway's own two built-ins, even
-when policy hides every project tool. **Zero** entries is the list failing to
-come back, and saying "check `ARCADE_LOAN_TOOLKIT`" about a control plane that
-is down sends somebody a long way in the wrong direction.
+The last four are one symptom — an agent with no tools — with four causes, and
+each split was paid for.
+
+The bottom two are told apart on a measured fact: a live `tools/list` always
+carries the gateway's own two built-ins, even when policy hides every project
+tool. **Zero** entries is the list failing to come back, and saying "check
+`ARCADE_LOAN_TOOLKIT`" about a control plane that is down sends somebody a long
+way in the wrong direction.
+
+### A rejected gateway token, and why it is asked about first (#94)
+
+`@mastra/mcp` 1.17.3 does **not** throw when the gateway refuses the bearer.
+`listToolsets()` resolves, with `{}`, because the connection failure is logged
+per server and dropped — so a dead token and a mistyped `ARCADE_LOAN_TOOLKIT`
+arrive as the same value. Live on 2026-09-14 that produced *"The gateway
+advertised 0 tools and none of them belong to \"Loan\" or \"Approvals\" … Check
+ARCADE_LOAN_TOOLKIT and ARCADE_APPROVALS_TOOLKIT"* while both variables were
+correct and the whole fix was one click on `/api/arcade/start`.
+
+So the bearer is asked about before the toolset is read: one raw JSON-RPC
+`initialize` with the token on it (`probeGatewayToken`). `401` or `403` is the
+gateway refusing the credential, `2xx` is acceptance, anything else is
+unreachable and says nothing about the credential.
+
+`MCPClient.getServerAuthState()` was the cheaper candidate and was measured
+rather than assumed. It is right when the 401 surfaces as the SDK's
+`UnauthorizedError` — a stub answering `401` leaves it `'needs-auth'` — and
+`undefined` whenever the streamable POST fails some other way and the client
+falls back to SSE, which is the shape the live cg-web log shows
+(*"Could not connect to server with any available HTTP transport"*). Both
+measurements are in `test/gateway-token-rejected.test.tsx`. An HTTP status is
+the gateway's own word about the credential and it is the same in both shapes.
+
+On a rejection the turn answers **200 with an ndjson stream** carrying one
+`authorization` event pointing at `/api/arcade/start` and a `done` — a stream
+rather than a status because the answer has to carry a clickable link, and
+`authorization` rather than `denied` because hop 1 is upstream of every hook, so
+nothing was refused and no audit row exists. The dead bearer is dropped from the
+sealed session and the sign-in is kept, so the sign-in panel then reads
+**`Gateway token: rejected`** rather than `none` and offers the one link that
+fixes it. The token is never in the event, the cookie, or the log.
+
+**Every later turn answers the same way, not just the one that discovered it.**
+Round 1 of #98's review pressed Send twice: the first turn streamed the link and
+the second answered `401 {"error":"this browser holds no gateway token…"}`,
+because a rejected session and a session that never ran hop 1 both have no
+`gateway` on them. `Chat.tsx` clears the transcript before each submission, so
+the second answer painted over the only link on screen with unlinkable red text.
+The two absences are now told apart by `gateway_rejected_at`: a browser that
+never authorized still gets the flat `401`, and a browser whose bearer was
+refused gets the same stream every time until it re-authorizes.
+`gatewayTokenRejected` is idempotent, so the panel's timestamp is when the gap
+began rather than the last time somebody pressed Send.
+
+`liveGatewayToken` fails the same way: a refresh that answers non-2xx, or 2xx
+with no usable `access_token` on it, returns `{ token: null, reason }` and logs
+the status alone. It never hands back the bearer it already had — a stale token
+is accepted by the type system, presented to the gateway, refused there, and read
+on screen as a missing toolkit.
+
+**"No usable `access_token`" is read by `accessTokenOf`, which takes `unknown`,
+and that is not fussiness.** `tokenRequest` hands back `JSON.parse(body)` under
+the `GatewayTokenResponse` type, and that type is a claim about a remote
+server's output rather than a fact about it. Round 2 of #98's review found the
+gap: an authorization server answering `200` with the body `null` parses to
+`null`, satisfies the type, and threw on the first property read —
+`TypeError: null is not an object (evaluating 'refreshed.token.access_token')` —
+so the re-authorization path this issue exists to build became an unshaped 500.
+Every non-token shape now comes back `null` instead: the literal `null`, a JSON
+scalar, an array, a missing field, a field that is not a string, an empty one.
+`gatewayCallback` reads the code-exchange response through the same function,
+because a `200 null` there had the identical throw one function up.
+
+The persona tool list on `/` and `/chat` (#15) draws the same distinction for
+the same reason: an empty list asks about the bearer before it names `/access`.
 
 ### The stream
 
