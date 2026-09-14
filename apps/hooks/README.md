@@ -319,9 +319,10 @@ authenticate it would have to be shipped to the browser, where it is not a secre
 alternative is a proxy route in `apps/web`. Every field of a `GovernanceEvent` is safe to
 project today: ids, timestamps, persona emails, tool names, decisions, reasons, `rule_id`.
 
-**#16 made the choice this section used to flag.** A redaction event carries
-`redactions[]` — path, `rule_id`, `pattern_id`, kind — and **no payload at all**: no
-`before`, no `after`. Putting the raw output in `before` would have written the borrower's
+**#16 made the choice this section used to flag, and #101 finished it.** A redaction event
+carries `redactions[]` — path, `rule_id`, `pattern_id`, kind — and **no payload at all**:
+`before` and `after` are not fields a `GovernanceEvent` has, so the shape is refused at the
+schema rather than merely unused. Putting the raw output in `before` would have written the borrower's
 account number into `audit_log` and served it to anyone who can reach this host; putting the
 rewritten output in `after` is no safer, because a rule conditioned on clearance does not
 fire for a privileged subject and *their* "after" still holds the identifiers. The panel
@@ -353,8 +354,10 @@ curl -fsS -H "authorization: Bearer $ARCADE_HOOK_SIGNING_SECRET" \
 ```
 
 `rows` are `audit_log` rows exactly as the table holds them — the same `GovernanceEvent` the
-stream carries, including `before` and `after`, **not** the panel's derived shape. Someone
-asking what was decided should get the record, not a summary of it.
+stream carries, including `redactions[]`, **not** the panel's derived shape. Someone asking
+what was decided should get the record, not a summary of it. The table still has `before`
+and `after` columns from before #101; nothing writes them and nothing projects them, so a
+row seeded by an older build is served without the payload it used to hold.
 
 | filter | matches |
 |---|---|
