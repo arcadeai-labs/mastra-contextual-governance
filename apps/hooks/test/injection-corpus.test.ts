@@ -56,6 +56,7 @@ const config: HooksConfig = {
   policyPollMs: 10,
   grantTtlSeconds: 900,
   injectionDetection: "armed",
+  resetToken: "",
 };
 
 interface Injection {

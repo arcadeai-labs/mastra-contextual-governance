@@ -50,6 +50,7 @@ const config: HooksConfig = {
   policyPollMs: POLL_MS,
   grantTtlSeconds: 900,
   injectionDetection: "armed",
+  resetToken: "",
 };
 
 /** `LN-2291`: act 2's amount, act 3's identifiers, act 4's planted instruction. */

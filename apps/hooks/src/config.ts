@@ -87,6 +87,18 @@ export interface HooksConfig {
    * count, not the value of this variable.
    */
   injectionDetection: ScannerSetting;
+  /**
+   * The bearer `POST /admin/reset` requires — a third secret, never equal to
+   * either of the two above (#106).
+   *
+   * **Empty means the endpoint is not mounted at all**, and `/health` reports
+   * `reset: "disabled"`. Not a default, not a dev fallback: unlike the two
+   * secrets above, which have development values so a local run works out of
+   * the box, this one guards a button that can empty the audit log and replace
+   * the live policy, on a public URL with no other authentication in front of
+   * it. A development default would be a published one.
+   */
+  resetToken: string;
 }
 
 /** What `INJECTION_DETECTION` may say. Anything else is refused at boot. */
@@ -160,6 +172,7 @@ export function readConfig(env: Record<string, string | undefined> = process.env
     policyPollMs: Number(env.POLICY_POLL_MS ?? 250),
     grantTtlSeconds: Number(env.GRANT_TTL_SECONDS ?? 900),
     injectionDetection: readScannerSetting(env.INJECTION_DETECTION),
+    resetToken: env.RESET_TOKEN?.trim() ?? "",
   };
 }
 
@@ -169,4 +182,9 @@ export function usingDevSecret(config: HooksConfig): boolean {
 
 export function usingDevStoreToken(config: HooksConfig): boolean {
   return config.approvalsStoreToken === DEV_STORE_TOKEN;
+}
+
+/** Whether `POST /admin/reset` exists on this deployment. */
+export function resetEnabled(config: HooksConfig): boolean {
+  return config.resetToken.length > 0;
 }

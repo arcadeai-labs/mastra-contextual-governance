@@ -39,6 +39,7 @@ import type { Database } from "bun:sqlite";
 import { PostHookResult } from "@cg/policy-schema";
 
 import { readConfig, type HooksConfig, type ScannerSetting } from "../src/config.ts";
+import { fixtureDigest } from "../src/fixture-drift.ts";
 import { createPolicyCache, type PolicyCache } from "../src/policy-cache.ts";
 import { openGovernance } from "../src/policy-store.ts";
 import { createServer } from "../src/server.ts";
@@ -65,6 +66,7 @@ function configFor(setting: ScannerSetting): HooksConfig {
     policyPollMs: POLL_MS,
     grantTtlSeconds: 900,
     injectionDetection: setting,
+    resetToken: "",
   };
 }
 
@@ -90,6 +92,9 @@ function start(setting: ScannerSetting): Running {
   const cache = createPolicyCache(db, {
     pollMs: POLL_MS,
     scanners: config.injectionDetection,
+    // As `src/index.ts` boots one: without the fixture the drift check does not
+    // run, and `/health` says so in a warning — which is the point of it.
+    fixture: fixtureDigest(config),
     log: (line) => logs.push(line),
   });
   cache.start();
@@ -230,8 +235,11 @@ describe("disarmed by the switch, which is the control run", () => {
     expect(body.code).toBe("CHECK_FAILED");
     expect(body.override).toBeUndefined();
 
+    // 200 with `degraded` (#112). The refusal is the /post above, not the
+    // status code Render reads.
     const health = await fetch(`${instance.base}/health`);
-    expect(health.status).toBe(503);
+    expect(health.status).toBe(200);
+    expect(((await health.json()) as { status: string }).status).toBe("degraded");
   });
 
   test("but act 3 still redacts, so the contrast is about act 4 and nothing else", async () => {

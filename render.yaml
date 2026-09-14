@@ -89,9 +89,13 @@ services:
     region: oregon
     dockerfilePath: ./apps/hooks/Dockerfile
     dockerContext: .
-    # Returns 503 while the policy fails to load (a hand-edited rule that no
-    # longer compiles), so an unhealthy control plane is visible here rather
-    # than as every tool call failing.
+    # Answers 200 whatever it finds, and says `status: degraded` with the
+    # compile error in the body when the policy will not load (#112). It used
+    # to answer 503 in that case: on 2026-09-14 a stale rule that #89's guard
+    # refuses took this instance out of rotation, Render served its own 502
+    # page over it, and a control plane that was correctly failing closed
+    # became one that was simply gone — with the fix unverifiable over HTTP.
+    # Readiness here is "the process is up and can tell you what is wrong".
     healthCheckPath: /health
     autoDeployTrigger: commit
     # Delete this block to run the control plane ephemerally and pay nothing
@@ -148,6 +152,16 @@ services:
       # note at the top of this file; the service refuses an unreachable value
       # at boot.
       - key: LOAN_APP_PUBLIC_HOST
+        sync: false
+      # The bearer POST /admin/reset requires — a third secret, and never
+      # either of the two above. Unset means the endpoint does not exist: it
+      # answers 404 and /health reports `reset: "disabled"`, because a reset
+      # button reachable without authentication on a public URL is a
+      # denial-of-demo vector, and one that fails open on a missing variable is
+      # the same thing with a longer fuse. Set the same value on cg-web, which
+      # is what the panel's Reset button posts through. Generate it yourself:
+      # `openssl rand -hex 32`.
+      - key: RESET_TOKEN
         sync: false
 
   # The enterprise's identity provider — a demo fixture standing in for the
@@ -416,4 +430,11 @@ services:
       # GOVERNANCE_STREAM=hooks above, leaving it blank is the error state
       # rather than a quiet replay.
       - key: HOOKS_PUBLIC_HOST
+        sync: false
+      # The same value as cg-hooks' RESET_TOKEN (#106). Held server-side only
+      # and never sent to the browser: the panel's Reset button posts to a
+      # route in this service, which is what presents the bearer to cg-hooks.
+      # Leave it blank and the button is not rendered at all, which is the
+      # correct state for a deployment nobody is presenting from.
+      - key: RESET_TOKEN
         sync: false

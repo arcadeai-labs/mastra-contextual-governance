@@ -59,6 +59,7 @@ const config: HooksConfig = {
   policyPollMs: 10_000,
   grantTtlSeconds: 900,
   injectionDetection: "armed",
+  resetToken: "",
 };
 
 /** Act 2's escalation, as `tools/approvals` sends it. */

@@ -559,47 +559,82 @@ export function seed(db: Database, data: Seed): void {
     db.exec(SCHEMA);
     db.exec(REVISION_TRIGGERS);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-
-    const insertSubject = db.prepare<unknown, NamedBindings>(
-      `INSERT INTO subjects (user_id, display_name, role, clearance, attributes)
-       VALUES ($user_id, $display_name, $role, $clearance, $attributes)`,
-    );
-    const insertCatalogue = db.prepare<unknown, NamedBindings>(
-      `INSERT INTO catalogue (toolkit, tool, arguments) VALUES ($toolkit, $tool, $arguments)`,
-    );
-    const insertRule = db.prepare<unknown, NamedBindings>(
-      `INSERT INTO policy_rules
-         (id, description, hook, toolkit, tool, subjects, conditions, effect, reason, priority, enabled)
-       VALUES
-         ($id, $description, $hook, $toolkit, $tool, $subjects, $conditions, $effect, $reason, $priority, $enabled)`,
-    );
-    const insertOutputRule = db.prepare<unknown, NamedBindings>(
-      `INSERT INTO output_rules
-         (id, description, toolkit, tool, subjects, fields, patterns, reason, priority, enabled)
-       VALUES
-         ($id, $description, $toolkit, $tool, $subjects, $fields, $patterns, $reason, $priority, $enabled)`,
-    );
-
-    try {
-      for (const subject of data.subjects) insertSubject.run(bind(subject));
-      for (const [toolkit, tools] of Object.entries(data.catalogue)) {
-        for (const [tool, args] of Object.entries(tools)) {
-          insertCatalogue.run(bind({ toolkit, tool, arguments: args }));
-        }
-      }
-      for (const { match, ...rule } of data.policy_rules) {
-        insertRule.run(bind({ ...rule, toolkit: match.toolkit, tool: match.tool }));
-      }
-      for (const { match, ...rule } of data.output_rules) {
-        insertOutputRule.run(bind({ ...rule, toolkit: match.toolkit, tool: match.tool }));
-      }
-    } finally {
-      insertSubject.finalize();
-      insertCatalogue.finalize();
-      insertRule.finalize();
-      insertOutputRule.finalize();
-    }
+    insertPolicy(db, data);
   })();
+}
+
+/**
+ * The four policy tables, replaced from `data`, in one transaction.
+ *
+ * The reset (#106). Everything the demo *did* is untouched: `grants`,
+ * `approval_requests` and `audit_log` are not named here, and the audit log
+ * could not be deleted from anyway — its append-only triggers refuse.
+ *
+ * One transaction matters more here than at bootstrap. This runs against a
+ * live control plane serving hooks from another connection, and the policy
+ * cache reloads on the revision bump these writes cause. A half-applied
+ * replacement would be a policy with, say, the new rules and the old
+ * catalogue: rules that name tools that are no longer catalogued, which
+ * `compilePolicy` refuses — so the service would fail closed, which is safe,
+ * and would stay that way, which is the outage. Inside a transaction the cache
+ * sees either the old policy or the new one and never the seam.
+ *
+ * `DELETE` and not `DROP`: the schema, its indexes and the revision triggers
+ * are the database's, not the fixture's, and a reset is about rows.
+ */
+export function replacePolicy(db: Database, data: Seed): void {
+  db.transaction(() => {
+    for (const table of ["subjects", "catalogue", "policy_rules", "output_rules"]) {
+      db.exec(`DELETE FROM ${table}`);
+    }
+    insertPolicy(db, data);
+  })();
+}
+
+/**
+ * The inserts alone, with no transaction of its own — both callers above have
+ * one, and both need the DDL or the DELETEs inside it.
+ */
+function insertPolicy(db: Database, data: Seed): void {
+  const insertSubject = db.prepare<unknown, NamedBindings>(
+    `INSERT INTO subjects (user_id, display_name, role, clearance, attributes)
+     VALUES ($user_id, $display_name, $role, $clearance, $attributes)`,
+  );
+  const insertCatalogue = db.prepare<unknown, NamedBindings>(
+    `INSERT INTO catalogue (toolkit, tool, arguments) VALUES ($toolkit, $tool, $arguments)`,
+  );
+  const insertRule = db.prepare<unknown, NamedBindings>(
+    `INSERT INTO policy_rules
+       (id, description, hook, toolkit, tool, subjects, conditions, effect, reason, priority, enabled)
+     VALUES
+       ($id, $description, $hook, $toolkit, $tool, $subjects, $conditions, $effect, $reason, $priority, $enabled)`,
+  );
+  const insertOutputRule = db.prepare<unknown, NamedBindings>(
+    `INSERT INTO output_rules
+       (id, description, toolkit, tool, subjects, fields, patterns, reason, priority, enabled)
+     VALUES
+       ($id, $description, $toolkit, $tool, $subjects, $fields, $patterns, $reason, $priority, $enabled)`,
+  );
+
+  try {
+    for (const subject of data.subjects) insertSubject.run(bind(subject));
+    for (const [toolkit, tools] of Object.entries(data.catalogue)) {
+      for (const [tool, args] of Object.entries(tools)) {
+        insertCatalogue.run(bind({ toolkit, tool, arguments: args }));
+      }
+    }
+    for (const { match, ...rule } of data.policy_rules) {
+      insertRule.run(bind({ ...rule, toolkit: match.toolkit, tool: match.tool }));
+    }
+    for (const { match, ...rule } of data.output_rules) {
+      insertOutputRule.run(bind({ ...rule, toolkit: match.toolkit, tool: match.tool }));
+    }
+  } finally {
+    insertSubject.finalize();
+    insertCatalogue.finalize();
+    insertRule.finalize();
+    insertOutputRule.finalize();
+  }
 }
 
 // ---------------------------------------------------------------------------

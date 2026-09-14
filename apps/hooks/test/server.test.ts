@@ -37,6 +37,7 @@ const config: HooksConfig = {
   policyPollMs: 250,
   grantTtlSeconds: 900,
   injectionDetection: "armed",
+  resetToken: "",
 };
 
 let db: Database;
@@ -259,15 +260,27 @@ describe("fails closed, and the failure is audited", () => {
     await settle();
   });
 
-  test("a policy edit that no longer compiles fails every hook closed until fixed, and /health says so", async () => {
+  // /health answers 200 here, and that is #112 rather than a weakened
+  // assertion: Render health-checks this path, and the 503 this test used to
+  // require is what turned a control plane correctly failing closed into a 502
+  // page nobody could read the reason off. The refusal moved into the body and
+  // stayed on the three hooks, which the rest of this test still holds.
+  test("a policy edit that no longer compiles fails every hook closed until fixed, and /health says so at 200", async () => {
     db.run("UPDATE policy_rules SET tool = 'approve_loan' WHERE id = 'pre.approve-within-clearance'");
     await settle();
 
     const health = await fetch(`${base}/health`);
-    expect(health.status).toBe(503);
-    const healthBody = (await health.json()) as { status: string; policy: { status: string; error: string } };
-    expect(healthBody.status).toBe("unhealthy");
+    expect(health.status).toBe(200);
+    const healthBody = (await health.json()) as {
+      status: string;
+      warnings: string[];
+      policy: { status: string; error: string };
+    };
+    expect(healthBody.status).toBe("degraded");
+    expect(healthBody.policy.status).toBe("failed");
     expect(healthBody.policy.error).toMatch(/approve_loan/);
+    // The compile error is in the body, in words, not only as a status code.
+    expect(healthBody.warnings.join(" ")).toMatch(/approve_loan/);
 
     const read = await post("/pre", preBody(DANA, "GetLoan", { loan_id: "LN-2291" }));
     expect(PreHookResult.parse(await read.json()).code).toBe("CHECK_FAILED");
@@ -287,7 +300,9 @@ describe("fails closed, and the failure is audited", () => {
 
     db.run("UPDATE policy_rules SET tool = 'ApproveLoan' WHERE id = 'pre.approve-within-clearance'");
     await settle();
-    expect((await fetch(`${base}/health`)).status).toBe(200);
+    const healed = await fetch(`${base}/health`);
+    expect(healed.status).toBe(200);
+    expect(((await healed.json()) as { policy: { status: string } }).policy.status).toBe("ready");
     const again = await post("/pre", preBody(DANA, "GetLoan", { loan_id: "LN-2291" }));
     expect(await again.json()).toEqual({ code: "OK" });
   });
@@ -446,8 +461,14 @@ describe("a cold cache fails closed", () => {
       expect(PreHookResult.parse(await post.json()).code).toBe("CHECK_FAILED");
       expect(recent(real, 1)[0]).toMatchObject({ hook: "post", execution_id: "tc_cold_post", decision: "deny", rule_id: null });
 
+      // 200 with `degraded`, not 503 (#112): a cold cache is a process that is
+      // up and refusing, and Render must be able to read that rather than
+      // replace it with its own 502.
       const health = await fetch(`http://localhost:${srv.port}/health`);
-      expect(health.status).toBe(503);
+      expect(health.status).toBe(200);
+      const body = (await health.json()) as { status: string; policy: { status: string } };
+      expect(body.status).toBe("degraded");
+      expect(body.policy.status).toBe("cold");
     } finally {
       isolated.stop();
       srv.stop(true);
