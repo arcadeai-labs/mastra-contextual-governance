@@ -91,6 +91,14 @@ export function ControlPlaneStatus({
     };
   }, [read, pollMs]);
 
+  /**
+   * Posts a reset and folds the answer back into the strip.
+   *
+   * Reached two ways, deliberately: the drift warning's resync calls it
+   * directly on the first click, and the Reset button calls it only from the
+   * confirmation. The difference is what each mode destroys, not a difference
+   * in how careful the two code paths are — see the two blocks below.
+   */
   const press = async (mode: ResetMode) => {
     setConfirming(null);
     setBusy({ mode });
@@ -187,14 +195,30 @@ export function ControlPlaneStatus({
               reading that sentence on a projector should not have to look
               somewhere else for what to do about it. Gated on the same
               `reset` state as the button below — an unset RESET_TOKEN takes
-              BOTH controls away, never one. */}
+              BOTH controls away, never one.
+
+              **One click, and no confirmation** — the human's word on #106,
+              and it is the difference between the two controls rather than an
+              inconsistency between them. What this posts puts the policy back
+              to what the running image already ships, so the state it lands in
+              is the state a reader of this warning was told they should be in;
+              Reset below empties four tables including the audit log, which is
+              the one thing nobody can undo, so that one asks. A confirmation
+              here would be asking somebody to agree to the thing the sentence
+              above just told them to do.
+
+              What it costs is stated rather than hidden: a policy rule edited
+              live on stage is replaced without a second press. That is the
+              same trade `demo` makes, and it is why this control appears only
+              while there IS drift — it cannot be pressed on a deployment whose
+              policy already matches the fixture. */}
           {report.reset === "enabled" ? (
             <div className="cg-control-plane-actions">
               <button
                 type="button"
                 className="cg-control-plane-button"
                 disabled={busy !== null}
-                onClick={() => setConfirming("policy")}
+                onClick={() => void press("policy")}
               >
                 {busy?.mode === "policy" ? "Resyncing…" : "Resync policy"}
               </button>
@@ -256,7 +280,13 @@ export function ControlPlaneStatus({
 
 /**
  * What each mode is about to do, in the words that matter to the person
- * pressing it.
+ * pressing it — the text of the confirmation step.
+ *
+ * Only the Reset button reaches this. The drift warning's resync is one click
+ * with no confirmation (#106, the human's word), so `policy`'s sentence is
+ * read only when a caller has pointed the big button at the narrow mode with
+ * `defaultMode`. It is kept, and kept accurate, because that prop is part of
+ * this component's interface rather than a test affordance.
  *
  * Both name what SURVIVES as well as what goes, because a reset on a stage is
  * pressed under time pressure and the two modes differ in exactly the thing

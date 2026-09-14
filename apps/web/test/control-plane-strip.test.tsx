@@ -300,16 +300,42 @@ describe("the Reset control", () => {
 
   /**
    * The other half of the human's decision: the narrow reset is the drift
-   * warning's own remedy, one click, posting `policy` — not the big button
-   * wearing a different label.
+   * warning's own remedy, **one** click, posting `policy`.
+   *
+   * Round 2 of review caught the previous version of this test asserting the
+   * wrong thing. It clicked `Resync policy` and *then* `Replace the policy`
+   * before looking at `posts`, so it passed against a two-click confirm flow
+   * while its own name claimed one click — a test that agreed with the code
+   * instead of with the requirement. The assertion is now between the first
+   * click and any second one, which is the only position from which "one
+   * click" is a falsifiable claim.
    */
-  test("the drift warning offers a one-click resync, and it posts policy", async () => {
+  test("the drift warning's resync posts policy on the FIRST click", async () => {
     report = DRIFTED;
     const host = await mount();
 
     await click(labelled(host, "Resync policy"));
-    await click(labelled(host, "Replace the policy"));
+
+    // Nothing else pressed. This is the whole assertion.
     expect(posts).toEqual([{ mode: "policy" }]);
+    // And no confirmation was interposed on the way.
+    expect(host.querySelector("[role='alertdialog']")).toBeNull();
+    expect(host.textContent).toContain("Policy reset from the fixture.");
+  });
+
+  /**
+   * The counterpart, and the reason the two differ: Reset empties four tables
+   * including the audit log, so it still asks. A regression that made *that*
+   * one-click would be as wrong as the bug this round fixed, in the opposite
+   * direction and with worse consequences.
+   */
+  test("the Reset button still refuses to act on one click", async () => {
+    const host = await mount();
+
+    await click(labelled(host, "Reset"));
+
+    expect(posts).toEqual([]);
+    expect(host.querySelector("[role='alertdialog']")).not.toBeNull();
   });
 
   test("the resync sits inside the drift warning, not in the action row", async () => {

@@ -485,16 +485,29 @@ reaches for between takes, so it is the button that is simply there. The narrow 
 above it. A presenter reading "these rows differ from the fixture" on a projector
 should not have to look elsewhere for what to do about it.
 
+**They also differ in how many clicks they take, and that is the point rather than an
+inconsistency.** `Resync policy` posts on the **first** click — the human's word on
+#106 was "one-click", and what it lands in is the policy the running image already
+ships, which is the state the warning above it just said you should be in. Asking
+someone to confirm that is asking them to agree to the instruction they are reading.
+**Reset** still confirms, because it empties four tables including the audit log, and
+that is the one thing on this panel nobody can undo.
+
+What the one-click costs is worth saying rather than hiding: a policy rule edited live
+on stage is replaced without a second press. It is the same trade `demo` makes, and it
+is why the control appears only while there *is* drift — on a deployment whose policy
+already matches the fixture there is nothing to press.
+
 One variable gates both. `RESET_TOKEN` unset takes the resync away with the button,
 even though they live in different blocks — the drift warning still renders, because
 the drift is real whether or not this deployment can act on it.
 
-Every press confirms first, and the confirmation names **what survives** as well as
-what goes. `demo`'s sentence names all four things it wipes, because it is what the
-unlabelled button runs and its blast radius has to be on screen in full; `loans.db`
-is in neither mode, because it belongs to `apps/loan-app` and is reset by that
-service (#23). A presenter who resets the demo and then finds LN-2291 still approved
-should read it here, not discover it in front of an audience.
+Reset's confirmation names **what survives** as well as what goes. `demo`'s sentence
+names all four things it wipes, because it is what the unlabelled button runs and its
+blast radius has to be on screen in full; `loans.db` is in neither mode, because it
+belongs to `apps/loan-app` and is reset by that service (#23). A presenter who resets
+the demo and then finds LN-2291 still approved should read it here, not discover it in
+front of an audience.
 
 What this route does **not** do is authenticate its caller: anyone who can load
 `/panel` on a deployment with `RESET_TOKEN` set can press it. Narrowing that further

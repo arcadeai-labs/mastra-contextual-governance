@@ -263,7 +263,9 @@ revision being served rather than one that will be shortly.
 one, since a caller that did not say has not asked for the audit log to be emptied. The
 panel's **Reset** button is the other way round and says so every time: it posts `demo`
 explicitly, because a presenter between takes wants the rehearsal reset (#106). The
-panel's narrow control is `Resync policy`, offered by the drift warning.
+panel's narrow control is `Resync policy`, offered by the drift warning and posted on
+a single click — it puts the policy back to what the running image ships, so there is
+nothing to confirm that the warning has not already said.
 
 It is an **endpoint** rather than a script for one reason: the fixture it seeds from is the one
 compiled into the image that is *running*. A `sqlite3` session in a Render shell cannot promise
