@@ -30,10 +30,17 @@ const auth = createAuth({ db, baseURL: config.baseURL, secret: config.secret });
 // A replayed authorization code must refuse without taking the first
 // exchange's tokens with it (#100). Awaited here, at boot, so a service that
 // is listening is a service with the guard installed.
-await tolerateAuthorizationCodeReplay(auth, (model) => {
+//
+// The line names a count, and it is written only when that count is non-zero.
+// A code this service never issued reaches the same revocation path but has
+// nothing minted under it, and saying "kept the rows the first exchange minted"
+// about a code that had no first exchange is a false diagnosis in the one place
+// a reader trusts.
+await tolerateAuthorizationCodeReplay(auth, (model, rows) => {
   console.log(
-    `[${SERVICE}] replay revocation refused: kept the ${model} rows the first ` +
-      `exchange of that code minted (RFC 6749 §4.1.2 deviation, #100).`,
+    `[${SERVICE}] replay revocation refused: kept ${rows} ${model} ` +
+      `row${rows === 1 ? "" : "s"} minted by the first exchange of that code ` +
+      `(RFC 6749 §4.1.2 deviation, #100).`,
   );
 });
 

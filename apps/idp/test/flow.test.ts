@@ -1403,8 +1403,36 @@ describe("a replayed authorization code is named as one", () => {
 
     const blocked = await waitForLogLine(/replay revocation refused/, from);
     expect(blocked).toContain("oauthAccessToken");
+    // The line names how many rows it kept, and the count is what makes it a
+    // claim about this request rather than a slogan printed on every match.
+    expect(blocked).toMatch(/kept [1-9]\d* oauthAccessToken row/);
     // Both models the plugin tries to sweep, not just the first.
     await waitForLogLine(/replay revocation refused.*oauthRefreshToken/, from);
+  });
+
+  test("an unknown code is not reported as a kept replay", async () => {
+    // Review round 1 on PR #127. `checkVerificationValue` reaches
+    // `revokeTokensIssuedForAuthorizationCode` for *any* code it cannot consume,
+    // so a code this service never issued took the same path and the guard
+    // announced that it had kept "the rows the first exchange of that code
+    // minted" — for a code that never had a first exchange and has no rows at
+    // all. The census said `code_state=unknown` two lines later, so the log
+    // contradicted itself about the same request.
+    const from = await logLength();
+
+    const response = await exchange(`not-a-code-${crypto.randomUUID()}`, pkce().verifier);
+    expect(response.status).toBe(400);
+
+    // Waiting for the census line is what makes the absence below a fact rather
+    // than a race: the guard runs inside the handler and the census is written
+    // after it returns, so if a `replay revocation refused` line were coming for
+    // this request, it would already be on disk by now.
+    const line = await waitForLogLine(/POST \/oauth2\/token at=.*code_state=unknown/, from);
+    expect(line).toContain("outcome=invalid_grant");
+
+    const written = (await Bun.file(logPath).text()).slice(from);
+    expect(written).not.toContain("replay revocation refused");
+    expect(written).not.toContain("had already been exchanged");
   });
 
   test("a rejection that is not about the code carries no code field", async () => {

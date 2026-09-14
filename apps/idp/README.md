@@ -297,9 +297,25 @@ field:
 [idp] that code had already been exchanged — the tokens its first exchange minted were kept,
   so the grant the relying party holds still works (RFC 6749 §4.1.2 deviation, #100).
   Something is exchanging the code twice.
-[idp] replay revocation refused: kept the oauthAccessToken rows the first exchange of that
-  code minted (RFC 6749 §4.1.2 deviation, #100).
+[idp] replay revocation refused: kept 1 oauthAccessToken row minted by the first exchange
+  of that code (RFC 6749 §4.1.2 deviation, #100).
 ```
+
+A code this service **never issued** takes the same revocation path inside the plugin, but
+it is not a replay: nothing was minted under it, so nothing is kept and none of the three
+lines above appear. It gets the census line and the `rejected:` line, both saying
+`unknown`:
+
+```
+[idp] POST /oauth2/token at=2026-09-14T22:01:56.599Z grant=authorization_code code=not-a-co \
+  code_state=unknown outcome=invalid_grant client_id=<id> ua="arcade-engine/1.4" ip=(none)
+[idp] POST /oauth2/token rejected: status=400 error=invalid_grant \
+  error_description="invalid code" client_auth="client_secret_basic" client_id=<id> code=unknown
+```
+
+The guard counts the rows before it suppresses anything, and that count is what separates
+the two cases — the same question `code_state` asks, so the census and the intercept cannot
+disagree about whether a request was a replay.
 
 Better Auth answers a code it redeemed a moment ago and a code it never issued with the
 same four words, and the difference is the whole diagnosis. `code=unknown` is everything
@@ -330,7 +346,8 @@ a leaked code; here it is a measured property of one relying party, arriving wit
 client credentials milliseconds after a legitimate exchange. **The refusal is unchanged —
 a replayed code still answers `invalid_grant`** — only the collateral is dropped.
 
-The guard is deliberately exact rather than broad. The plugin makes four `deleteMany` calls
+The guard is deliberately exact rather than broad, in two ways. It matches one call shape,
+and it acts only when there is something to protect. The plugin makes four `deleteMany` calls
 against the token tables; three key on `clientId`+`userId` or on `refreshId` and are real
 revocations a user or client asked for. Only `revokeTokensIssuedForAuthorizationCode`
 deletes by a lone `authorizationCodeId` equality, so that is the whole predicate. A wider

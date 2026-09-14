@@ -93,27 +93,60 @@ export function isReplayRevocation(model: string, where: readonly WhereClause[])
  * lazily, so a failure here stops the service instead of arriving as an
  * intermittent revocation.
  *
- * `onBlocked` is called with the model each time a revocation is refused.
- * A guard that silently did nothing would be indistinguishable from one that
- * never matched, which is the exact failure this project keeps out of its
- * controls — so the caller logs it and a test asserts the line.
+ * `onKept` is called with the model and the number of rows that were spared,
+ * each time a revocation is actually refused. A guard that silently did nothing
+ * would be indistinguishable from one that never matched, which is the exact
+ * failure this project keeps out of its controls — so the caller logs it and a
+ * test asserts the line.
+ *
+ * **The call shape alone is not enough to call something a replay.**
+ * `checkVerificationValue` reaches `revokeTokensIssuedForAuthorizationCode` for
+ * *any* code it cannot consume, which includes a code this service never issued
+ * — a guess, an expired one, one from another deployment. Those are not replays:
+ * there was no first exchange and there are no rows to keep. Matching only on
+ * the shape made the guard announce "kept the rows the first exchange of that
+ * code minted" for a code that never had a first exchange, which is a false
+ * diagnosis in the one log a reader trusts (review round 1 on PR #127).
+ *
+ * So the rows are counted before anything is suppressed, and that count is the
+ * classifier: rows present means a code that really was exchanged, and keeping
+ * them is a real act worth reporting; zero rows means there is nothing to
+ * protect, so the delete is allowed to run as the no-op it is and nothing is
+ * claimed. This is deliberately the *same* predicate `codeState` uses for the
+ * census's `code_state` field — both ask "did anything get minted under this
+ * code" — so the two can never disagree about whether a request was a replay.
  */
 export async function tolerateAuthorizationCodeReplay(
   auth: Auth,
-  onBlocked: (model: string) => void,
+  onKept: (model: string, rows: number) => void,
 ): Promise<void> {
   const context = await auth.$context;
   const adapter = context.adapter;
   const deleteMany = adapter.deleteMany.bind(adapter);
+  const count = adapter.count.bind(adapter);
 
-  adapter.deleteMany = async (params: { model: string; where: readonly WhereClause[] }) => {
+  // Typed off the adapter's own signature rather than restated, so `where` can
+  // be handed to `count` and `deleteMany` without a cast. Better Auth's `Where`
+  // narrows `operator` to a union; it is assignable to the looser `WhereClause`
+  // that `isReplayRevocation` matches on, so widening that way needs no cast
+  // either.
+  adapter.deleteMany = async (params: Parameters<typeof deleteMany>[0]) => {
     if (isReplayRevocation(params.model, params.where ?? [])) {
-      onBlocked(params.model);
-      // What `deleteMany` returns on a no-op: the plugin ignores the value and
-      // throws `invalid_grant` either way, so the caller sees the refusal it
-      // expects and the rows stay.
-      return 0;
+      // Counted through the adapter rather than with a query of our own, so the
+      // rows counted are exactly the rows the `deleteMany` below would have
+      // taken — same connection, same transaction if there is one.
+      const kept = await count({ model: params.model, where: params.where });
+      if (kept > 0) {
+        onKept(params.model, kept);
+        // What `deleteMany` returns on a no-op: the plugin ignores the value
+        // and throws `invalid_grant` either way, so the caller sees the refusal
+        // it expects and the rows stay.
+        return 0;
+      }
+      // An unknown code. Nothing was minted under it, so suppressing the delete
+      // would protect nothing and reporting it would misattribute the request.
+      // Fall through and let the no-op run.
     }
-    return deleteMany(params as Parameters<typeof deleteMany>[0]);
+    return deleteMany(params);
   };
 }
