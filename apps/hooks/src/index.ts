@@ -4,7 +4,7 @@
  *
  *     POST /access   which tools this user may see        → { deny }
  *     POST /pre      may this user make this call          → { code, error_message? }
- *     POST /post     pass-through until #16                → { code }
+ *     POST /post     what the model may read of the result → { code, override? }
  *     GET  /events   the live governance stream, SSE         (no auth)
  *     GET  /health   policy revision, counts, fail-closed  (no auth)
  *
