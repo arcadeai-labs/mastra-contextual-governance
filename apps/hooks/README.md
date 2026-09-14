@@ -105,6 +105,56 @@ runs the rule as `governance.db` holds it against `LN-2291` as `apps/loan-app` s
 asserts the surviving note byte for byte, and asserts the pattern does *not* fire on the six
 other notes in the same book. Re-measure it before rewording either side.
 
+### The scanners, and the control run (#17)
+
+`post.strip-injected-instructions` carries **six** patterns, not one. Each has its own id,
+so `redactions[]` says which shape fired:
+
+| pattern | what it catches |
+|---|---|
+| `pattern.injected-instruction` | a pasted block announcing itself to an automated reader — #16's floor, unchanged |
+| `pattern.instruction-override` | *"disregard your previous instructions"* and its synonyms |
+| `pattern.addressed-to-the-model` | a note whose reader is an AI, an LLM or an automated reviewer |
+| `pattern.tool-call-directive` | an imperative naming a tool: `approve_loan`, `Loan_ApproveLoan` |
+| `pattern.concealment-directive` | *"do not mention this note to the officer"* |
+| `pattern.conversation-delimiter` | `<|im_start|>`, `### SYSTEM`, `[INST]` pasted into a business field |
+
+Order is load bearing: the floor runs first and takes the whole pasted block, so `LN-2291`
+still produces one record for `$.underwriter_notes` rather than four.
+
+They key on text **addressed to a machine**, and deliberately not on text that merely claims
+authority. *"Committee granted an exception on 2026-03-18; the usual officer approval limits
+do not apply"* is prose a real underwriter writes, and no regex can tell it from an invented
+one — so it is a stated false negative rather than a false positive waiting to eat a real
+note on a projector.
+
+`test/fixtures/injection-corpus.json` is both halves of that claim: ten injection shapes,
+each a whole note naming the pattern that must fire and the prose that must survive byte for
+byte, and eleven benign underwriter notes written to trip the scanners and required not to.
+`test/injection-corpus.test.ts` asserts **set equality** between the patterns in
+`governance.db` and the shapes the corpus exercises, so a pattern nothing proves cannot ship.
+
+**Turning it off, which act 4's control run needs.** Two ways, and neither is quiet:
+
+    INJECTION_DETECTION=off          # compiles the policy without the scanners; needs a restart
+
+    sqlite3 governance.db "UPDATE output_rules SET enabled = 0 \
+      WHERE id = 'post.strip-injected-instructions'"    # live within one poll — the on-stage flip
+
+Unset is armed, so losing the protection is always something somebody typed; a spelling that
+is neither on nor off is refused at boot rather than guessed at. `/health` reports
+`injection_detection` — `setting`, `state`, `patterns`, `rules` — derived from the
+**compiled** policy, so both roads read `state: disarmed` and carry a warning, and every
+policy reload logs it. The third case is the one nobody asks for and the one that matters:
+the switch says on and the policy carries no enabled pattern. That is the silent-permit state
+this service exists to disprove, and it reports `disarmed` with its own warning instead of
+looking like a clean payload.
+
+Disarming leaves act 3's field redaction alone, so the control run is about act 4 and nothing
+else. `apps/web/test/act4-control-run.test.ts` runs the beat against both planes and asserts
+the difference in the bytes sent to the model; with `ANTHROPIC_API_KEY` set it also measures
+the difference in behaviour.
+
 ## `governance.db`
 
 Six tables you can read at a glance, because one gets edited live on stage:

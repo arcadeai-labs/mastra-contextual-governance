@@ -54,6 +54,7 @@ import {
 } from "@cg/governance-core";
 import type { OutputRule, Subject } from "@cg/policy-schema";
 
+import type { ScannerSetting } from "./config.ts";
 import { readPolicy, readRevision } from "./policy-store.ts";
 
 export type CacheState =
@@ -79,6 +80,8 @@ export type CacheState =
       catalogue: ToolCatalogue;
       /** Keyed by lower-cased `user_id`; see `findSubject`. */
       subjects: ReadonlyMap<string, Subject>;
+      /** Act 4's scanners, as this revision compiled them (#17). */
+      scanners: ScannerStatus;
     }
   | {
       status: "failed";
@@ -87,6 +90,34 @@ export type CacheState =
       failed_at: string;
       error: string;
     };
+
+/**
+ * What the `/post` free-text scanners can currently do — act 4's control, as a
+ * number rather than as a claim (#17).
+ *
+ * `setting` is what somebody typed. `state` is what the compiled policy can
+ * actually do, and the two differ in the case that matters: a rule disabled
+ * live in `governance.db` leaves the switch saying `armed` while nothing can
+ * fire. So `state` is derived from `patterns`, and `patterns` is counted off
+ * the compiled policy — the thing the hook evaluates — rather than off the
+ * fixture or the environment.
+ *
+ * The demo path must not be able to come up with act 4 silently off, and this
+ * is the field that makes that true: `/health` carries it, the boot line reads
+ * it, and every policy reload logs it when it is not armed.
+ */
+export interface ScannerStatus {
+  /** `INJECTION_DETECTION`, as configured. */
+  setting: ScannerSetting;
+  /** What the policy in memory can do. `disarmed` when nothing can fire. */
+  state: ScannerSetting;
+  /** Compiled free-text patterns across every enabled output rule. */
+  patterns: number;
+  /** The rules that carry them, by id — or, when disarmed, the ones not running. */
+  rules: string[];
+  /** One line for the boot log and `/health`, or `null` when armed and firing. */
+  warning: string | null;
+}
 
 /** What `/health` shows about the cache. */
 export interface CacheStatus {
@@ -98,6 +129,12 @@ export interface CacheStatus {
   poll_ms: number;
   last_poll_at: string | null;
   consecutive_poll_failures: number;
+  /**
+   * Act 4's scanners. Present in every state, including `failed` and `cold`,
+   * where nothing can fire because nothing is serving policy at all — a reader
+   * asking "is the injection strip running?" gets an answer rather than a gap.
+   */
+  scanners: ScannerStatus;
 }
 
 export interface PolicyCache {
@@ -118,12 +155,18 @@ export interface PolicyCacheOptions {
   log?: (line: string) => void;
   pollMs?: number;
   maxPollFailures?: number;
+  /**
+   * `HooksConfig.injectionDetection`. Defaults to `armed`, so a caller that
+   * forgets it gets the protected policy rather than the control run.
+   */
+  scanners?: ScannerSetting;
 }
 
 export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}): PolicyCache {
   const log = options.log ?? (() => {});
   const pollMs = options.pollMs ?? 250;
   const maxPollFailures = options.maxPollFailures ?? 20;
+  const setting: ScannerSetting = options.scanners ?? "armed";
 
   let state: CacheState = { status: "cold" };
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -136,10 +179,23 @@ export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}
       const snapshot = readPolicy(db);
       revision = snapshot.revision;
       const policy = compilePolicy({ catalogue: snapshot.catalogue, rules: snapshot.rules });
-      const outputPolicy = compileOutputPolicy({
+      // Compiled as written first, whatever the switch says. Disarming drops
+      // rules from what is evaluated, and a rule that is not evaluated is a
+      // rule whose diagnostics are not raised — so a control run would quietly
+      // buy silence about an output policy that no longer compiles. The
+      // scanners are a demo control; the loudness is not.
+      const asWritten = compileOutputPolicy({
         catalogue: snapshot.catalogue,
         rules: snapshot.output_rules,
       });
+      const outputPolicy =
+        setting === "armed"
+          ? asWritten
+          : compileOutputPolicy({
+              catalogue: snapshot.catalogue,
+              rules: disarm(snapshot.output_rules),
+            });
+      const scanners = describeScanners(setting, snapshot.output_rules);
       const subjects = new Map(snapshot.subjects.map((s) => [subjectKey(s.user_id), s] as const));
       state = {
         status: "ready",
@@ -150,12 +206,18 @@ export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}
         outputRules: new Map(snapshot.output_rules.map((rule) => [rule.id, rule] as const)),
         catalogue: snapshot.catalogue,
         subjects,
+        scanners,
       };
       log(
         `policy loaded: revision ${revision}, ${subjects.size} subjects, ` +
           `${snapshot.rules.length} rules, ${snapshot.output_rules.length} output rules, ` +
-          `${Object.keys(snapshot.catalogue).length} toolkits`,
+          `${Object.keys(snapshot.catalogue).length} toolkits; ` +
+          `injection detection ${scanners.state} (${scanners.patterns} pattern(s))`,
       );
+      // Every reload, not only the first: disarming act 4 on stage is an
+      // `UPDATE` on `output_rules`, which reloads within a poll and would
+      // otherwise change what the model may read without leaving a line behind.
+      if (scanners.warning !== null) log(`INJECTION DETECTION: ${scanners.warning}`);
     } catch (cause) {
       const error = cause instanceof Error ? cause.message : String(cause);
       state = { status: "failed", revision, failed_at: new Date().toISOString(), error };
@@ -203,6 +265,18 @@ export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}
 
   const status = (): CacheStatus => ({
     status: state.status,
+    scanners:
+      state.status === "ready"
+        ? state.scanners
+        : {
+            setting,
+            state: "disarmed",
+            patterns: 0,
+            rules: [],
+            warning:
+              `the control plane is ${state.status} and is serving no output policy, so nothing ` +
+              `is being stripped from tool output — every hook is failing closed instead`,
+          },
     revision: state.status === "cold" ? null : state.revision,
     loaded_at: state.status === "ready" ? state.loaded_at : null,
     failed_at: state.status === "failed" ? state.failed_at : null,
@@ -213,6 +287,74 @@ export function createPolicyCache(db: Database, options: PolicyCacheOptions = {}
   });
 
   return { current: () => state, start, stop, reload, poll, status };
+}
+
+/**
+ * The output rules as they will be compiled, given the switch.
+ *
+ * Disarming strips the `patterns` rather than dropping the rules, so act 3's
+ * named-field redaction on the same rows is untouched and the control run is
+ * about act 4 and nothing else. A rule left with neither fields nor patterns
+ * would be refused by `compileOutputPolicy` — correctly, since it could never
+ * redact anything — so it is dropped here instead.
+ */
+function disarm(rules: readonly OutputRule[]): OutputRule[] {
+  return rules
+    .map((rule) => ({ ...rule, patterns: [] }))
+    .filter((rule) => rule.fields.length > 0);
+}
+
+/**
+ * What the scanners can do this revision, and the sentence that says so.
+ *
+ * Counted off the *enabled* rules in the snapshot, which is what
+ * `compileOutputPolicy` keeps, so the number cannot disagree with the policy
+ * the hook evaluates. Three outcomes, and two of them are warnings:
+ *
+ * - the switch is off — the control run, deliberate, and announced;
+ * - the switch is on and the policy carries no scanner — the silent-permit
+ *   case, and the one this project exists to disprove. Somebody disabled the
+ *   rule in the database, or a fixture lost it, and everything downstream looks
+ *   exactly as it does when a payload is clean;
+ * - the switch is on and patterns are loaded — no warning.
+ */
+function describeScanners(
+  setting: ScannerSetting,
+  rules: readonly OutputRule[],
+): ScannerStatus {
+  const carrying = rules.filter((rule) => rule.enabled && rule.patterns.length > 0);
+  const ids = carrying.map((rule) => rule.id);
+  const available = carrying.reduce((sum, rule) => sum + rule.patterns.length, 0);
+
+  if (setting === "disarmed") {
+    return {
+      setting,
+      state: "disarmed",
+      patterns: 0,
+      rules: ids,
+      warning:
+        `INJECTION_DETECTION is off. The /post free-text scanners are disarmed: ` +
+        `${available} pattern(s) from ${ids.length > 0 ? ids.join(", ") : "no rule"} are not ` +
+        `running, and an instruction planted in a tool result will reach the model. ` +
+        `This is act 4's control run — unset INJECTION_DETECTION to re-arm it.`,
+    };
+  }
+
+  if (available === 0) {
+    return {
+      setting,
+      state: "disarmed",
+      patterns: 0,
+      rules: [],
+      warning:
+        `INJECTION_DETECTION is on but the output policy carries no enabled free-text ` +
+        `pattern, so nothing can be stripped from a tool result. A control that matches ` +
+        `nothing is indistinguishable from one that permits: check ` +
+        `output_rules.enabled in governance.db.`,
+    };
+  }
+
+  return { setting, state: "armed", patterns: available, rules: ids, warning: null };
 }
 
 /**

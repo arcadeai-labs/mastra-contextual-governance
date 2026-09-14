@@ -73,6 +73,7 @@ const config: HooksConfig = {
   deadlineMs: 2500,
   policyPollMs: 250,
   grantTtlSeconds: 900,
+  injectionDetection: "armed",
 };
 
 const db = openGovernance(":memory:", config);

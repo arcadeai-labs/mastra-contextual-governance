@@ -48,6 +48,7 @@ const config: HooksConfig = {
   deadlineMs: 2500,
   policyPollMs: 10_000,
   grantTtlSeconds: 900,
+  injectionDetection: "armed",
 };
 
 let db: Database;

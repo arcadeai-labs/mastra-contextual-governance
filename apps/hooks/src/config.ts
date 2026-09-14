@@ -70,6 +70,56 @@ export interface HooksConfig {
    * moves on, long enough for the Slack round trip on stage.
    */
   grantTtlSeconds: number;
+  /**
+   * Act 4's control run, as a switch (#17).
+   *
+   * `armed` — the default, and the only value the demo path may boot on
+   * silently — runs the `/post` free-text scanners. `disarmed` compiles the
+   * output policy *without* them, so an injected instruction sitting in a loan
+   * file reaches the model and the audience sees what the control was
+   * preventing. Act 3's named-field redaction is untouched either way, which is
+   * what makes the contrast about act 4 and nothing else.
+   *
+   * Off is never quiet: the boot line, `/health` and every policy reload say
+   * so. The same is true of the other way to disarm it — `UPDATE output_rules
+   * SET enabled = 0` on the live database, which is the on-stage flip because
+   * it needs no restart — because what is reported is the *compiled* scanner
+   * count, not the value of this variable.
+   */
+  injectionDetection: ScannerSetting;
+}
+
+/** What `INJECTION_DETECTION` may say. Anything else is refused at boot. */
+export type ScannerSetting = "armed" | "disarmed";
+
+/**
+ * `INJECTION_DETECTION`, as the presenter writes it.
+ *
+ * Unset is armed: a rehearsal that forgot the variable runs the control, and
+ * the way to lose the protection has to be a thing somebody typed. A value
+ * that is neither recognised spelling throws rather than defaulting — reading
+ * `INJECTION_DETECTION=false` as "armed" would be a demo protected by a typo,
+ * and reading it as "disarmed" would be a demo silently unprotected by one.
+ */
+const SCANNER_SETTINGS: Record<string, ScannerSetting> = {
+  "": "armed",
+  on: "armed",
+  armed: "armed",
+  true: "armed",
+  off: "disarmed",
+  disarmed: "disarmed",
+  false: "disarmed",
+};
+
+export function readScannerSetting(raw: string | undefined): ScannerSetting {
+  const setting = SCANNER_SETTINGS[(raw ?? "").trim().toLowerCase()];
+  if (setting === undefined) {
+    throw new Error(
+      `INJECTION_DETECTION is "${raw}", which is neither on nor off. ` +
+        `Leave it unset to run act 4's scanners, or set it to "off" for the control run.`,
+    );
+  }
+  return setting;
 }
 
 export function readConfig(env: Record<string, string | undefined> = process.env): HooksConfig {
@@ -109,6 +159,7 @@ export function readConfig(env: Record<string, string | undefined> = process.env
     deadlineMs: Number(env.HOOK_DEADLINE_MS ?? 2500),
     policyPollMs: Number(env.POLICY_POLL_MS ?? 250),
     grantTtlSeconds: Number(env.GRANT_TTL_SECONDS ?? 900),
+    injectionDetection: readScannerSetting(env.INJECTION_DETECTION),
   };
 }
 

@@ -49,6 +49,7 @@ const config: HooksConfig = {
   deadlineMs: 2500,
   policyPollMs: POLL_MS,
   grantTtlSeconds: 900,
+  injectionDetection: "armed",
 };
 
 /** `LN-2291`: act 2's amount, act 3's identifiers, act 4's planted instruction. */
@@ -134,7 +135,18 @@ describe("the seeded rules, read back out of governance.db", () => {
     expect(fields?.subjects).toMatchObject({ clearance_below: 250_000 });
     expect(fields?.fields.map((field) => field.path)).toEqual(["bank_account_number", "tax_id"]);
     expect(patterns?.subjects).toBeNull();
-    expect(patterns?.patterns.map((pattern) => pattern.id)).toEqual(["pattern.injected-instruction"]);
+    // Six shapes since #17, and the order is load bearing: the floor runs first
+    // and takes the whole pasted block, so on `LN-2291` it is the only scanner
+    // that fires and this file's audit assertions stay at three records. Which
+    // one fires on which shape is measured in `injection-corpus.test.ts`.
+    expect(patterns?.patterns.map((pattern) => pattern.id)).toEqual([
+      "pattern.injected-instruction",
+      "pattern.instruction-override",
+      "pattern.addressed-to-the-model",
+      "pattern.tool-call-directive",
+      "pattern.concealment-directive",
+      "pattern.conversation-delimiter",
+    ]);
   });
 
   test("the injected-instruction regex matches the note the loan book actually holds", () => {
