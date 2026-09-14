@@ -1,99 +1,47 @@
-"use client";
-
 /**
  * The applications under review, read through the governed path.
  *
- * Split in two the way `components/governance` is, and for the same reason:
- * {@link LoanFilesView} is a pure function of what the read produced, so every
- * property worth asserting is checkable without a socket, and this component
- * adds nothing to it but a `fetch` and a piece of state.
+ * A pure function of what the read produced, so every property worth asserting
+ * is checkable without a socket. It was the pure half of a pair until #109 —
+ * the other half was a client component that fetched `/api/loan-context` and
+ * held a piece of state — and the pair is gone: the reads happen in
+ * `app/page.tsx`, on the gateway session that already lists this persona's
+ * tools, and arrive here as props. One page load, one `tools/list`.
  *
- * **It calls `/api/loan-context`, which calls the gateway.** Opening this page
- * makes two real governed tool calls as the signed-in person — `Loan_GetLoan`,
- * through `/access`, the auth requirement and `/pre` — and two rows appear on
- * the panel opposite before the presenter has said anything. That is the
- * honest price of a left half that reads the bank's system of record the same
- * way the agent does; the alternative is a second, ungoverned path into the
- * same data sitting inches from a panel claiming there is only one.
- * `lib/loan-context/handlers.ts` has the full argument.
+ * **The files are still read through the gateway.** Two real governed tool
+ * calls as the signed-in person — `Loan_GetLoan`, through `/access`, the auth
+ * requirement and `/pre` — and two rows appear on the panel opposite before the
+ * presenter has said anything. That is the honest price of a left half that
+ * reads the bank's system of record the same way the agent does; the
+ * alternative is a second, ungoverned path into the same data sitting inches
+ * from a panel claiming there is only one. `lib/loan-context/read.ts` has the
+ * full argument.
  */
-import { useCallback, useEffect, useState } from "react";
-
-import {
-  LOAN_CONTEXT_PATH,
-  type LoanContextBody,
-  type LoanContextRefusal,
-} from "../../lib/loan-context/loans.ts";
+import type { LoanContextRefusal, LoanFilesState } from "../../lib/loan-context/loans.ts";
 import { LoanFileCard } from "./LoanFileCard.tsx";
 
 /**
  * Where a refusal sends the reader.
  *
  * The two paths are written out rather than imported from
- * `lib/identity/handlers.ts`, which is a server module: importing it into a
- * client component drags the OIDC client and the sealing code into the browser
- * bundle, which is the failure `lib/agent/events.ts` records for `CHAT_PATH`.
- * The cost of a duplicated literal is drift, so `test/split-screen.test.tsx`
- * reads the other file and fails if the two ever disagree — the same bargain
- * `lib/config.ts` strikes with `DEV_STORE_TOKEN`.
+ * `lib/identity/handlers.ts`, which is a server module: importing it into this
+ * component drags the OIDC client and the sealing code into the browser bundle
+ * — `BankPane` is `"use client"`, so everything under it is client code — which
+ * is the failure `lib/agent/events.ts` records for `CHAT_PATH`. The cost of a
+ * duplicated literal is drift, so `test/split-screen.test.tsx` reads the other
+ * file and fails if the two ever disagree — the same bargain `lib/config.ts`
+ * strikes with `DEV_STORE_TOKEN`.
  */
 const WAYS_IN = {
   signin: { href: "/api/auth/signin", label: "Sign in" },
   gateway: { href: "/api/arcade/start", label: "Authorize the loan book" },
 } as const;
 
-export type LoanFilesState =
-  | { status: "loading" }
-  | { status: "loaded"; body: LoanContextBody }
-  | { status: "refused"; refusal: LoanContextRefusal };
-
-export function LoanFiles() {
-  const [state, setState] = useState<LoanFilesState>({ status: "loading" });
-
-  const load = useCallback(async (signal: AbortSignal) => {
-    setState({ status: "loading" });
-    try {
-      const response = await fetch(LOAN_CONTEXT_PATH, { signal, cache: "no-store" });
-      const body = (await response.json().catch(() => null)) as
-        | LoanContextBody
-        | LoanContextRefusal
-        | null;
-      if (signal.aborted) return;
-      if (response.ok && body !== null && "reads" in body) {
-        setState({ status: "loaded", body });
-        return;
-      }
-      setState({
-        status: "refused",
-        refusal: (body as LoanContextRefusal | null) ?? {
-          error: `The loan book answered ${response.status}.`,
-        },
-      });
-    } catch (cause) {
-      if (signal.aborted) return;
-      setState({
-        status: "refused",
-        refusal: { error: cause instanceof Error ? cause.message : String(cause) },
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
-
-  return <LoanFilesView state={state} />;
-}
-
 export function LoanFilesView({ state }: { state: LoanFilesState }) {
   return (
     <section className="bank-panel" aria-label="Applications under review">
       <h2 className="bank-panel-title">Applications under review</h2>
       <div className="bank-panel-body">
-        {state.status === "loading" ? <p className="bank-quiet">Retrieving files…</p> : null}
-
         {state.status === "refused" ? <Refusal refusal={state.refusal} /> : null}
 
         {state.status === "loaded" ? (

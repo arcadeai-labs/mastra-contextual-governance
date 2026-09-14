@@ -30,7 +30,7 @@ import { LoanFileCard } from "../components/bank/LoanFileCard.tsx";
 import { SplitScreen } from "../components/shell/SplitScreen.tsx";
 import { TOOL_LIST_SLOT } from "../components/bank/ToolListSlot.tsx";
 import { GATEWAY_START_PATH, SIGNIN_PATH } from "../lib/identity/handlers.ts";
-import type { LoanRead } from "../lib/loan-context/loans.ts";
+import type { LoanFilesState, LoanRead } from "../lib/loan-context/loans.ts";
 import type { Session } from "../lib/identity/session.ts";
 import type { SessionTools } from "../lib/agent/tool-list.ts";
 import type { PanelStream } from "../lib/governance/stream-url.ts";
@@ -45,12 +45,13 @@ const LIVE_STREAM: PanelStream = {
   host: "cg-hooks.onrender.com",
 };
 
-function shell(options: { stream?: PanelStream; signedInAs?: string | null } = {}): string {
+function shell(options: { stream?: PanelStream; signedInAs?: string | null; loanFiles?: LoanFilesState } = {}): string {
   return renderToStaticMarkup(
     <SplitScreen
       stream={options.stream ?? FIXTURE_STREAM}
       signedInAs={options.signedInAs === undefined ? "dana.okafor@bank.example" : options.signedInAs}
       identity={<p>the sign-in panel, server-rendered</p>}
+      loanFiles={options.loanFiles ?? FILES}
     />,
   );
 }
@@ -96,6 +97,16 @@ const NORTHWIND: LoanRead = {
     years_in_business: 8,
     underwriter_notes: "Debt service coverage 1.4x on trailing twelve months.",
   },
+};
+
+/**
+ * What `app/page.tsx` hands the shell since #109: the reads, already made, in
+ * the same gateway session that listed the persona's tools. There is no
+ * fetching component under here any more, so a fixture is all the shell needs.
+ */
+const FILES: LoanFilesState = {
+  status: "loaded",
+  body: { reads: [NORTHWIND], actor: "dana.okafor@bank.example", tool: "Loan_GetLoan" },
 };
 
 describe("the split", () => {
@@ -181,7 +192,7 @@ describe("the split", () => {
 
   test("the tool list has a named slot, and the shell does not fill it with its own", () => {
     const markup = renderToStaticMarkup(
-      <BankPane signedInAs="dana.okafor@bank.example" identity={null} />,
+      <BankPane signedInAs="dana.okafor@bank.example" identity={null} loanFiles={FILES} />,
     );
 
     expect(markup).toContain(`data-slot="${TOOL_LIST_SLOT}"`);
@@ -196,6 +207,7 @@ describe("the split", () => {
       <BankPane
         signedInAs="dana.okafor@bank.example"
         identity={null}
+        loanFiles={FILES}
         toolList={<p>four tools, from the gateway</p>}
       />,
     );
@@ -222,6 +234,7 @@ describe("the split", () => {
       <BankPane
         signedInAs={SAM}
         identity={null}
+        loanFiles={FILES}
         toolList={<PersonaToolList session={samSession()} tools={SAM_TOOLS} />}
       />,
     );

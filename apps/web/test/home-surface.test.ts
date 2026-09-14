@@ -1,74 +1,65 @@
 /**
- * The left half's loan files, read through the governed path.
+ * What one load of `/` asks the gateway for, and what comes back.
  *
- * The point of this suite is one sentence: **the enterprise half of the split
- * screen is a client of the control plane like everything else.** It is easy to
- * build a demo where the pretty panel on the right watches governed calls while
- * the business app on the left quietly reads the database, and impossible to
- * tell from a screenshot. So these tests assert the path, not just the pixels:
- * every loan file on screen came out of a real `tools/call` made as the
- * signed-in person, through the real `/pre`, and is in the audit log.
+ * Two claims, and the file is organised around both:
+ *
+ * 1. **The enterprise half of the split screen is a client of the control plane
+ *    like everything else.** It is easy to build a demo where the pretty panel
+ *    on the right watches governed calls while the business app on the left
+ *    quietly reads the database, and impossible to tell from a screenshot. So
+ *    these tests assert the path, not just the pixels: every loan file on
+ *    screen came out of a real `tools/call` made as the signed-in person,
+ *    through the real `/pre`, and is in the audit log.
+ * 2. **It costs exactly one `tools/list` (#109).** The tool list and the loan
+ *    files are two questions for one gateway session, and the gateway stand-in
+ *    records every listing it answers, so that is a number this file reads back
+ *    rather than a claim a comment makes.
  *
  * Real here: `apps/hooks` with its real policy, `apps/loan-app` with a real
- * `loans.db`, the real MCP transport, the real route. The Arcade gateway is the
- * stand-in (`scripts/gateway-stand-in.ts`) and is the only fiction — the same
- * line #14 draws, in the same place.
+ * `loans.db`, the real MCP transport, the real server-side page surface. The
+ * Arcade gateway is the stand-in (`scripts/gateway-stand-in.ts`) and is the
+ * only fiction — the same line #14 draws, in the same place.
  *
  * No model runs in this file. Reading a loan file is not a turn of the agent,
  * and a cg-web with no `ANTHROPIC_API_KEY` must still show the loan the
  * audience is being asked to think about.
+ *
+ * This suite was `test/loan-context.test.ts` until #109, when the route it
+ * drove — `GET /api/loan-context` — was deleted and its work moved into
+ * `app/page.tsx`'s server component. The assertions are the same ones; what
+ * changed is that they are made against `homeSurface`, which is the function
+ * the page calls.
  */
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import { DANA, SAM, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
-import { loanContext } from "../lib/loan-context/handlers.ts";
-import {
-  DEMO_LOAN_IDS,
-  LOAN_CONTEXT_PATH,
-  type LoanContextBody,
-  type LoanContextRefusal,
-} from "../lib/loan-context/loans.ts";
-import { writeSession, type Session } from "../lib/identity/session.ts";
+import { homeSurface, type HomeSurface } from "../lib/home/surface.ts";
+import { DEMO_LOAN_IDS, type LoanContextBody, type LoanContextRefusal } from "../lib/loan-context/loans.ts";
+import type { Session } from "../lib/identity/session.ts";
 
 let harness: AgentHarness;
-let web: ReturnType<typeof Bun.serve>;
-
-/**
- * The sentence the test's own rule writes. Distinctive, so nothing else can
- * produce it.
- *
- * The rule's full reason ends with "Do not retry." because the policy compiler
- * insists on it, twice over. Measured while writing this, off the hook server's
- * own `/health`: a `/pre` denial whose reason neither names a catalogued
- * remediation tool with its arguments nor says "Do not retry" fails to compile
- * — and one that says "Do not retry" *and* names a tool fails too, because it
- * tells the model two different things. Either way the control plane starts
- * failing closed and every call is refused with "its policy is unavailable".
- * Worth knowing before anybody hand-edits a rule on stage.
- */
-const RULE_REASON = "credit analysts do not read complete loan files";
 
 beforeAll(async () => {
   harness = await startAgentHarness();
-  web = Bun.serve({
-    port: 0,
-    idleTimeout: 60,
-    fetch: (request) =>
-      new URL(request.url).pathname === LOAN_CONTEXT_PATH
-        ? loanContext(request, { config: harness.config })
-        : new Response(null, { status: 404 }),
-  });
 }, 60_000);
 
 afterAll(async () => {
-  web?.stop(true);
   await harness?.stop();
 });
 
-/** The cookie a browser signed in as `email` and holding a gateway token would send. */
-async function browserFor(email: string, options: { gateway?: boolean } = {}): Promise<string> {
-  const session: Session = {
+/** The sentence the test's own rule writes. Distinctive, so nothing else can produce it. */
+const RULE_REASON = "credit analysts do not read complete loan files";
+
+/**
+ * The sealed session a browser signed in as `email` would carry.
+ *
+ * The page unseals the cookie itself and hands the `Session` down, so this is
+ * where the suite joins the real code: one object, exactly the one
+ * `readSessionFromCookies` produces.
+ */
+function sessionFor(email: string, options: { gateway?: boolean } = {}): Session {
+  return {
     email,
     signed_in_at: Date.now(),
     ...(options.gateway === false
@@ -77,38 +68,45 @@ async function browserFor(email: string, options: { gateway?: boolean } = {}): P
           gateway: {
             access_token: harness.tokenFor(email),
             expires_at: Date.now() + 3_600_000,
-            client_id: "mcp-client-for-loan-context-tests",
+            client_id: "mcp-client-for-home-surface-tests",
           },
         }),
   };
-  const headers = new Headers();
-  await writeSession(headers, new Request("http://localhost/"), session, harness.config);
-  return headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0] as string)
-    .join("; ");
 }
 
-async function read(cookie?: string): Promise<{ status: number; body: LoanContextBody & LoanContextRefusal; text: string }> {
-  const response = await fetch(`http://localhost:${web.port}${LOAN_CONTEXT_PATH}`, {
-    headers: cookie === undefined ? {} : { cookie },
-  });
-  const text = await response.text();
-  return { status: response.status, body: JSON.parse(text), text };
+/** One load of `/`, as far as the gateway is concerned. */
+function load(session: Session | null): Promise<HomeSurface> {
+  return homeSurface(session, { config: harness.config });
 }
+
+/** The loaded body, or a loud failure naming the refusal instead. */
+function loaded(surface: HomeSurface): LoanContextBody {
+  if (surface.files.status !== "loaded") {
+    throw new Error(`expected loan files, got a refusal: ${surface.files.refusal.error}`);
+  }
+  return surface.files.body;
+}
+
+/** The refusal, or a loud failure. */
+function refused(surface: HomeSurface): LoanContextRefusal {
+  if (surface.files.status !== "refused") throw new Error("expected a refusal, got loan files");
+  return surface.files.refusal;
+}
+
+/** Everything that crossed to the browser. A value in the props is a value in the page source. */
+const crossed = (surface: HomeSurface) => JSON.stringify(surface.files);
 
 describe("the files on the left half", () => {
   test("both applications come back, read as the person signed in on this browser", async () => {
-    const { status, body } = await read(await browserFor(DANA));
+    const body = loaded(await load(sessionFor(DANA)));
 
-    expect(status).toBe(200);
     expect(body.reads.map((entry) => entry.loan_id)).toEqual([...DEMO_LOAN_IDS]);
     expect(body.reads.map((entry) => entry.outcome)).toEqual(["read", "read"]);
     expect(body.actor).toBe(DANA);
   });
 
   test("what is on screen is what the loan book holds, not a fixture beside it", async () => {
-    const { body } = await read(await browserFor(DANA));
+    const body = loaded(await load(sessionFor(DANA)));
     const shown = body.reads[0];
     const held = await harness.loan(DEMO_LOAN_IDS[0], DANA);
 
@@ -120,7 +118,7 @@ describe("the files on the left half", () => {
   });
 
   /**
-   * The whole reason this route exists rather than a database read.
+   * The whole reason these reads exist rather than a database read.
    *
    * `harness.calls` is what the gateway saw. Two `tools/call`s, both
    * `Loan_GetLoan`, both as Dana, both of which ran only because the real `/pre`
@@ -129,7 +127,7 @@ describe("the files on the left half", () => {
    */
   test("every file went through the gateway as that person, not round it", async () => {
     const before = harness.calls.length;
-    await read(await browserFor(DANA));
+    await load(sessionFor(DANA));
 
     const calls = harness.calls.slice(before);
     expect(calls).toHaveLength(2);
@@ -145,15 +143,15 @@ describe("the files on the left half", () => {
    * Both layers, named separately.
    *
    * Since #15 the gateway stand-in asks `/access` before it answers
-   * `tools/list`, so a page load now leaves `access` rows for `Loan.GetLoan`
-   * as well as the `pre` rows the call itself produces. That is the left half's
-   * read passing layer 1 and layer 3, and the two are counted apart rather than
-   * together: a filter that accepted either would keep passing if the `/pre`
-   * rows stopped being written, which is the row that says the call was allowed
-   * to happen at all.
+   * `tools/list`, so a page load leaves `access` rows for `Loan.GetLoan`
+   * as well as the `pre` rows the calls themselves produce. That is the left
+   * half's read passing layer 1 and layer 3, and the two are counted apart
+   * rather than together: a filter that accepted either would keep passing if
+   * the `/pre` rows stopped being written, which is the row that says the call
+   * was allowed to happen at all.
    */
   test("the control plane recorded both reads, at both layers", async () => {
-    await read(await browserFor(DANA));
+    await load(sessionFor(DANA));
     const rows = await harness.audit();
     const forThisTool = rows.filter((row) => row.tool === "Loan.GetLoan" && row.user_id === DANA);
 
@@ -165,35 +163,113 @@ describe("the files on the left half", () => {
    * Act 3's subject, kept off the projector.
    *
    * `Loan_GetLoan` returns `bank_account_number` and `tax_id`; this screen does
-   * not render them, and the response it serves the browser does not carry
-   * them either. Asserted on the wire rather than on the markup, because a
-   * value that reaches the client is a value in the page source whatever the
-   * component draws.
+   * not render them, and the props the server component hands the browser do
+   * not carry them either. Asserted on what crosses the boundary rather than on
+   * the markup, because a value that reaches the client is a value in the page
+   * source whatever the component draws.
    */
   test("the borrower's account number and tax id never leave the server", async () => {
     const held = await harness.loan(DEMO_LOAN_IDS[0], DANA);
-    const { text } = await read(await browserFor(DANA));
+    const props = crossed(await load(sessionFor(DANA)));
 
-    expect(text).not.toContain("bank_account_number");
-    expect(text).not.toContain(held.bank_account_number as string);
-    expect(text).not.toContain(held.tax_id as string);
+    expect(props).not.toContain("bank_account_number");
+    expect(props).not.toContain(held.bank_account_number as string);
+    expect(props).not.toContain(held.tax_id as string);
+  });
+});
+
+/**
+ * #109, as a number.
+ *
+ * The issue's measurement: a page load cost two `tools/list` calls, one for
+ * #15's widget in the server component and one inside `GET /api/loan-context`,
+ * which the browser fetched afterwards and which could not share the first
+ * one's MCP session. The fix is not "the reads moved" — it is that there is now
+ * one gateway session per page load, and the only way to say that is to count.
+ *
+ * `harness.lists` is the gateway stand-in's own record, one entry per
+ * `tools/list` JSON-RPC message it answered. Nothing in the assertion is
+ * derived from the code under test.
+ */
+describe("what one page load costs", () => {
+  test("one load of / makes exactly one tools/list", async () => {
+    const before = harness.lists.length;
+    const surface = await load(sessionFor(DANA));
+
+    // Both halves of the screen were answered…
+    expect(surface.tools.ok).toBe(true);
+    expect(surface.files.status).toBe("loaded");
+    // …off one listing.
+    expect(harness.lists.length - before).toBe(1);
+  });
+
+  test("the one listing is the one the tool list is rendered from, for this persona", async () => {
+    const before = harness.lists.length;
+    const surface = await load(sessionFor(SAM));
+
+    const listings = harness.lists.slice(before);
+    expect(listings).toHaveLength(1);
+    const listing = listings[0];
+    expect(listing?.user_id).toBe(SAM);
+    // The widget's names are that listing's names, minus the built-ins it says
+    // it filtered. Not a second source, and not a client-side filter.
+    if (!surface.tools.ok) throw new Error(surface.tools.reason);
+    expect([...surface.tools.tools.map((tool) => tool.name), ...surface.tools.filtered].sort()).toEqual(
+      [...(listing?.advertised ?? [])].sort(),
+    );
+    // Act 1 survives the fold: as Sam, the approval tool is absent from the
+    // listing itself, so it is absent from the widget without anything here
+    // hiding it.
+    expect(listing?.hidden).toContain("Loan_ApproveLoan");
+    expect(surface.tools.tools.map((tool) => tool.name)).not.toContain("Loan_ApproveLoan");
+  });
+
+  test("and it still costs exactly two governed calls, no more", async () => {
+    const before = harness.calls.length;
+    await load(sessionFor(DANA));
+
+    expect(harness.calls.length - before).toBe(2);
   });
 });
 
 describe("when there is nobody to read as", () => {
-  test("no session is a refusal that points at signing in, not an empty screen", async () => {
-    const { status, body } = await read();
+  test("no session asks the gateway nothing at all", async () => {
+    const before = harness.lists.length;
+    const surface = await load(null);
 
-    expect(status).toBe(401);
-    expect(body.action).toBe("signin");
-    expect(body.error).toContain("signed in");
+    expect(harness.lists.length - before).toBe(0);
+    expect(surface.tools.ok).toBe(false);
+  });
+
+  test("no session is a refusal that points at signing in, not an empty screen", async () => {
+    const refusal = refused(await load(null));
+
+    expect(refusal.action).toBe("signin");
+    expect(refusal.error).toContain("signed in");
   });
 
   test("a session with no gateway token points at the gateway hop", async () => {
-    const { status, body } = await read(await browserFor(DANA, { gateway: false }));
+    const refusal = refused(await load(sessionFor(DANA, { gateway: false })));
 
-    expect(status).toBe(401);
-    expect(body.action).toBe("gateway");
+    expect(refusal.action).toBe("gateway");
+  });
+
+  /**
+   * The same failure, said twice, on both halves of the screen.
+   *
+   * The tool list and the loan files come out of one session now, so a session
+   * that never opened has to leave both columns saying something. A page that
+   * named the problem under "User access" and drew an empty column under
+   * "Applications under review" would be the left half looking like a control
+   * plane that refused everything.
+   */
+  test("a missing gateway token is named on both halves, not just the tool list", async () => {
+    const surface = await load(sessionFor(DANA, { gateway: false }));
+
+    expect(surface.tools.ok).toBe(false);
+    if (surface.tools.ok) throw new Error("unreachable");
+    expect(surface.tools.reason).not.toBe("");
+    expect(refused(surface).error).toBe(surface.tools.reason);
   });
 });
 
@@ -211,13 +287,39 @@ describe("when the read does not produce a file", () => {
       "Loan_GetLoan",
       "https://cloud.arcade.dev/api/v1/oauth/flow/for-loan-context",
     );
-    const { body } = await read(await browserFor(DANA));
+    const body = loaded(await load(sessionFor(DANA)));
 
     const [first, second] = body.reads;
     expect(first?.outcome).toBe("authorization");
     if (first?.outcome !== "authorization") throw new Error("unreachable");
     expect(first.url).toBe("https://cloud.arcade.dev/api/v1/oauth/flow/for-loan-context");
     expect(second?.outcome).toBe("read");
+  });
+
+  /**
+   * The toolkit that is not there.
+   *
+   * The loud sentence #22 wrote and #109 moved: it named `ARCADE_LOAN_TOOLKIT`
+   * when it was a route's 502 body and it names it on the page now, because the
+   * symptom — an empty column where the loan files should be — looks exactly
+   * like a control plane that denied them, and only this sentence tells a human
+   * which variable to go and fix. The tool list beside it is unaffected and
+   * still lists what the gateway advertised, which is the other half of the
+   * evidence: the gateway answered, we asked it for the wrong thing.
+   */
+  test("a toolkit name that matches nothing says so, by name, and names the count", async () => {
+    const misconfigured = {
+      ...harness.config,
+      agent: { ...harness.config.agent, toolkits: ["Lending"] },
+    };
+    const surface = await homeSurface(sessionFor(DANA), { config: misconfigured });
+
+    const refusal = refused(surface);
+    expect(refusal.error).toContain("and none of the governed ones is a GetLoan");
+    expect(refusal.error).toContain("Check ARCADE_LOAN_TOOLKIT against a real tools/list.");
+    // The number is the gateway's own answer, not a constant.
+    expect(refusal.error).toMatch(/The gateway advertised [1-9]\d* tools/);
+    expect(refusal.detail).toContain("Loan_GetLoan");
   });
 
   /**
@@ -230,7 +332,7 @@ describe("when the read does not produce a file", () => {
    * below are untouched, and the rule is removed afterwards.
    *
    * What is being proved is not that a hook can deny. It is that when one does,
-   * this route says `denied` — carrying the rule author's sentence and the audit
+   * the page says `denied` — carrying the rule author's sentence and the audit
    * row's `[ref evt_…]` token, which is what the panel joins on. A refusal
    * classified as a fault would put "something broke" on screen next to a panel
    * showing the decision that was actually made.
@@ -253,7 +355,9 @@ describe("when the read does not produce a file", () => {
       // and one that is also a denial — so a looser predicate would let this
       // test pass on a refusal the new rule had nothing to do with.
       const denied = await until(async () => {
-        const { body } = await read(await browserFor(SAM));
+        const surface = await load(sessionFor(SAM));
+        if (surface.files.status !== "loaded") return null;
+        const body = surface.files.body;
         return body.reads.every(
           (entry) => entry.outcome === "denied" && entry.reason.includes(RULE_REASON),
         )
@@ -282,8 +386,11 @@ describe("when the read does not produce a file", () => {
       cleanup.close();
       // Wait for the cache to drop it, so nothing after this file sees it.
       await until(async () => {
-        const { body } = await read(await browserFor(SAM));
-        return body.reads.every((entry) => entry.outcome === "read") ? body : null;
+        const surface = await load(sessionFor(SAM));
+        if (surface.files.status !== "loaded") return null;
+        return surface.files.body.reads.every((entry) => entry.outcome === "read")
+          ? surface.files.body
+          : null;
       });
     }
   }, 20_000);
@@ -298,11 +405,12 @@ describe("when the read does not produce a file", () => {
    */
   test("an unreachable loan book is a fault, and is never called a refusal", async () => {
     await harness.stopLoanApp();
-    const { body, text } = await read(await browserFor(DANA));
+    const surface = await load(sessionFor(DANA));
+    const body = loaded(surface);
 
     expect(body.reads.map((entry) => entry.outcome)).toEqual(["fault", "fault"]);
-    expect(text).not.toContain("denied");
-    expect(text).not.toContain("CHECK_FAILED");
+    expect(crossed(surface)).not.toContain("denied");
+    expect(crossed(surface)).not.toContain("CHECK_FAILED");
   });
 });
 
