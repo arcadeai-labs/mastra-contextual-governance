@@ -39,7 +39,13 @@ import { EVENTS_PATH } from "./events.ts";
 import { fixtureDigest } from "./fixture-drift.ts";
 import { createPolicyCache } from "./policy-cache.ts";
 import { recoverStalePolicy } from "./policy-recovery.ts";
-import { counts, loadSeed, openGovernance } from "./policy-store.ts";
+import {
+  counts,
+  describeMigration,
+  loadSeed,
+  openGovernance,
+  type MigrationReport,
+} from "./policy-store.ts";
 import { orExitConfig } from "./public-host.ts";
 import { createServer, SERVICE } from "./server.ts";
 
@@ -49,7 +55,16 @@ const log = (line: string) => console.log(`[${SERVICE}] ${line}`);
 // surprise later — see `public-host.ts`. Every other configuration error still
 // propagates as it did.
 const config = orExitConfig(SERVICE, readConfig);
-const db = openGovernance(config.dbPath, config);
+// A disk that predates this build is brought forward before anything else
+// happens, and says so exactly once — on the boot that did it (#103). The same
+// report stays on `/health` for the life of the process, because a boot line
+// scrolls away and a Render deploy log is not where somebody checks whether
+// 745,000 rows were rewritten.
+let migration: MigrationReport | null = null;
+const db = openGovernance(config.dbPath, config, (report) => {
+  migration = report;
+  log(describeMigration(report));
+});
 // Loaded once, from the image. Both the drift comparison and the reset use
 // this and never re-read the file: a reseed driven from the *booting* image's
 // fixture is the property a shell command on a rolled-back instance cannot
@@ -82,7 +97,7 @@ const notices = createApprovalNoticeBus({
   onSubscriberError: (cause) => log(`APPROVAL NOTICE SUBSCRIBER FAILED: ${String(cause)}`),
 });
 
-const server = createServer({ config, db, cache, bus, notices, log, seed });
+const server = createServer({ config, db, cache, bus, notices, log, seed, migration });
 
 const tally = counts(db);
 log(

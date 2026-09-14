@@ -268,27 +268,33 @@ describe("the audit log", () => {
     expect(byExecution(db, "tc_1")).toEqual([event]);
   });
 
-  test("a row written before #101 reads back without the payload it used to hold", () => {
-    // `audit_log` keeps its `before`/`after` columns so an existing demo
-    // database opens without a migration. What changed is that nothing writes
-    // them and nothing reads them, so a pre-#101 row's raw tool output stops
-    // being served on an unauthenticated `GET /events` — and, since
-    // `GovernanceEvent` is `.strict()`, projecting it would now throw anyway.
+  test("has nowhere to put a payload: the pre-#101 write is refused by the table", () => {
+    // #101 stopped writing `before`/`after`; #103 removed the columns, so the
+    // old write is no longer a thing the database will accept at all. Stated
+    // as the insert the old code used to make, because "nothing writes it any
+    // more" is a claim about this repo and "the column is gone" is a claim
+    // about every connection — including a `sqlite3` shell on the Render disk.
     const db = fresh();
-    // Written the way the old code wrote it — straight at the columns, since
-    // `record()` no longer binds them and the log refuses an UPDATE.
-    db.run(
-      `INSERT INTO audit_log
-         (id, ts, execution_id, hook, user_id, tool, decision, reason, rule_id, before, after)
-       VALUES ('evt_legacy', '2026-01-01T00:00:00.000Z', 'tc_legacy', 'post', 'dana@example.test',
-               'Loan.GetLoan', 'modify', 'Sensitive field masked.', 'rule.redact', ?, ?)`,
-      [JSON.stringify({ acct: "4738299104857" }), JSON.stringify({ acct: "***" })],
-    );
 
-    const [read] = recent(db);
+    expect(() =>
+      db.run(
+        `INSERT INTO audit_log
+           (id, ts, execution_id, hook, user_id, tool, decision, reason, rule_id, before, after)
+         VALUES ('evt_legacy', '2026-01-01T00:00:00.000Z', 'tc_legacy', 'post', 'dana@example.test',
+                 'Loan.GetLoan', 'modify', 'Sensitive field masked.', 'rule.redact', ?, ?)`,
+        [JSON.stringify({ acct: "4738299104857" }), JSON.stringify({ acct: "***" })],
+      ),
+    ).toThrow(/no column named before/);
 
-    expect(Object.keys(read!)).not.toContain("before");
-    expect(JSON.stringify(read)).not.toContain("4738299104857");
+    const columns = db
+      .query<{ name: string }, []>("PRAGMA table_info(audit_log)")
+      .all()
+      .map((row) => row.name);
+    expect(columns).not.toContain("before");
+    expect(columns).not.toContain("after");
+    // The column that replaced them is still here, and still the only place a
+    // /post modify says anything about what it removed.
+    expect(columns).toContain("redactions");
   });
 
   test("is append-only: the database itself refuses UPDATE and DELETE", () => {

@@ -45,16 +45,16 @@ interface AuditRow {
 }
 
 /**
- * `audit_log` still has `before` and `after` columns and they are deliberately
- * absent above.
+ * `audit_log` has no `before` and no `after`, which is why they are absent
+ * above.
  *
- * `GovernanceEvent` dropped the fields on #101, finishing what #16 decided: the
- * event carries `redactions[]` — where and why — and never a payload. Nothing
- * writes those columns any more, and {@link fromRow} does not read them, so a
- * database carrying rows from before the change stops serving their payloads on
- * an unauthenticated `GET /events` rather than failing to parse them. The
- * columns themselves stay until a schema version has another reason to move;
- * dropping one is a migration this slice has no cause to make anybody run.
+ * #16 decided the row never carries a removed value; #101 stopped writing and
+ * reading the two columns that could; #103 dropped them from the schema and
+ * vacuumed the file, so the payloads rows appended before #101 held are gone
+ * rather than merely unread. The queries below are `SELECT *` and the shape
+ * they return is `AuditRow`: a column that is not in this interface is a
+ * column nothing here can leak, but until #103 it was still a column a
+ * `sqlite3` shell on the Render disk could read aloud.
  */
 
 /**

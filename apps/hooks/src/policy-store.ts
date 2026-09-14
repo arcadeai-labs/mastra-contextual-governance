@@ -31,7 +31,7 @@
  * or wider than the one someone thought they wrote.
  */
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 
@@ -307,12 +307,12 @@ const SCHEMA = `
     decision     TEXT    NOT NULL CHECK (decision IN ('allow', 'deny', 'modify')),
     reason       TEXT    NOT NULL,
     rule_id      TEXT,
-    -- Retired on #101 and never written again: GovernanceEvent has no payload
-    -- fields, because this table is durable and GET /events is unauthenticated.
-    -- Kept as columns so a database with rows from before the change opens
-    -- without a migration; src/audit-log.ts neither writes nor reads them.
-    before       TEXT,
-    after        TEXT,
+    -- There is deliberately no column here for a payload. 'before' and 'after'
+    -- lived in this spot until #103 dropped them: #16 decided the row never
+    -- carries a removed value, #101 stopped writing and reading them, and a
+    -- column that can hold raw tool output on a durable table served by an
+    -- unauthenticated GET /events eventually does. Version 3 in MIGRATIONS
+    -- removes them from disks that predate this; version 4 sweeps the file.
     -- What a /post modify removed: a JSON array of RedactionRecord — path,
     -- rule_id, pattern_id, kind — and never a removed value. NULL on every
     -- other row. Added at schema version 2 (#16); see MIGRATIONS.
@@ -380,20 +380,42 @@ const REVISION_TRIGGERS = ["subjects", "catalogue", "policy_rules", "output_rule
  *
  * Version 2 is #16: `audit_log.redactions`, the first added *column* this
  * schema has had, which is what {@link MIGRATIONS} exists for.
+ *
+ * Version 3 is #103: `audit_log.before` and `audit_log.after` dropped. Version
+ * 4 is the same slice's second half — the `VACUUM` that makes the payloads
+ * those columns held unrecoverable from the file rather than merely
+ * unselectable. Two versions for one change because `VACUUM` cannot run inside
+ * a transaction: see {@link MIGRATIONS} and {@link upgradeSchema}.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 4;
 
 /**
  * What each version needs beyond a replay of `SCHEMA`, keyed by the version it
- * brings the database *to*. Applied in ascending order, inside the same
- * transaction as the version bump, and only for versions above the one on disk.
+ * brings the database *to*. Applied in ascending order, and only for versions
+ * above the one on disk.
  *
  * Each statement is written to be safe against a database that already has the
  * change — `columnExists` guards the `ALTER`s — so a disk at version 0, which
  * predates the recorded version and may be anywhere, is brought forward rather
  * than crashed on.
+ *
+ * A step is transactional by default: it runs inside the same transaction as
+ * the replay of `SCHEMA` and the version stamp, so a throw rolls the whole
+ * upgrade back to the version already on disk and the next boot retries. A
+ * step marked `outsideTransaction` cannot be — `VACUUM` is the only statement
+ * here that SQLite refuses inside one — so it runs after that transaction
+ * commits and stamps its own version on its own, which is what keeps *it*
+ * retried on the next boot if it fails. Such a step must therefore sort last.
  */
-const MIGRATIONS: ReadonlyArray<{ to: number; apply: (db: Database) => void }> = [
+interface Migration {
+  /** The version this step brings the database to. */
+  to: number;
+  /** `true` only for `VACUUM`, which SQLite will not run inside a transaction. */
+  outsideTransaction?: true;
+  apply: (db: Database) => void;
+}
+
+const MIGRATIONS: ReadonlyArray<Migration> = [
   {
     to: 2,
     apply: (db) => {
@@ -403,6 +425,49 @@ const MIGRATIONS: ReadonlyArray<{ to: number; apply: (db: Database) => void }> =
       if (!columnExists(db, "audit_log", "redactions")) {
         db.exec("ALTER TABLE audit_log ADD COLUMN redactions TEXT");
       }
+    },
+  },
+  {
+    to: 3,
+    apply: (db) => {
+      // #103: the payload columns go. Nothing has written them since #101 and
+      // nothing reads them, but rows appended before that still hold raw tool
+      // output — account numbers and tax ids among it — on a disk that
+      // persists across deploys and behind an unauthenticated GET /events.
+      // A column nobody writes is still a column somebody can SELECT.
+      //
+      // `DROP COLUMN` rather than a table rebuild: SQLite 3.51 (bundled with
+      // bun:sqlite) supports it, it keeps `seq` and the AUTOINCREMENT sequence
+      // exactly as they were, and it does not have to step around the
+      // append-only triggers the way an INSERT ... SELECT rebuild would.
+      // Measured at 4.9s over 750,000 rows — see the PR on #103.
+      for (const column of ["before", "after"]) {
+        if (columnExists(db, "audit_log", column)) {
+          db.exec(`ALTER TABLE audit_log DROP COLUMN "${column}"`);
+        }
+      }
+    },
+  },
+  {
+    to: 4,
+    outsideTransaction: true,
+    apply: (db) => {
+      // The other half of #103, and the half that is actually about secrecy.
+      //
+      // `DROP COLUMN` rewrites every row, and SQLite zeroes the gap it
+      // defragments *inside* a page — so a short payload does come back clean
+      // on its own. What it does not do is touch the overflow pages a long
+      // payload spilled onto: those go to the freelist with their bytes
+      // intact. Measured both ways at 1,000 rows, same account number, same
+      // 4KB of notes, only the order changed: ahead of the notes, 0 of 1,000
+      // recoverable after the drop; behind them, 998. Raw tool output is
+      // exactly the long kind. VACUUM rewrites the file whole and settles it.
+      //
+      // Then the WAL: the checkpoint is `TRUNCATE` rather than the default,
+      // because a WAL still holding pre-migration frames is the same leak one
+      // file over.
+      db.exec("VACUUM");
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     },
   },
 ];
@@ -423,8 +488,18 @@ function columnExists(db: Database, table: string, column: string): boolean {
  * and what breaks if it is crossed. On an existing database only the DDL runs,
  * because its rows are the live state of the demo and reseeding them would make
  * a restart a reset (#29).
+ *
+ * `onMigration` is called once, after the upgrade, and only on the boot that
+ * actually moved the version. A migration that rewrites 745,000 rows and
+ * rewrites the file is not something a service should do silently: the caller
+ * puts it on the boot line and `/health` carries it for the rest of the
+ * process. A fresh database and an already-current one never call it.
  */
-export function openGovernance(path: string, seedOptions: SeedOptions): Database {
+export function openGovernance(
+  path: string,
+  seedOptions: SeedOptions,
+  onMigration?: (report: MigrationReport) => void,
+): Database {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
 
   const db = new Database(path, { create: true });
@@ -435,8 +510,10 @@ export function openGovernance(path: string, seedOptions: SeedOptions): Database
   db.exec("PRAGMA busy_timeout = 1000");
 
   try {
-    if (hasSchema(db)) upgradeSchema(db, path);
-    else seed(db, loadSeed(seedOptions));
+    if (hasSchema(db)) {
+      const report = upgradeSchema(db, path);
+      if (report !== null) onMigration?.(report);
+    } else seed(db, loadSeed(seedOptions));
   } catch (cause) {
     // Leave no half-open handle behind: the caller is about to exit, and on
     // Render a lingering WAL lock is one more thing between a crash-looping
@@ -494,27 +571,127 @@ export class SchemaTooNewError extends Error {
 }
 
 /**
- * Adds whatever `SCHEMA` gained since this database was written, and records
- * the new version. No inserts: the rows already here are the demo's live
- * state.
+ * What one boot's upgrade did, for the boot line and `/health`.
+ *
+ * Only ever produced by the boot that moved the version; a restart against an
+ * already-current disk produces `null`, which is how a reader tells "the
+ * migration ran here" from "it ran some deploy ago".
+ */
+export interface MigrationReport {
+  /** `PRAGMA user_version` as found on disk. */
+  from: number;
+  /** `PRAGMA user_version` as left. Equal to {@link SCHEMA_VERSION}. */
+  to: number;
+  /** Rows in `audit_log` — the size of what was rewritten. */
+  auditRows: number;
+  /** Wall time of the transactional half: the `SCHEMA` replay and the `ALTER`s. */
+  ddlMs: number;
+  /** Wall time of `VACUUM`, or `null` when this upgrade did not owe one. */
+  vacuumMs: number | null;
+  /** File size before and after, in bytes; `null` for `:memory:`. */
+  bytesBefore: number | null;
+  bytesAfter: number | null;
+}
+
+/** One line for the boot log, and the same numbers `/health` carries. */
+export function describeMigration(report: MigrationReport): string {
+  const mb = (bytes: number | null) => (bytes === null ? "?" : `${(bytes / 1e6).toFixed(1)}MB`);
+  const parts = [
+    `schema ${report.from} → ${report.to}`,
+    `${report.auditRows.toLocaleString("en-US")} audit rows`,
+    `DDL ${Math.round(report.ddlMs)}ms`,
+    report.vacuumMs === null
+      ? "no VACUUM owed"
+      : `VACUUM ${Math.round(report.vacuumMs)}ms, ${mb(report.bytesBefore)} → ${mb(report.bytesAfter)}`,
+  ];
+  return `MIGRATED ONCE: ${parts.join("; ")}`;
+}
+
+/** The size of the database file and its WAL sibling, or `null` for `:memory:`. */
+function fileBytes(path: string): number | null {
+  if (path === ":memory:") return null;
+  let total = 0;
+  for (const suffix of ["", "-wal"]) {
+    try {
+      total += statSync(path + suffix).size;
+    } catch {
+      // A missing -wal is the normal case after a truncating checkpoint.
+    }
+  }
+  return total;
+}
+
+/**
+ * Adds whatever `SCHEMA` gained since this database was written, applies the
+ * migrations above it, and records the new version. No inserts: the rows
+ * already here are the demo's live state.
  *
  * DDL and the version bump share one transaction, so a half-applied upgrade
  * rolls back to a database that still reads its old version and will simply
  * try again on the next boot.
+ *
+ * `VACUUM` is the exception SQLite forces (#103): it cannot run inside a
+ * transaction, so it runs after that one commits and stamps its own version
+ * afterwards. The consequence is deliberate and is why #103 spends two
+ * versions on one change — a crash between the two leaves a disk whose columns
+ * are gone but whose file has not been swept, at version 3, and the next boot
+ * picks up exactly there and sweeps it. The alternative, one version stamped
+ * before the sweep, would make a failed sweep permanent and silent.
+ *
+ * Returns `null` when the disk was already current.
  */
-function upgradeSchema(db: Database, path: string): void {
+function upgradeSchema(db: Database, path: string): MigrationReport | null {
   const found = readSchemaVersion(db);
   if (found > SCHEMA_VERSION) throw new SchemaTooNewError(path, found);
-  if (found === SCHEMA_VERSION) return;
+  if (found === SCHEMA_VERSION) return null;
 
+  const owed = MIGRATIONS.filter((migration) => migration.to > found);
+  const deferred = owed.filter((migration) => migration.outsideTransaction === true);
+  const inline = owed.filter((migration) => migration.outsideTransaction !== true);
+  // The version the transaction may claim: everything up to the first step it
+  // cannot contain. With no deferred step that is the whole schema.
+  const stamped = deferred.length === 0 ? SCHEMA_VERSION : deferred[0]!.to - 1;
+
+  const bytesBefore = fileBytes(path);
+  const auditRows = auditRowCount(db);
+
+  const ddlStarted = performance.now();
   db.transaction(() => {
     db.exec(SCHEMA);
     db.exec(REVISION_TRIGGERS);
-    for (const migration of MIGRATIONS) {
-      if (migration.to > found) migration.apply(db);
-    }
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    for (const migration of inline) migration.apply(db);
+    db.exec(`PRAGMA user_version = ${stamped}`);
   })();
+  const ddlMs = performance.now() - ddlStarted;
+
+  let vacuumMs: number | null = null;
+  for (const migration of deferred) {
+    const started = performance.now();
+    migration.apply(db);
+    // Its own stamp, outside the transaction it could not join. A throw above
+    // leaves the version below it and the next boot runs it again.
+    db.exec(`PRAGMA user_version = ${migration.to}`);
+    vacuumMs = (vacuumMs ?? 0) + (performance.now() - started);
+  }
+
+  return {
+    from: found,
+    to: SCHEMA_VERSION,
+    auditRows,
+    ddlMs,
+    vacuumMs,
+    bytesBefore,
+    bytesAfter: fileBytes(path),
+  };
+}
+
+/** `audit_log` may not exist yet on a disk old enough; 0 is the honest answer. */
+function auditRowCount(db: Database): number {
+  try {
+    return db.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM audit_log").get()?.c ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 /**
