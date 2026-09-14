@@ -253,11 +253,17 @@ services:
       - key: ARCADE_GATEWAY_ID
         sync: false
       # `tool.toolkit` as Arcade files the deployed loan toolkit — `Loan`,
-      # measured on #35, the same value cg-hooks holds. Here it is an
+      # measured on #35, the same value cg-hooks holds. Here it is half of an
       # ALLOW-LIST: the agent is given the tools whose wire names start with
-      # `Loan_` and nothing else, so a live tools/list's eight entries become
-      # six and the gateway's own `System_ManageAuthorization` and
-      # `Arcade_ListApps` never reach the model.
+      # `Loan_` or `Approvals_` and nothing else, so a live tools/list's eight
+      # entries become six and the gateway's own `System_ManageAuthorization`
+      # and `Arcade_ListApps` never reach the model.
+      #
+      # Both halves, not just this one (#89). The pre-hook's own denial tells
+      # the model to call `Approvals_RequestApproval`; an agent holding the loan
+      # toolkit alone is being told to call a tool it cannot see, and measured
+      # on #14 it refuses the instruction rather than acting on it. See
+      # ARCADE_APPROVALS_TOOLKIT further down this service's list.
       #
       # A wrong value here selects nothing, and `/chat` answers 502 naming this
       # variable rather than letting a model with no tools answer fluently
@@ -354,6 +360,10 @@ services:
       # Approvals.Decide through Arcade. Both need naming here: the same
       # shared bearer cg-hooks requires, and the toolkit name the tool is
       # executed under. A wrong toolkit name calls nothing.
+      #
+      # It is also the second half of the agent's allow-list (#89), which is why
+      # it is required on this service rather than optional: without it the
+      # agent cannot see the tool its own denial instructs it to call.
       - key: APPROVALS_STORE_TOKEN
         sync: false
       - key: ARCADE_APPROVALS_TOOLKIT

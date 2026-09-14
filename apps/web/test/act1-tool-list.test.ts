@@ -152,7 +152,13 @@ describe("the tool list comes from the gateway, per signed-in persona", () => {
     // checked `toHaveLength(3)` would pass if the gateway swapped one tool for
     // another.
     expect(names).not.toContain(APPROVE_WIRE);
-    expect(names).toEqual(["Loan_SearchLoans", "Loan_GetLoan", "Loan_DenyLoan"]);
+    expect(names).toEqual([
+      "Loan_SearchLoans",
+      "Loan_GetLoan",
+      "Loan_DenyLoan",
+      "Approvals_RequestApproval",
+      "Approvals_Decide",
+    ]);
   });
 
   test("as Dana, the same call lists it", async () => {
@@ -237,8 +243,16 @@ describe("who the /access frame names", () => {
 
     // One row per tool decided, allowed or hidden — `handleAccess` writes the
     // whole catalogue so a reviewer can reconstruct every decision, not only
-    // the refusals.
+    // the refusals. Six rows, across both project toolkits: `/access` is asked
+    // about the approvals tools too, and an unasked question would be a control
+    // that never ran rather than a control that allowed (#89).
+    //
+    // Dot-spelled, all six. This is the audit trail, and the audit trail names
+    // tools the way every hook payload does — the underscore belongs in the one
+    // place a rule addresses the model, and nowhere else.
     expect(rows.map((row) => row.tool).sort()).toEqual([
+      "Approvals.Decide",
+      "Approvals.RequestApproval",
       "Loan.ApproveLoan",
       "Loan.DenyLoan",
       "Loan.GetLoan",
@@ -295,7 +309,16 @@ describe("the $95K prompt, as Sam, who has no approval authority at all", () => 
     expect(result.status).toBe(200);
     expect(lastSurface?.advertised).not.toContain(APPROVE_WIRE);
     expect(lastSurface?.governed).not.toContain(APPROVE_WIRE);
-    expect(lastSurface?.governed).toEqual(["Loan_SearchLoans", "Loan_GetLoan", "Loan_DenyLoan"]);
+    // Everything except the one tool act 1 hides. Sam keeps the approvals tools
+    // — nothing in the policy takes them from him, and act 1's claim is about
+    // `ApproveLoan` specifically, not about a narrower surface in general.
+    expect(lastSurface?.governed).toEqual([
+      "Loan_SearchLoans",
+      "Loan_GetLoan",
+      "Loan_DenyLoan",
+      "Approvals_RequestApproval",
+      "Approvals_Decide",
+    ]);
   });
 
   test("no denied tool call appears in the audit log, because no call was attempted", () => {

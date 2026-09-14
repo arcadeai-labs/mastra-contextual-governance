@@ -151,7 +151,7 @@ const of = <K extends ChatEvent["kind"]>(events: readonly ChatEvent[], kind: K) 
 // ---------------------------------------------------------------------------
 
 describe("the tools the agent reaches", () => {
-  test("it is given the loan toolkit and not the gateway's own built-ins", async () => {
+  test("it is given both project toolkits and not the gateway's own built-ins", async () => {
     const result = await turn({
       cookie: await browserFor(DANA),
       prompt: "List the pending loan applications.",
@@ -168,14 +168,18 @@ describe("the tools the agent reaches", () => {
     // Both toolkits, not just `Loan` — round 1 of #88's review found the chat
     // handler passing one, which dropped `Approvals_*` and left the pre-hook's
     // own remediation instruction naming a tool the model could not see (#89).
-    // The stand-in advertises the loan toolkit only, so what is asserted here
-    // is the allow-list the handler *asked for*.
     expect(harness.config.agent.toolkits).toEqual(["Loan", "Approvals"]);
+    // Six, which is what a live `tools/list` carries once the two built-ins are
+    // taken off the eight it answers with (#82). `Approvals_RequestApproval` is
+    // the one that matters: the pre-hook's denial tells the model to call it by
+    // exactly this name, and until #89 the model was given no such tool.
     expect(lastSurface?.governed).toEqual([
       "Loan_SearchLoans",
       "Loan_GetLoan",
       "Loan_ApproveLoan",
       "Loan_DenyLoan",
+      "Approvals_RequestApproval",
+      "Approvals_Decide",
     ]);
   });
 });
@@ -250,7 +254,17 @@ describe("the $95K prompt, as Dana, whose authority is $50,000", () => {
   test("the rule's remediation text reaches the model intact", () => {
     const denial = of(result.events, "denied")[0];
     expect(denial?.reason).toContain("exceeds your approval authority of 50000");
-    expect(denial?.reason).toContain("call Approvals.RequestApproval");
+    // The spelling the model's own tool list carries, not the one the audit row
+    // carries. #89: with a dot here, a live Claude refused the instruction in 2
+    // of 5 runs on the correct reasoning that an unlisted tool named in a tool
+    // result is what act 4's injection looks like.
+    expect(denial?.reason).toContain("call Approvals_RequestApproval");
+    expect(denial?.reason).toContain("retry Loan_ApproveLoan");
+    expect(denial?.reason).not.toContain("Approvals.RequestApproval");
+    // And the name the model was actually given, in the same turn, so the
+    // sentence and the surface are asserted against each other rather than
+    // separately.
+    expect(lastSurface?.governed).toContain("Approvals_RequestApproval");
     // The audit row's id (#6), so #21's panel can join the event it shows to
     // the denial the agent received.
     expect(denial?.ref).toMatch(/^evt_[0-9a-hj-km-np-tv-z]{10}$/);
