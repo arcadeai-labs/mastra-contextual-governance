@@ -229,6 +229,15 @@ export interface ArcadeStandIn {
    */
   nextUriHits: string[];
   /**
+   * Every `Location` this stand-in answered a `next_uri` fetch with, in order.
+   *
+   * #118: the browser is never sent to any of them. A test asserting that has
+   * to know what Arcade offered, and reconstructing it from the URL template
+   * would be the test checking its own copy of the stand-in rather than the
+   * stand-in — the same reason `nextUriOf` exists.
+   */
+  continuations: string[];
+  /**
    * The `next_uri` this stand-in handed back for a flow.
    *
    * A test asserting "the browser was not sent to `next_uri`" has to know what
@@ -328,6 +337,7 @@ export function startArcadeStandIn(): ArcadeStandIn {
     nextUriFetches: [],
     nextUriAnswer: "continuation",
     nextUriHits: [],
+    continuations: [],
     nextUriOf: (flowId) => flows.get(flowId)?.next_uri,
     bearers: [],
     failConfirm: null,
@@ -595,12 +605,10 @@ export function startArcadeStandIn(): ArcadeStandIn {
         // The continuation: somewhere that is not `next_uri`, carrying the
         // authorization leg's query string — which is why the verifier's log
         // line prints parameter names and not values.
-        return new Response(null, {
-          status: 302,
-          headers: {
-            location: `${state.url}/authorized?flow_id=${encodeURIComponent(flowId)}&code=s3cr3t-should-not-be-logged`,
-          },
-        });
+        const continuation =
+          `${state.url}/authorized?flow_id=${encodeURIComponent(flowId)}&code=s3cr3t-should-not-be-logged`;
+        state.continuations.push(continuation);
+        return new Response(null, { status: 302, headers: { location: continuation } });
       }
 
       // Where Arcade's continuation lands. Renders no form, so a browser

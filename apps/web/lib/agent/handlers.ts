@@ -90,7 +90,8 @@ import { planResume, readResumeRequest, type ResumeRequest } from "./resume.ts";
 import { anthropicModel, buildAgent } from "./agent.ts";
 import { CHAT_PATH, encodeEvent, NDJSON, type ChatEvent } from "./events.ts";
 import { serverFault } from "./fault.ts";
-import { liveGatewayToken, refreshedGatewayToken, GATEWAY_START_PATH, SIGNIN_PATH } from "../identity/handlers.ts";
+import { CHAT_PAGE, liveGatewayToken, refreshedGatewayToken, GATEWAY_START_PATH,
+  SIGNIN_PATH } from "../identity/handlers.ts";
 import { mcpUrl, probeGatewayToken } from "../identity/gateway.ts";
 import { gatewayClient, governedToolset } from "./tools.ts";
 import { gatewayTokenRejected, readSession, writeSession, type Session } from "../identity/session.ts";
@@ -171,15 +172,6 @@ export const PRE_STREAM = {
   approval: "read the approval this turn resumes",
   agent: "build the agent and its model",
 } as const;
-
-/**
- * Where a person is sent back to after re-running hop 1 from a chat turn.
- *
- * The page, not `CHAT_PATH`, which is the route the browser POSTs to. Sending
- * somebody to the API would answer them with a JSON refusal about a missing
- * prompt.
- */
-const CHAT_PAGE = "/chat";
 
 export async function chat(request: Request, options: ChatOptions = {}): Promise<Response> {
   const config = options.config ?? readIdentitySurface();

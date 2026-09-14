@@ -372,16 +372,18 @@ describe("hop 2 — the custom verifier", () => {
     const flowId = `flow-${crypto.randomUUID()}`;
     const verified = await browser.fetch(`${harness.webUrl}/api/arcade/verify?flow_id=${flowId}`);
 
-    expect(verified.status).toBe(303);
+    expect(verified.status).toBe(200);
     expect(harness.arcade.confirmations).toEqual([
       { flow_id: flowId, user_id: PEOPLE.dana.email, authorized: true },
     ]);
     // Measured on #75: without this fetch the grant does not store, and the
     // tool re-challenges forever with nothing on the panel to say why.
     expect(harness.arcade.nextUriFetches).toEqual([flowId]);
-    // And #100: the browser goes to the continuation the *server* fetch was
-    // handed, not back to `next_uri` — see the dedicated block below.
-    expect(verified.headers.get("location")).toContain("/authorized");
+    // #100: the browser is never sent back to `next_uri`. #118: it is not sent
+    // to Arcade's continuation either — it stays here, on this app's own page.
+    // See `hop2-single-exchange.test.ts` for the counting.
+    expect(verified.headers.get("location")).toBeNull();
+    expect(await verified.text()).toContain("Authorized");
   });
 
   test("the confirmed identity comes from the session even when the request suggests another", async () => {
@@ -467,10 +469,13 @@ describe("hop 2 — the no-session path, which is the human's case", () => {
 
     const ended = await signInAs(fresh, harness, "riley", {
       from: new URL(parked.headers.get("location")!, harness.webUrl).toString(),
-      stopAt: "/authorized",
     });
 
-    expect(ended.url).toContain("/authorized");
+    // #118: the chain ends here, on this app's Authorized page, rather than on
+    // whatever Arcade's continuation pointed at.
+    expect(ended.response.status).toBe(200);
+    expect(ended.html).toContain("Authorized");
+    expect(ended.html).toContain(PEOPLE.riley.email);
     expect(harness.arcade.confirmations).toEqual([
       { flow_id: flowId, user_id: PEOPLE.riley.email, authorized: true },
     ]);

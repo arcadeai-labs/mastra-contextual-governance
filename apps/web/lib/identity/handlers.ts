@@ -42,7 +42,7 @@ import { authorizeUrl, exchangeCode, fetchUserinfo, nonce, pkce } from "./oidc.t
 import { accessTokenOf, exchangeGatewayCode, expiryOf, gatewayAuthorizeUrl, gatewayClient, isExpiring,
   mcpUrl, refreshGatewayToken } from "./gateway.ts";
 import { knownPersona } from "./personas.ts";
-import { confirmUser, continuationOf, followNextUri, loggable } from "./verifier.ts";
+import { confirmUser, followNextUri, loggable } from "./verifier.ts";
 
 export const SIGNIN_PATH = "/api/auth/signin";
 export const SIGNIN_CALLBACK_PATH = "/api/auth/callback";
@@ -72,6 +72,22 @@ export function safeNext(value: string | null, fallback: string): string {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return fallback;
   return value;
 }
+
+/**
+ * The chat, as a page a person can be sent to.
+ *
+ * `/` and not `/chat`: since #22 the demo's chat is the left half of the split
+ * screen, and `/chat` says so about itself — *"the tracer bullet's bare
+ * scaffold"*. Both hops end here now (#118). Hop 1's re-authorization card had
+ * its own copy of this string pointing at `/chat`, which meant the two hops put
+ * a person on two different screens after doing the same kind of thing; one
+ * constant, exported, is the fix and the reason it is exported.
+ *
+ * The page, never `CHAT_PATH` — that is the route the browser POSTs to, and
+ * sending somebody there answers them with a JSON refusal about a missing
+ * prompt.
+ */
+export const CHAT_PAGE = "/";
 
 function redirectUri(config: IdentitySurface, path: string): string {
   return `${config.identity.publicUrl}${path}`;
@@ -597,7 +613,8 @@ export async function completeVerification(
     return page(
       "Verified",
       `<p>Confirmed <code>${escapeHtml(email)}</code>, but Arcade returned no <code>next_uri</code>, ` +
-        "so there is nothing to finalise the grant against.</p>",
+        "so there is nothing to finalise the grant against.</p>" +
+        `<p><a href="${CHAT_PAGE}">Back to the chat</a>.</p>`,
       200,
       headers,
     );
@@ -618,35 +635,47 @@ export async function completeVerification(
       `(flow ${flowId})`,
   );
 
-  // The browser goes to the continuation, never back to `next_uri`. Sending it
-  // to `next_uri` is the double exchange: the server fetch above already
-  // redeemed the authorization code at cg-idp, and Better Auth's token endpoint
-  // answers the replay with `invalid_grant "invalid code"` *and* revokes the
-  // tokens the first exchange minted. The grant Arcade stores is then dead on
-  // arrival and `get_loan` fails at `userinfo` a turn later (#100).
-  const continuation = continuationOf(next, followed.location);
-  if (continuation) return redirect(continuation, headers);
-
-  // Nothing further to walk. The grant is made — something landed on `next_uri`
-  // and it was this server — so this is a success page, not a failure one, and
-  // it says the one thing the person holding the browser has to do next.
+  // And the browser stays here. `followed.location` is read for the log line
+  // above and used for nothing else (#118).
+  //
+  // #100 established the half of this that is not negotiable: the browser must
+  // never be sent to `next_uri`, because the server fetch has already redeemed
+  // that authorization code at cg-idp and Better Auth answers the replay with
+  // `invalid_grant "invalid code"` *and* revokes the tokens the first exchange
+  // minted — the grant is destroyed rather than merely unfinished, and
+  // `get_loan` fails at `userinfo` a turn later. #100 then forwarded Arcade's
+  // `Location` instead, with a guard to catch the cases where that `Location`
+  // was `next_uri` written differently.
+  //
+  // #118 removes the fork rather than the guard. Forwarding Arcade's
+  // continuation was safe once the guard was right, but it ended hop 2 on
+  // Arcade's domain — a screen this demo does not own, with no route back to
+  // the chat the person left. The grant is finalised by the server fetch alone
+  // (measured on #75), so the continuation buys nothing the app needs. One
+  // target, no guard, no branch that can be wrong: a redirect the code cannot
+  // emit is a redirect nobody has to reason about.
   return verifiedPage(email, headers);
 }
 
 /**
- * The end of hop 2 when Arcade's continuation ends at `next_uri` itself.
+ * The end of hop 2, on every path (#118).
  *
  * A blank 200 would be indistinguishable from a route that did nothing, and
  * this is the screen a human sees at the exact moment they are wondering
  * whether the authorization worked. It names the persona, because binding the
- * grant to the wrong one is the failure mode hop 2 exists to prevent, and it
- * points back at the chat rather than leaving the tab as the last word.
+ * grant to the wrong one is the failure mode hop 2 exists to prevent.
+ *
+ * The link is `CHAT_PAGE`, a constant, and not a return path read off this
+ * request: Arcade calls this route with `flow_id` and nothing else (measured,
+ * #75), so anything on the query string claiming to be a return target did not
+ * come from Arcade. The demo has one chat page, which is what makes a constant
+ * the whole answer rather than a simplification.
  */
 function verifiedPage(email: string, headers: Headers): Response {
   return page(
     "Authorized",
     `<p>This tool is now authorized as <code>${escapeHtml(email)}</code>.</p>` +
-      `<p><a href="/chat">Back to the chat</a> — ask the agent for the same thing again.</p>`,
+      `<p><a href="${CHAT_PAGE}">Back to the chat</a> — ask the agent for the same thing again.</p>`,
     200,
     headers,
   );
