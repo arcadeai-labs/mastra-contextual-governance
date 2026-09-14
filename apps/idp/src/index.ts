@@ -17,13 +17,32 @@ import { CLIENT_SECRET_STATE_MESSAGE, ensureOAuthClients, findClientName } from 
 import { readConfig, resetEnabled, usingDevSecret } from "./config.ts";
 import { countPeople, openPeople } from "./db.ts";
 import { renderConsentPage, renderLoginPage, renderMessagePage } from "./pages.ts";
+import { tolerateAuthorizationCodeReplay } from "./replay-tolerance.ts";
 import { OAuthClientRotatedError, RESET_PATH, resetSummary, runIdpReset } from "./reset.ts";
+import { formatTokenLine } from "./token-log.ts";
 
 const SERVICE = "idp";
 const config = readConfig();
 
 const db = await openPeople(config.dbPath);
 const auth = createAuth({ db, baseURL: config.baseURL, secret: config.secret });
+
+// A replayed authorization code must refuse without taking the first
+// exchange's tokens with it (#100). Awaited here, at boot, so a service that
+// is listening is a service with the guard installed.
+//
+// The line names a count, and it is written only when that count is non-zero.
+// A code this service never issued reaches the same revocation path but has
+// nothing minted under it, and saying "kept the rows the first exchange minted"
+// about a code that had no first exchange is a false diagnosis in the one place
+// a reader trusts.
+await tolerateAuthorizationCodeReplay(auth, (model, rows) => {
+  console.log(
+    `[${SERVICE}] replay revocation refused: kept ${rows} ${model} ` +
+      `row${rows === 1 ? "" : "s"} minted by the first exchange of that code ` +
+      `(RFC 6749 §4.1.2 deviation, #100).`,
+  );
+});
 
 // Create-if-absent, one per configured key. Credentials are deliberately not
 // logged: read them with `bun run oauth-client`. Only the fact and the id,
@@ -418,6 +437,25 @@ function mixedCredentialsRefusal(): Response {
 }
 
 /**
+ * Which of the registered clients the request claims to be, or a fixed string
+ * saying it is none of them.
+ *
+ * The id is never echoed from the request. Under Basic it shares one base64
+ * blob with the secret, so a caller that swapped the two fields would have us
+ * print a secret; and an unknown id is attacker-controlled text on its way into
+ * a log a human reads. Comparing and naming is enough to answer the question
+ * anyone reading these lines is asking — "is Arcade pointed at a different
+ * client, or does it have the wrong secret?" — without echoing either.
+ *
+ * Shared by the census line and the rejection line so the two cannot disagree
+ * about who the caller was.
+ */
+function clientLabel(token: TokenRequest, registered: string[]): string {
+  const claimed = requestClientId(token);
+  return claimed !== null && registered.includes(claimed) ? claimed : "(not the registered client)";
+}
+
+/**
  * One line per `/oauth2/token` rejection: the status, the OAuth error, its
  * description, and the client authentication method the caller used.
  *
@@ -443,21 +481,23 @@ async function logTokenFailure(
   const body = (await response.clone().json().catch(() => null)) as
     | { error?: string; error_description?: string }
     | null;
-  const claimed = requestClientId(token);
 
   console.log(
     `[${SERVICE}] POST ${TOKEN_PATH} rejected: status=${response.status} ` +
       `error=${body?.error ?? "(none)"} ` +
       `error_description=${JSON.stringify(body?.error_description ?? "(none)")} ` +
       `client_auth=${JSON.stringify(observedClientAuth(token))} ` +
-      `client_id=${claimed !== null && registered.includes(claimed) ? claimed : "(not the registered client)"}` +
+      `client_id=${clientLabel(token, registered)}` +
       (code === null ? "" : ` code=${code}`),
   );
 
-  // Its own line, because this one is not a refusal — it is damage. The replay
-  // has already made the plugin revoke the tokens the first exchange minted, so
-  // the relying party is now holding a grant that will fail at
-  // `/oauth2/userinfo` with nothing else to say why (#100).
+  // Its own line, because the refusal alone does not say what a reader needs.
+  // Before #100's round 2 this line reported damage: the plugin revoked the
+  // tokens the first exchange minted and the relying party was left holding a
+  // grant that failed at `/oauth2/userinfo` with nothing to say why. That
+  // revocation is now refused (`replay-tolerance.ts`), so the sentence reports
+  // the opposite — and still reports the duplicate, which remains a real fault
+  // somewhere upstream even though it no longer costs anything here.
   //
   // `console.log`, not `console.warn`: this is the second half of the sentence
   // above it, and a two-line diagnosis split across stdout and stderr is two
@@ -465,8 +505,8 @@ async function logTokenFailure(
   if (code === "already_consumed") {
     console.log(
       `[${SERVICE}] that code had already been exchanged — the tokens its first exchange ` +
-        `minted have just been revoked (revokeTokensIssuedForAuthorizationCode). ` +
-        `Something is fetching the authorization callback twice.`,
+        `minted were kept, so the grant the relying party holds still works ` +
+        `(RFC 6749 §4.1.2 deviation, #100). Something is exchanging the code twice.`,
     );
   }
 }
@@ -632,11 +672,41 @@ const server = Bun.serve({
       const sent: TokenRequest = { authorization, form: new URLSearchParams(body) };
       const dual = classifyDualCredentials(sent);
 
+      // When the request arrived, not when it finished. This is the field that
+      // gets lined up against cg-web's `[verifier] next_uri answered` line, and
+      // a completion time would fold this service's own latency into the gap
+      // being measured (#100: 290 ms between the two, on Render).
+      const at = new Date().toISOString();
+
+      /**
+       * The census line, emitted for every outcome including success.
+       *
+       * Deferred into a closure because there are two exits below — this
+       * service's own `mixed` refusal and whatever Better Auth answers — and a
+       * request that left by one of them without a line would be exactly the
+       * blind spot #100 was.
+       */
+      const census = (status: number, error: string | undefined, code: CodeState | null) =>
+        console.log(
+          formatTokenLine(SERVICE, TOKEN_PATH, {
+            at,
+            grantType: sent.form.get("grant_type"),
+            code: sent.form.get("code"),
+            codeState: code,
+            status,
+            error,
+            clientId: clientLabel(sent, registeredClientIds),
+            userAgent: request.headers.get("user-agent"),
+            forwardedFor: request.headers.get("x-forwarded-for"),
+          }),
+        );
+
       // Two different identities in one request. The plugin would refuse this
       // too, one line later and for a less specific reason; refusing it here is
       // what keeps the tolerance below down to "the same credentials twice".
       if (dual === "mixed") {
         const refusal = mixedCredentialsRefusal();
+        census(refusal.status, "invalid_request", null);
         await logTokenFailure(sent, refusal, registeredClientIds);
         return refusal;
       }
@@ -663,20 +733,25 @@ const server = Bun.serve({
           body: forwardedBody,
         }),
       );
+      // Read once for both lines below. The code classification rides along
+      // only when the plugin's own answer is the ambiguous one: on any other
+      // rejection — wrong secret, wrong redirect_uri, PKCE — the code's history
+      // is not the question, and a `code_state=unknown` beside `invalid_client`
+      // would send a reader looking in the wrong place.
+      const answered =
+        response.status >= 400
+          ? ((await response.clone().json().catch(() => null)) as
+              | { error?: string; error_description?: string }
+              | null)
+          : null;
+      const ambiguous =
+        answered?.error === "invalid_grant" && answered?.error_description === "invalid code";
+      census(response.status, answered?.error, ambiguous ? presentedState : null);
+
       if (response.status >= 400) {
         // Logged as what the plugin was asked, not as what arrived: after the
         // strip this *is* a `client_secret_basic` request, and saying anything
         // else would send a reader looking for a method problem that is gone.
-        // The code classification rides along only when the plugin's own answer
-        // is the ambiguous one. On any other rejection — wrong secret, wrong
-        // redirect_uri, PKCE — the code's history is not the question, and a
-        // `code=unknown` beside `invalid_client` would send a reader looking in
-        // the wrong place.
-        const answered = (await response.clone().json().catch(() => null)) as
-          | { error?: string; error_description?: string }
-          | null;
-        const ambiguous =
-          answered?.error === "invalid_grant" && answered?.error_description === "invalid code";
         await logTokenFailure(
           { authorization, form: forwardedForm },
           response,
