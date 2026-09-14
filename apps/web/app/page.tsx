@@ -6,11 +6,19 @@
  * Since #82 it carries one real thing: the sign-in panel. A server component,
  * so the session is unsealed on the server and only the email and whether a
  * gateway token exists ever reach the browser.
+ *
+ * #15 adds the second: the persona's role and authority, and the tools the
+ * gateway answered `tools/list` with for them. It is here as well as on `/chat`
+ * because this is where the sign-in and the gateway hop *land* — a presenter
+ * who has just signed in as Sam should be looking at Sam's tool list, not
+ * clicking through to find it.
  */
 import { cookies } from "next/headers";
 
 import { configurationProblems, readIdentitySurface } from "../lib/config.ts";
 import { readSessionFromCookies } from "../lib/identity/session.ts";
+import { sessionTools } from "../lib/agent/tool-list.ts";
+import { PersonaToolList } from "../components/identity/PersonaToolList.tsx";
 import { SignInPanel } from "../components/identity/SignInPanel.tsx";
 
 const SERVICES = [
@@ -37,6 +45,8 @@ export default async function Home() {
     new Map(jar.getAll().map((cookie) => [cookie.name, cookie.value])),
     config,
   );
+  // No session means no network call: `sessionTools` answers without asking.
+  const tools = await sessionTools(session, { config });
 
   return (
     <main
@@ -67,6 +77,8 @@ export default async function Home() {
       </p>
 
       <SignInPanel session={session} problems={configurationProblems(config)} />
+
+      <PersonaToolList session={session} tools={tools} />
 
       <ul style={{ listStyle: "none", padding: 0, marginTop: "2rem" }}>
         {SERVICES.map(([name, role]) => (
