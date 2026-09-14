@@ -224,11 +224,22 @@ Seed loan `LN-2291`, Northwind Bakery LLC, $95,000. Carries `bank_account_number
 
 ## Event contract
 
-Audit row and SSE frame (unchanged, confirmed on the wire on #14):
+Audit row and SSE frame (confirmed on the wire on #14; `redactions` added on #16, ca9e17f):
 
     { id, ts, execution_id, hook: 'access'|'pre'|'post',
       user_id, tool, decision: 'allow'|'deny'|'modify',
-      reason, rule_id, before?, after? }
+      reason, rule_id, redactions?: RedactionRecord[] }
+
+    RedactionRecord = { path, rule_id, pattern_id, kind }     // where and why, never what
+
+A `/post` `modify` says what it did through `redactions[]`, one record per thing removed:
+JSONPath into the tool output, the rule and pattern that fired, and the strategy. **There is
+no field for the removed value, and `before`/`after` are gone from the wire.** Both were the
+obvious place to put the raw tool output, and this row is written to `audit_log` and streamed
+on `GET /events`; a shape that *could* carry the account number eventually would, into the two
+places most likely to be read aloud. The panel renders the mask from `redactions[]`. The
+panel's fixture replay still emits the old `before`/`after` shape and `@cg/policy-schema`
+still types it; #101 aligns both. Decided on #16 (driver option A), measured on the wire 2026-09-14.
 
 What each layer answers, as measured:
 
@@ -282,11 +293,12 @@ What each layer answers, as measured:
 6. ~~**What survives a hook denial over MCP?**~~ Measured on #14; see **Event contract**. The
    `[ref evt_…]` token survives and is what lets the chat tell a denial from a fault.
 
-7. **Act 2 depends on act 4's control (#91).** With the injected note visible, the $95K beat
-   reaches `/pre` about 5 of 17 runs; on a clean over-limit loan 12 of 12. Fix is `/post`
-   stripping the note before the model sees it (#16/#17), then re-measure. Until then do not
-   rehearse act 2 on `LN-2291`. The local tracer's gateway stand-in does not call `/post`
-   (#87), so it is more hostile than production; align it when #16 lands.
+7. ~~**Act 2 depends on act 4's control (#91).**~~ **Resolved on #16 (ca9e17f).** With the injected
+   note visible, the $95K beat reached `/pre` about 5 of 17 runs. With `/post` stripping the note
+   before the model sees it, 5 of 5 (implementer) and 5 of 5 again (reviewer, independently, live
+   Claude Sonnet 5 at temperature 0); LN-2299 control 5 of 5. Act 2 is deterministic again with no
+   prompt steering. The local gateway stand-in now calls `/post` too, so the offline tracer is no
+   longer more hostile than production. #91 closed.
 
 8. **The remediation instruction names a tool the agent may not hold, in a spelling it never
    sees (#89).** `pre.approve-within-clearance` says `Approvals.RequestApproval`; the model
@@ -305,7 +317,8 @@ What each layer answers, as measured:
    document re-grounded from the wire the same day.
 6. Acts 3 and 4 first — `/post` redaction and injection strip (#16, #17) — because act 2
    cannot fire reliably while the note is visible (#91). Act 1's UI (#15) in parallel.
-   #16 re-measures the $95K beat with `/post` live.
+   **#16 done 2026-09-14 (ca9e17f), re-measured 5/5; #91 closed.** #17 remains for whatever the
+   injection strip still needs beyond #16's engine; the split-screen shell (#22) landed the same day.
 7. Approvals: Slack, approval page, `decide` as a governed call, auto-resume. Resolve #89
    (tool spelling in remediation text, approvals toolkit in the agent's surface) first.
 8. Control-plane panel and the split-screen UI.
