@@ -446,7 +446,7 @@ the mark belongs to the replay, every row above it is already queued, and the tw
 disjoint. "Exactly the missed rows, in order, nothing duplicated" is a property of that
 construction rather than of the timing.
 
-An id the log cannot place — a panel left open across a `scripts/reset`, a stale tab — is
+An id the log cannot place — a panel left open across a `bun run reset`, a stale tab — is
 not an error and does not replay the whole log. The stream says so in a comment, names the
 `seq` it is resuming from and how to ask for everything, and goes live.
 
