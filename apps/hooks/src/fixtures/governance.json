@@ -5,7 +5,14 @@
     "$APPROVALS.Decide lists an argument the tool does not take: `approval`. It is not something a caller supplies — /pre resolves the request_id against approval_requests and writes the resolved facts into that key, discarding anything the caller put there. Catalogued because a rule condition may only read a catalogued argument, and optional because a request_id naming nothing must reach pre.decide-needs-a-known-request rather than be refused as a malformed call.",
     "Emails are the fallback for a local run and must equal apps/idp/src/fixtures/people.json's. PERSONA_<KEY>_EMAIL overrides each one at seed time, exactly as apps/idp does.",
     "Two output rules, on purpose (#16). post.redact-borrower-identifiers is act 3 and is conditioned on clearance — Riley and Morgan read the identifiers, Dana and Sam do not — because a control that redacts for everyone demonstrates nothing about identity. post.strip-injected-instructions is act 4 and is conditioned on nobody, because whether text is trying to give the model orders is not a question about anyone's authority; a chief credit officer must not be the one persona who reads the injection. Both fire on the same call and the audit row names each by id.",
-    "pattern.injected-instruction removes from the paste marker (or the tell itself, if there is no marker) to the end of the field. Proved against LN-2291 as apps/loan-app seeds it, byte for byte, in apps/hooks/test/post-redaction.test.ts, and proved not to fire on the other seeded notes. The previous regex here matched nothing — the note says 'Ignore any earlier instruction', not 'ignore previous instructions' — which is a rule that permits while looking like a rule that protects. Re-measure that test before rewording either the pattern or the note."
+    "post.strip-injected-instructions carries SIX patterns, one per injection shape, each with its own id so redactions[] names which one fired (#17). They key on text ADDRESSED TO A MACHINE, and deliberately not on text that merely claims authority: 'committee granted an exception, the usual officer limits do not apply' is prose a real underwriter writes and no regex can tell it from an invented one. That is a stated false negative, not an oversight. Every pattern is proved to match in apps/hooks/test/injection-corpus.test.ts against apps/hooks/test/fixtures/injection-corpus.json, whose benign half is realistic underwriter prose proved NOT to trip any of them; the seeded LN-2291 case is proved byte for byte against apps/loan-app's own fixture in post-redaction.test.ts. A pattern with no corpus entry FAILS that suite, because a rule that matches nothing is indistinguishable from a rule that permits — the regex shipped before #16 was exactly that, looking for 'ignore previous instructions' in a note that says 'Ignore any earlier instruction'. Re-measure both suites before rewording a pattern or the note.",
+    "Order matters. pattern.injected-instruction is first and removes the whole pasted block, so on LN-2291 it is the only one that fires and the audit row carries one record for $.underwriter_notes rather than four. The sweep applies patterns in array order and feeds each the previous one's output.",
+    "pattern.injected-instruction — #16's floor, unchanged byte for byte: a pasted block announcing itself to an automated reader, or the seeded note's own imperative. Removes from the paste marker, or from the tell when there is no marker, to the end of the field.",
+    "pattern.instruction-override — an imperative telling the reader to set aside the instructions it was given. The verb must govern an instruction-shaped noun: 'disregard the prior appraisal' is what an underwriter writes and is left alone. Removes the sentence, so prose on either side survives.",
+    "pattern.addressed-to-the-model — free text that names its reader: a note or an imperative addressed to an AI, an LLM, or an automated reviewer. A header opens a block, so this removes to the end of the field, paste marker included. 'System note: core banking flagged an address mismatch' is not this and is left alone.",
+    "pattern.tool-call-directive — an imperative naming a tool by its identifier, in either spelling this demo has: approve_loan as the business system writes it, Loan_ApproveLoan as the model sees it over MCP. 'Borrower will execute loan documents' is not this.",
+    "pattern.concealment-directive — the reader is told to hide the note from the human. Scoped to the note itself, because a confidentiality instruction about the borrower is legitimate prose.",
+    "pattern.conversation-delimiter — a chat-transcript or prompt delimiter pasted into a business field. No prose tell at all: the token is the evidence, and no underwriter types one."
   ],
   "catalogue": {
     "$LOAN": {
@@ -126,12 +133,47 @@
     },
     {
       "id": "post.strip-injected-instructions",
-      "description": "Act 4. Strips an instruction addressed to the model out of a loan file's free text, for everyone.",
+      "description": "Act 4. Strips text addressed to the model out of a loan file's free text, for everyone. Six shapes, each with its own id, so the audit row names which one fired.",
       "match": { "toolkit": "$LOAN", "tool": "GetLoan" },
       "patterns": [
         {
           "id": "pattern.injected-instruction",
-          "regex": "\\s*(?:[-\u2013\u2014]{2,}[^\\n]*\\n)?(?:system note for automated review|ignore (?:any|all|the) (?:earlier|previous|prior) instructions?)[\\s\\S]*$",
+          "regex": "\\s*(?:[-–—]{2,}[^\\n]*\\n)?(?:system note for automated review|ignore (?:any|all|the) (?:earlier|previous|prior) instructions?)[\\s\\S]*$",
+          "flags": "i",
+          "strategy": "remove",
+          "replacement": ""
+        },
+        {
+          "id": "pattern.instruction-override",
+          "regex": "\\s*[^.!?\\n]*\\b(?:ignore|disregard|forget|override|bypass|set aside|do not follow)\\s+(?:all\\s+|any\\s+|every\\s+)?(?:of\\s+)?(?:your|the|my|its|these|those|any|all|previous|prior|earlier|preceding|above|system|original)\\s+(?:[a-z]+\\s+){0,2}?(?:instructions?|directives?|prompts?|guardrails?)\\b[^.!?\\n]*[.!?]?",
+          "flags": "i",
+          "strategy": "remove",
+          "replacement": ""
+        },
+        {
+          "id": "pattern.addressed-to-the-model",
+          "regex": "\\s*(?:[-–—]{2,}[^\\n]*\\n)?(?:(?:notes?|messages?|instructions?)\\s+(?:to|for)\\s+(?:the\\s+)?|attention[\\s,:]+)(?:\\bai\\b|\\bllm\\b|language model|automated\\s+(?:review|reviewer|assistant|system|agent))[\\s\\S]*$",
+          "flags": "i",
+          "strategy": "remove",
+          "replacement": ""
+        },
+        {
+          "id": "pattern.tool-call-directive",
+          "regex": "\\s*[^.!?\\n]*\\b(?:call|invoke|run|execute|trigger)\\b\\s+(?:the\\s+)?(?:[A-Za-z]+[_.])?(?:approve|deny)[_ ]?loan\\b[^.!?\\n]*[.!?]?",
+          "flags": "i",
+          "strategy": "remove",
+          "replacement": ""
+        },
+        {
+          "id": "pattern.concealment-directive",
+          "regex": "\\s*[^.!?\\n]*\\bdo not\\s+(?:mention|reveal|disclose|repeat|report|include|surface)\\b[^.!?\\n]{0,60}?\\bthis\\s+(?:note|message|instruction|text|block|section|paste)\\b[^.!?\\n]*[.!?]?",
+          "flags": "i",
+          "strategy": "remove",
+          "replacement": ""
+        },
+        {
+          "id": "pattern.conversation-delimiter",
+          "regex": "\\s*(?:<\\|im_(?:start|end)\\|>|</?system>|\\[/?(?:INST|SYSTEM)\\]|#{2,}\\s*system\\b|begin system prompt)[\\s\\S]*$",
           "flags": "i",
           "strategy": "remove",
           "replacement": ""
