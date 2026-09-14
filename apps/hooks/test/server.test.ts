@@ -223,7 +223,7 @@ describe("fails closed, and the failure is audited", () => {
     expect(recent(db, 1)[0]).toMatchObject({ hook: "access", decision: "deny", tool: "*" });
   });
 
-  test("/access failing closed on a readable payload denies and audits every tool named", async () => {
+  test("/access failing closed on a readable payload denies and audits every governed tool named", async () => {
     // Break the policy so the handler path fails closed, then check the rows.
     db.run("UPDATE policy_rules SET tool = 'approve_loan' WHERE id = 'pre.approve-within-clearance'");
     await settle();
@@ -234,10 +234,15 @@ describe("fails closed, and the failure is audited", () => {
     });
     expect(AccessHookResult.parse(await res.json()).deny).toHaveProperty("Github");
     const rows = recent(db, auditCount(db) - before);
+    // One row per governed tool — the policy will not compile, so the governed
+    // set is the configured one — and one summary row for Github's two (#107).
     expect(rows.map((r) => r.tool).sort()).toEqual(
-      ["Github.CreateIssue", "Github.ListRepos", "Loan.ApproveLoan", "Loan.DenyLoan", "Loan.GetLoan", "Loan.SearchLoans"],
+      ["*", "Loan.ApproveLoan", "Loan.DenyLoan", "Loan.GetLoan", "Loan.SearchLoans"],
     );
-    expect(rows.every((r) => r.decision === "deny" && r.rule_id === null && /FAIL-CLOSED/.test(r.reason))).toBe(true);
+    expect(rows.every((r) => r.decision === "deny" && r.rule_id === null)).toBe(true);
+    expect(rows.filter((r) => r.tool !== "*").every((r) => /FAIL-CLOSED/.test(r.reason))).toBe(true);
+    const summary = rows.find((r) => r.tool === "*")!;
+    expect(summary.reason).toContain("2 tools in 1 toolkit");
     db.run("UPDATE policy_rules SET tool = 'ApproveLoan' WHERE id = 'pre.approve-within-clearance'");
     await settle();
   });
@@ -500,6 +505,7 @@ describe("latency", () => {
     const { bytes, toolkits } = bigCatalogue();
     expect(bytes).toBeGreaterThan(1_500_000);
 
+    const rowsBefore = auditCount(db);
     const started = performance.now();
     const res = await post("/access", { user_id: SAM, toolkits });
     const ms = performance.now() - started;
@@ -508,10 +514,17 @@ describe("latency", () => {
     const body = AccessHookResult.parse(await res.json());
     expect(body.deny?.Loan?.tools).toEqual({ ApproveLoan: V });
     expect(Object.keys(body.deny ?? {}).length).toBe(Object.keys(toolkits).length);
-    // Generous: CI machines are slow. Locally this is tens of milliseconds,
-    // including one audit row per tool decided.
+    // Generous: CI machines are slow. Locally this is tens of milliseconds.
     expect(ms).toBeLessThan(2000);
-    const tools = Object.values(toolkits).reduce((n, t) => n + Object.keys(t.tools).length, 0);
-    expect(auditCount(db)).toBeGreaterThanOrEqual(tools);
+
+    // #107, and the number this whole slice exists for. The same call used to
+    // append one audit row per catalogue entry — more than ten thousand of
+    // them, each one an SSE frame as well — which is how the Render disk got
+    // to 413,832 rows with nothing looping. Now it is one row per governed
+    // tool plus one summary row for everything else.
+    const entries = Object.values(toolkits).reduce((n, t) => n + Object.keys(t.tools).length, 0);
+    expect(entries).toBeGreaterThan(10_000);
+    const governed = Object.keys(LOAN_TOOLS).length;
+    expect(auditCount(db) - rowsBefore).toBe(governed + 1);
   });
 });
