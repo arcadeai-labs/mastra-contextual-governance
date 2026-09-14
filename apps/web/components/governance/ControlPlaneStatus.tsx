@@ -38,7 +38,15 @@ export interface ControlPlaneStatusProps {
   readonly pollMs?: number;
   /** Overridden in tests so the route can be served on a port the OS picked. */
   readonly endpoint?: string;
-  /** Which mode the Reset button runs without being asked. */
+  /**
+   * Which mode the Reset button runs.
+   *
+   * `demo` by the human's decision on #106: the button a presenter reaches for
+   * between takes is the rehearsal reset, not the narrow one. The narrow one
+   * has its own home — it is offered by the drift warning, where it is the
+   * exact remedy for the exact thing being warned about, and nowhere else.
+   * A prop so a test can pin both without reaching into module state.
+   */
   readonly defaultMode?: ResetMode;
 }
 
@@ -47,7 +55,7 @@ type Busy = { readonly mode: ResetMode } | null;
 export function ControlPlaneStatus({
   pollMs = 5000,
   endpoint = CONTROL_PLANE_PATH,
-  defaultMode = "policy",
+  defaultMode = "demo",
 }: ControlPlaneStatusProps) {
   const [report, setReport] = useState<ControlPlaneReport | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
@@ -173,6 +181,25 @@ export function ControlPlaneStatus({
               </li>
             ))}
           </ul>
+          {/* The remedy, attached to the warning rather than parked in the
+              action row: this button is not "a smaller reset", it is the
+              answer to the sentence directly above it, and a presenter
+              reading that sentence on a projector should not have to look
+              somewhere else for what to do about it. Gated on the same
+              `reset` state as the button below — an unset RESET_TOKEN takes
+              BOTH controls away, never one. */}
+          {report.reset === "enabled" ? (
+            <div className="cg-control-plane-actions">
+              <button
+                type="button"
+                className="cg-control-plane-button"
+                disabled={busy !== null}
+                onClick={() => setConfirming("policy")}
+              >
+                {busy?.mode === "policy" ? "Resyncing…" : "Resync policy"}
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -185,16 +212,6 @@ export function ControlPlaneStatus({
 
       {report.reset === "enabled" ? (
         <div className="cg-control-plane-actions">
-          {drift === null ? null : (
-            <button
-              type="button"
-              className="cg-control-plane-button"
-              disabled={busy !== null}
-              onClick={() => setConfirming("policy")}
-            >
-              {busy?.mode === "policy" ? "Resyncing…" : "Resync policy"}
-            </button>
-          )}
           <button
             type="button"
             className="cg-control-plane-button"
@@ -241,20 +258,28 @@ export function ControlPlaneStatus({
  * What each mode is about to do, in the words that matter to the person
  * pressing it.
  *
- * Both name what survives as well as what goes, because "reset" on a stage is
+ * Both name what SURVIVES as well as what goes, because a reset on a stage is
  * pressed under time pressure and the two modes differ in exactly the thing
- * nobody can undo: the audit log. Naming `loans.db` is the other half — it is
- * a different service's database, and a presenter who resets the demo and then
- * finds LN-2291 still approved should have been told here rather than
- * discovered it in front of an audience.
+ * nobody can undo: the audit log. `demo` is now what the unlabelled "Reset"
+ * runs (#106, the human's decision), so its sentence has to carry the whole
+ * blast radius rather than most of it — every table it empties, named.
+ *
+ * Naming `loans.db` is the other half, and it is about *this control* rather
+ * than about the demo: an approved LN-2291 survives both modes, because that
+ * database belongs to `apps/loan-app` and nothing in the control plane may
+ * reach into it (DESIGN.md). A presenter who presses Reset and then finds the
+ * loan still approved should read that here, not discover it in front of an
+ * audience.
  */
 const CONFIRMATION: Record<ResetMode, string> = {
   policy:
     "Replace subjects, the catalogue and every policy and output rule with the fixture this " +
-    "image ships. Any rule edited live on stage is lost. Grants, approval requests and the " +
-    "audit log are kept.",
+    "image ships, so the live policy is the shipped policy again. Any rule edited live on " +
+    "stage is lost. Grants, approval requests and the audit log are kept.",
   demo:
-    "Replace the policy with the fixture AND clear grants, approval requests and the audit log " +
-    "— everything this demo has done so far. Rules edited live on stage are lost. Approved " +
-    "loans are not affected: loans.db belongs to the bank's own service and is reset there.",
+    "The full rehearsal reset. It wipes four things: the policy (subjects, the catalogue, and " +
+    "every policy and output rule) is replaced with the fixture this image ships, and grants, " +
+    "approval requests and the audit log are emptied — everything this demo has done so far, " +
+    "including any rule edited live on stage. It does NOT touch loans.db: approved loans " +
+    "belong to the bank's own service and are not reset by this control.",
 };

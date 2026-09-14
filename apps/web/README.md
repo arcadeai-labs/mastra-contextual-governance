@@ -476,11 +476,25 @@ bearer. Unset, the control is not drawn at all and `GET /health` here reports
 `"reset": "disabled"`. Set here but not on `cg-hooks` and the strip says which service
 to fix, rather than letting the press 404.
 
+**Two controls, and the split is the human's decision on #106.** The unlabelled
+**Reset** runs the full rehearsal reset (`demo`: the policy replaced from the fixture,
+*and* grants, approval requests and the audit log emptied) — that is what a presenter
+reaches for between takes, so it is the button that is simply there. The narrow one
+(`policy`) is not a second general-purpose button: it is **Resync policy**, rendered
+*inside* the drift warning, because it is the exact remedy for the exact sentence
+above it. A presenter reading "these rows differ from the fixture" on a projector
+should not have to look elsewhere for what to do about it.
+
+One variable gates both. `RESET_TOKEN` unset takes the resync away with the button,
+even though they live in different blocks — the drift warning still renders, because
+the drift is real whether or not this deployment can act on it.
+
 Every press confirms first, and the confirmation names **what survives** as well as
-what goes — the audit log in one mode and not the other, and `loans.db` in neither,
-because it belongs to `apps/loan-app` and is reset by that service (#23). A presenter
-who resets the demo and then finds LN-2291 still approved should read it here, not
-discover it in front of an audience.
+what goes. `demo`'s sentence names all four things it wipes, because it is what the
+unlabelled button runs and its blast radius has to be on screen in full; `loans.db`
+is in neither mode, because it belongs to `apps/loan-app` and is reset by that
+service (#23). A presenter who resets the demo and then finds LN-2291 still approved
+should read it here, not discover it in front of an audience.
 
 What this route does **not** do is authenticate its caller: anyone who can load
 `/panel` on a deployment with `RESET_TOKEN` set can press it. Narrowing that further

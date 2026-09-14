@@ -216,17 +216,61 @@ describe("the Reset control", () => {
     report = { ...DRIFTED, reset: "upstream-disabled" };
     const host = await mount();
 
+    // Neither control, including the resync that lives inside the warning.
     expect(buttons(host)).toHaveLength(0);
     expect(host.textContent).toContain("RESET_TOKEN");
     expect(host.textContent).toContain("does not exist there");
+    // The warning still renders: the drift is real whether or not anybody on
+    // this deployment is able to act on it.
+    expect(host.textContent).toContain("Fixture drift");
   });
 
-  test("confirms before it acts, and sends nothing until it is confirmed", async () => {
+  /**
+   * The human's decision on #106: the unlabelled button a presenter reaches
+   * for between takes is the FULL rehearsal reset. Mounted with no
+   * `defaultMode` at all, so what is pinned here is the component's own
+   * default rather than a value this test handed it — the previous version of
+   * this file passed `defaultMode: "demo"` explicitly and would have stayed
+   * green through a regression to `policy`.
+   */
+  test("the Reset button runs the full rehearsal reset by default", async () => {
     const host = await mount();
 
     await click(labelled(host, "Reset"));
     expect(posts).toEqual([]);
-    // The confirmation names what survives as well as what goes.
+    expect(host.querySelector("[role='alertdialog']")).not.toBeNull();
+
+    await click(labelled(host, "Reset the demo"));
+    expect(posts).toEqual([{ mode: "demo" }]);
+  });
+
+  /**
+   * Four tables named, and the one that is not. A presenter presses this
+   * under time pressure; the sentence is the only thing between them and an
+   * emptied audit log they did not mean to empty.
+   */
+  test("the confirmation says in words what demo wipes, and what it does not", async () => {
+    const host = await mount();
+
+    await click(labelled(host, "Reset"));
+    const text = host.textContent ?? "";
+
+    expect(text).toContain("the policy");
+    expect(text).toContain("grants");
+    expect(text).toContain("approval requests");
+    expect(text).toContain("the audit log");
+    // The one a presenter would otherwise assume moved, named as this
+    // control's boundary rather than as a footnote about the demo.
+    expect(text).toContain("does NOT touch loans.db");
+    expect(text).toContain("not reset by this control");
+  });
+
+  test("confirms before it acts, and sends nothing until it is confirmed", async () => {
+    const host = await mount({ defaultMode: "policy" });
+
+    await click(labelled(host, "Reset"));
+    expect(posts).toEqual([]);
+    // The narrow mode's confirmation names what survives as well as what goes.
     expect(host.textContent).toContain("audit log are kept");
     expect(host.querySelector("[role='alertdialog']")).not.toBeNull();
 
@@ -246,30 +290,58 @@ describe("the Reset control", () => {
     expect(buttons(host).map((b) => b.textContent)).toContain("Reset");
   });
 
-  test("the default mode is what the button confirms and what it posts", async () => {
-    const host = await mount({ defaultMode: "demo" });
+  test("the default mode is overridable, and is what the button confirms and posts", async () => {
+    const host = await mount({ defaultMode: "policy" });
 
     await click(labelled(host, "Reset"));
-    // The demo mode's confirmation has to name the audit log and loans.db,
-    // because those are the two a presenter cannot undo or would assume moved.
-    expect(host.textContent).toContain("audit log");
-    expect(host.textContent).toContain("loans.db");
-
-    await click(labelled(host, "Reset the demo"));
-    expect(posts).toEqual([{ mode: "demo" }]);
+    await click(labelled(host, "Replace the policy"));
+    expect(posts).toEqual([{ mode: "policy" }]);
   });
 
-  test("drift offers a narrow resync alongside the reset, and only while there is drift", async () => {
+  /**
+   * The other half of the human's decision: the narrow reset is the drift
+   * warning's own remedy, one click, posting `policy` — not the big button
+   * wearing a different label.
+   */
+  test("the drift warning offers a one-click resync, and it posts policy", async () => {
     report = DRIFTED;
-    const host = await mount({ defaultMode: "demo" });
+    const host = await mount();
 
     await click(labelled(host, "Resync policy"));
     await click(labelled(host, "Replace the policy"));
     expect(posts).toEqual([{ mode: "policy" }]);
   });
 
+  test("the resync sits inside the drift warning, not in the action row", async () => {
+    report = DRIFTED;
+    const host = await mount();
+
+    const warning = host.querySelector(".cg-control-plane-drift");
+    expect(warning).not.toBeNull();
+    expect(warning?.textContent).toContain("Resync policy");
+    // And the two are distinct controls rather than one relabelled: both are
+    // on screen at once, and they post different modes.
+    expect(buttons(host).map((b) => b.textContent)).toEqual(["Resync policy", "Reset"]);
+  });
+
   test("no drift, no resync button", async () => {
-    const host = await mount({ defaultMode: "demo" });
+    const host = await mount();
     expect(buttons(host).map((b) => b.textContent)).toEqual(["Reset"]);
+  });
+
+  /**
+   * One variable, both surfaces. An unset `RESET_TOKEN` must not leave the
+   * resync reachable because it happens to live in a different block from the
+   * button — this is the case that regressed when the resync moved.
+   */
+  test("no token takes BOTH controls away, drift and all", async () => {
+    report = { ...DRIFTED, reset: "no-token" };
+    const host = await mount();
+
+    expect(buttons(host)).toHaveLength(0);
+    // The warning itself still renders: the drift is real whether or not
+    // anybody on this deployment can act on it.
+    expect(host.textContent).toContain("Fixture drift");
+    expect(host.textContent).toContain("output_rules:post.strip-injected-instructions");
   });
 });

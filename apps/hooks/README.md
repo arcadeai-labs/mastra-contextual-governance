@@ -253,11 +253,17 @@ curl -fsS -X POST https://cg-hooks.onrender.com/admin/reset \
 
 | mode | replaces | leaves |
 |---|---|---|
-| `policy` (default) | `subjects`, `catalogue`, `policy_rules`, `output_rules` | grants, approval requests, audit log |
+| `policy` (the endpoint's default) | `subjects`, `catalogue`, `policy_rules`, `output_rules` | grants, approval requests, audit log |
 | `demo` | the above, **and empties** `grants`, `approval_requests`, `audit_log` | nothing of the demo's own state |
 
 One transaction, then an immediate cache reload, so the `revision` in the response is the
 revision being served rather than one that will be shortly.
+
+`policy` is what an omitted `mode` means *on this endpoint* — the narrow, conservative
+one, since a caller that did not say has not asked for the audit log to be emptied. The
+panel's **Reset** button is the other way round and says so every time: it posts `demo`
+explicitly, because a presenter between takes wants the rehearsal reset (#106). The
+panel's narrow control is `Resync policy`, offered by the drift warning.
 
 It is an **endpoint** rather than a script for one reason: the fixture it seeds from is the one
 compiled into the image that is *running*. A `sqlite3` session in a Render shell cannot promise
