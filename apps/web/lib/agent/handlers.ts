@@ -121,6 +121,22 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
     dropped: selected.dropped,
   });
 
+  // Nothing at all came back. A different fault from "none of them are ours",
+  // and naming the wrong one sends somebody to check a toolkit variable while
+  // the control plane is down. `listToolsets()` does not throw on a JSON-RPC
+  // error — it logs and returns `{}` — so this is the only place that failure
+  // is visible, and a live answer always carries the gateway's own built-ins
+  // even when policy hides every project tool (#15).
+  if (selected.advertised.length === 0) {
+    await client.disconnect().catch(() => undefined);
+    return refuse(
+      502,
+      `The gateway listed no tools at all — not even its own built-ins, which every answer ` +
+        `carries. That is the list failing to come back rather than a persona who may use ` +
+        `nothing; check that the control plane is answering /access.`,
+    );
+  }
+
   if (Object.keys(selected.tools).length === 0) {
     await client.disconnect().catch(() => undefined);
     return refuse(
