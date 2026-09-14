@@ -378,7 +378,19 @@ export async function liveGatewayToken(
   config: IdentitySurface = readIdentitySurface(),
   now = Date.now(),
 ): Promise<{ token: string; session: Session } | { token: null; reason: string }> {
-  if (!session.gateway) return { token: null, reason: "this browser holds no gateway token" };
+  if (!session.gateway) {
+    // Two absences, two sentences. A browser that has never run hop 1 and a
+    // browser whose bearer the gateway refused both hold nothing, and round 1
+    // of #98's review found the second reading as the first one turn later —
+    // so the chat route answered a rejection with an unclickable "no gateway
+    // token" the moment somebody pressed Send a second time.
+    return {
+      token: null,
+      reason: session.gateway_rejected_at
+        ? "the gateway rejected this browser's gateway token, so it was dropped"
+        : "this browser holds no gateway token",
+    };
+  }
   if (!isExpiring(session.gateway.expires_at, now)) {
     return { token: session.gateway.access_token, session };
   }

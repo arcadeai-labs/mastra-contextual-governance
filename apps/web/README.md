@@ -644,6 +644,18 @@ sealed session and the sign-in is kept, so the sign-in panel then reads
 **`Gateway token: rejected`** rather than `none` and offers the one link that
 fixes it. The token is never in the event, the cookie, or the log.
 
+**Every later turn answers the same way, not just the one that discovered it.**
+Round 1 of #98's review pressed Send twice: the first turn streamed the link and
+the second answered `401 {"error":"this browser holds no gateway token…"}`,
+because a rejected session and a session that never ran hop 1 both have no
+`gateway` on them. `Chat.tsx` clears the transcript before each submission, so
+the second answer painted over the only link on screen with unlinkable red text.
+The two absences are now told apart by `gateway_rejected_at`: a browser that
+never authorized still gets the flat `401`, and a browser whose bearer was
+refused gets the same stream every time until it re-authorizes.
+`gatewayTokenRejected` is idempotent, so the panel's timestamp is when the gap
+began rather than the last time somebody pressed Send.
+
 `liveGatewayToken` fails the same way: a refresh that answers non-2xx, or 2xx
 with no `access_token` on it, returns `{ token: null, reason }` and logs the
 status alone. It never hands back the bearer it already had — a stale token is

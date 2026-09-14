@@ -76,10 +76,17 @@ export function withGatewayToken(session: Session, gateway: GatewayToken): Sessi
  * The sign-in survives on purpose. The person is still whoever the IdP said they
  * are; only hop 1 needs doing again, and signing them out would charge a
  * password for a token (`DESIGN.md` → Gateway token storage).
+ *
+ * **Idempotent, and `at` is the *start* of the current no-token state rather
+ * than the last time somebody noticed it.** A second chat turn against the same
+ * rejected session runs through here again, and re-stamping would make the
+ * panel say the token was refused just now every time the person pressed Send.
+ * `withGatewayToken` clears the flag whenever a fresh bearer is stored, so an
+ * existing stamp always belongs to the gap this one is still inside.
  */
 export function gatewayTokenRejected(session: Session, at = Date.now()): Session {
   const { gateway: _refused, ...rest } = session;
-  return { ...rest, gateway_rejected_at: at };
+  return { ...rest, gateway_rejected_at: session.gateway_rejected_at ?? at };
 }
 
 export const SESSION_COOKIE = "cg_session";

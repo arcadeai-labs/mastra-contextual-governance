@@ -171,14 +171,25 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
     step = PRE_STREAM.token;
     const live = await liveGatewayToken(session, config);
     if (live.token === null) {
-      // Hop 1 has never run on this browser: an ordinary refusal, with the hop
-      // to run named in it. The chat page says the same thing above the box.
-      if (!session.gateway) {
+      // Hop 1 has never run on this browser — no token, and no record of one
+      // having been refused. There is nothing to re-authorize and nothing dead
+      // to drop, so this is an ordinary refusal with the hop named in it, and
+      // the chat page says the same thing above the box before anyone presses
+      // Send.
+      if (!session.gateway && !session.gateway_rejected_at) {
         return refuse(401, `${live.reason}. Authorize the gateway at ${GATEWAY_START_PATH}.`);
       }
-      // There *was* a token and it can no longer be made live — the refresh was
-      // refused, or it expired with nothing to refresh it with. Same ending as a
-      // rejection, because what this browser holds is equally dead.
+      // Everything else: a bearer that was refused and dropped on an earlier
+      // turn, a refresh the authorization server would not honour, or a token
+      // that expired with nothing to refresh it with. One answer for all of
+      // them, and the same answer the rejecting turn itself gives.
+      //
+      // Round 1 of #98's review found the first of those three falling through
+      // to the flat 401 above: the *rejecting* turn streamed a clickable link,
+      // and the very next Send answered `{"error":"this browser holds no
+      // gateway token…"}`, which `Chat.tsx` renders as unlinkable red text
+      // after clearing the events that had the link in them. A recovery path
+      // that only exists on one turn is not a recovery path.
       return reauthorize(request, config, session, live.reason);
     }
 

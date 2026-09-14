@@ -180,15 +180,36 @@ async function ask(config: IdentitySurface, cookie: string): Promise<Turn> {
   }
 }
 
+/**
+ * A cookie jar, the way a browser keeps one.
+ *
+ * Real enough to matter: a session that shrinks writes `Max-Age=0` for the
+ * chunks it no longer needs, and a jar that kept them would hand the next
+ * request a value the seal refuses. Round 1 of #98's review drove two
+ * consecutive POSTs, so this suite has to carry state between them the way
+ * Chrome would rather than re-minting a cookie each time.
+ */
+function applyCookies(jar: Map<string, string>, setCookie: readonly string[]): Map<string, string> {
+  for (const header of setCookie) {
+    const [pair, ...attributes] = header.split(";");
+    const cut = (pair ?? "").indexOf("=");
+    if (cut <= 0) continue;
+    const name = (pair as string).slice(0, cut);
+    const value = (pair as string).slice(cut + 1);
+    if (value === "" || attributes.some((attribute) => /^\s*max-age=0\s*$/i.test(attribute))) jar.delete(name);
+    else jar.set(name, value);
+  }
+  return jar;
+}
+
+/** What that jar sends on the next request. */
+function cookieHeader(jar: ReadonlyMap<string, string>): string {
+  return [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
+}
+
 /** Re-open the session a `Set-Cookie` header left on the browser. */
 async function sessionAfter(turn: Turn, config: IdentitySurface): Promise<Session | null> {
-  const jar = new Map<string, string>();
-  for (const header of turn.setCookie) {
-    const [pair] = header.split(";");
-    const cut = (pair ?? "").indexOf("=");
-    if (cut > 0) jar.set((pair as string).slice(0, cut), (pair as string).slice(cut + 1));
-  }
-  return readSessionFromCookies(jar, config);
+  return readSessionFromCookies(applyCookies(new Map(), turn.setCookie), config);
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +374,86 @@ describe("POST /api/chat, when the gateway rejects this browser's token", () => 
     }
   });
 
+  test("every later Send answers the same way, with the same link (round 1, finding 1)", async () => {
+    // The reviewer's exercise, reproduced: one gateway stub, two consecutive
+    // `POST /api/chat` calls carrying the cookie the previous one set. Round 1
+    // found the first answering `200 application/x-ndjson` with a clickable
+    // `/api/arcade/start` and the second answering `401 application/json`
+    // — `{"error":"this browser holds no gateway token…"}` — which `Chat.tsx`
+    // paints as red text after clearing the events the link was in. So the
+    // person who pressed Send twice was left with no way forward on screen.
+    const gateway = startGateway("refuses-the-bearer");
+    const config = surfaceFor(gateway.url);
+    try {
+      const jar = applyCookies(new Map(), [
+        // The browser's starting state, as a signed-in Dana holding a bearer.
+        ...(await browserCookie(config, signedInWithToken())).split("; "),
+      ]);
+
+      const first = await ask(config, cookieHeader(jar));
+      applyCookies(jar, first.setCookie);
+      const second = await ask(config, cookieHeader(jar));
+      applyCookies(jar, second.setCookie);
+      // A third, so this is a state the route is in rather than an off-by-one.
+      const third = await ask(config, cookieHeader(jar));
+
+      for (const [ordinal, turn] of [["first", first], ["second", second], ["third", third]] as const) {
+        expect(`${ordinal}: ${turn.status}`).toBe(`${ordinal}: 200`);
+        expect(turn.contentType).toContain(NDJSON);
+
+        const authorization = turn.events.find((event) => event.kind === "authorization");
+        expect(`${ordinal}: ${authorization === undefined ? "no link" : "link"}`).toBe(`${ordinal}: link`);
+        if (authorization?.kind === "authorization") {
+          expect(authorization.url).toContain(GATEWAY_START_PATH);
+          expect(authorization.tool).toBe(GATEWAY_ID);
+        }
+        expect(turn.events.at(-1)).toEqual({ kind: "done", calls: 0 });
+        // The unlinkable sentence round 1 read on the second turn.
+        expect(turn.body).not.toContain("holds no gateway token");
+        expect(turn.body).not.toContain("ARCADE_LOAN_TOOLKIT");
+        expect(turn.body).not.toContain(TOKEN);
+      }
+
+      // The later turns say *why* there is no token, rather than reporting the
+      // absence as though hop 1 had never run.
+      const later = second.events.find((event) => event.kind === "authorization");
+      if (later?.kind === "authorization") {
+        expect(later.instructions).toContain("rejected");
+        expect(later.instructions).toContain(DANA);
+      }
+
+      // Still signed in, still no bearer, and the stamp is the moment the gap
+      // began rather than the last time somebody pressed Send.
+      const after = await readSessionFromCookies(jar, config);
+      expect(after?.email).toBe(DANA);
+      expect(after?.gateway).toBeUndefined();
+      const began = (await sessionAfter(first, config))?.gateway_rejected_at;
+      expect(after?.gateway_rejected_at).toBe(began as number);
+    } finally {
+      gateway.stop();
+    }
+  });
+
+  test("a browser that never ran hop 1 still gets the plain refusal", async () => {
+    // The one case that is *not* a re-authorization: nothing was refused and
+    // there is nothing to drop, so the flat 401 stays. Kept under test because
+    // the fix for finding 1 is a condition on this branch.
+    const gateway = startGateway("refuses-the-bearer");
+    const config = surfaceFor(gateway.url);
+    try {
+      const cookie = await browserCookie(config, { email: DANA, signed_in_at: Date.now() });
+      const turn = await ask(config, cookie);
+
+      expect(turn.status).toBe(401);
+      expect(turn.contentType).toContain("application/json");
+      const body = JSON.parse(turn.body) as { error?: string };
+      expect(body.error).toContain("holds no gateway token");
+      expect(body.error).toContain(GATEWAY_START_PATH);
+    } finally {
+      gateway.stop();
+    }
+  });
+
   test("the next visit reads 'Gateway token: rejected' rather than 'none'", async () => {
     const gateway = startGateway("refuses-the-bearer");
     const config = surfaceFor(gateway.url);
@@ -370,6 +471,18 @@ describe("POST /api/chat, when the gateway rejects this browser's token", () => 
       // And the way back is on the same card.
       expect(html).toContain(GATEWAY_START_PATH);
       expect(html).not.toContain(TOKEN);
+
+      // The other direction, so "none" stays reserved for a browser that never
+      // ran hop 1 rather than drifting into meaning both.
+      const never = renderToStaticMarkup(
+        <SignInPanel
+          session={{ email: DANA, signed_in_at: Date.now() }}
+          problems={configurationProblems(config)}
+        />,
+      );
+      const neverText = never.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      expect(neverText).toContain("Gateway token none");
+      expect(neverText).not.toContain("rejected");
     } finally {
       gateway.stop();
     }
