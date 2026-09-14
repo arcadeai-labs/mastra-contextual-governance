@@ -373,14 +373,15 @@ export const AUDIT_RETENTION_ROWS = 2_000_000;
  *
  * Said at boot rather than enforced at write time on purpose: truncating the
  * log to keep serving is the one repair nobody would see. A demo that is
- * approaching the disk should be reset (`scripts/reset`, #23), and the run
- * before that is the moment to say so.
+ * approaching the disk should be reset (the panel's Reset button or `bun run
+ * reset`, #23), and the run before that is the moment to say so.
  */
 export function retentionWarning(rows: number, bound = AUDIT_RETENTION_ROWS): string | null {
   if (rows < bound * 0.8) return null;
   return (
     `audit_log holds ${rows.toLocaleString("en-US")} rows, ` +
     `${Math.round((rows / bound) * 100)}% of the ${bound.toLocaleString("en-US")}-row bound ` +
-    `this disk is sized for. Nothing prunes it: run scripts/reset before it fills.`
+    `this disk is sized for. Nothing prunes it: empty it with the panel's Reset button ` +
+    `or bun run reset before it fills.`
   );
 }

@@ -356,7 +356,7 @@ describe("the stated retention bound", () => {
     expect(warning).toInclude("1,600,000 rows");
     expect(warning).toInclude("80%");
     expect(warning).toInclude("2,000,000-row bound");
-    expect(warning).toInclude("scripts/reset");
+    expect(warning).toInclude("the panel's Reset button or bun run reset");
   });
 
   test("the bound is the measured one: 487 bytes a row against a 1 GB disk", () => {
