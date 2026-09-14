@@ -15,9 +15,15 @@
  * broke, and nothing decided anything. Collapsing any two of them puts a
  * statement on screen that the control plane never made.
  *
+ * #20 added two more — `waiting` and `resumed` — and neither changes what any
+ * of the eight already meant. They describe the *turn*: one says it ended
+ * holding an approval id, the other says this one began because that approval
+ * was decided. `denied` in particular still requires positive evidence of a
+ * hook decision; nothing about the approval flow is allowed to produce one.
+ *
  * Deliberately not the AI SDK's UI message stream. That protocol is richer than
  * this slice needs and it would put the shape of a vendor's stream between the
- * control plane and the screen; these eight kinds are the whole vocabulary and
+ * control plane and the screen; these ten kinds are the whole vocabulary and
  * `test/agent-tools.test.ts` reads them back.
  */
 
@@ -28,6 +34,41 @@ export type ChatEvent =
   | { kind: "tool-call"; tool: string; inputs: Record<string, unknown> }
   /** The tool ran. The value is not streamed — the reply says what happened. */
   | { kind: "tool-result"; tool: string }
+  /**
+   * The turn ended because an approval was requested, and the request id it is
+   * waiting on (#20).
+   *
+   * **It is a marker, not a mechanism.** Nothing here waits: the turn ends the
+   * way any other turn ends, and this event is what lets the page recognise
+   * `approval.granted` on the governance stream as *its* approval rather than
+   * somebody else's. `DESIGN.md` → The wait: the agent ends its turn, and a
+   * long-polling tool call would hit gateway timeouts in the least debuggable
+   * way possible, live.
+   *
+   * It follows the `tool-result` for `Approvals_RequestApproval` and says only
+   * what that result said. It is not a claim about what the agent will do next,
+   * and the agent's own reply — which names the approver — is the thing on
+   * screen; this is the id under it.
+   */
+  | { kind: "waiting"; tool: string; request_id: string; approver: string }
+  /**
+   * This turn is a resume: an approval was decided and the UI started a new
+   * turn carrying that fact (#20).
+   *
+   * First event of the resumed stream, before any text. `message` is the exact
+   * sentence the server injected as the user turn — shown, because a control
+   * surface that injects a message into a conversation and does not display it
+   * is asking to be trusted about the one thing an audience should be able to
+   * check. It is a statement of fact built from `GET /approvals/{id}` on the
+   * server, never from the browser and never an instruction.
+   */
+  | {
+      kind: "resumed";
+      request_id: string;
+      decision: "approved" | "denied";
+      decided_by: string;
+      message: string;
+    }
   /**
    * A hook refused. `reason` is the rule's own remediation text with Arcade's
    * prefix stripped; `ref` is the audit row id the control plane embedded (#6),

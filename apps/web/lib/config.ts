@@ -91,6 +91,17 @@ export interface AgentConfig {
    * not read.
    */
   toolkits: readonly string[];
+  /**
+   * Which of `toolkits` is the approvals one — `ARCADE_APPROVALS_TOOLKIT`,
+   * `Approvals` as Arcade files it (#35).
+   *
+   * Named separately as well as listed above because #20's resume half has to
+   * recognise one specific tool on the wire, `Approvals_RequestApproval`, and
+   * working that out by picking the second entry of an allow-list would be a
+   * guess. The allow-list answers "may the agent reach this?"; this answers
+   * "which one is the escalation?", and they are different questions.
+   */
+  approvalsToolkit: string;
 }
 
 export interface WebConfig {
@@ -163,6 +174,7 @@ export function readIdentitySurface(
         env.ARCADE_LOAN_TOOLKIT?.trim() || "Loan",
         env.ARCADE_APPROVALS_TOOLKIT?.trim() || "Approvals",
       ].filter((name) => name !== ""),
+      approvalsToolkit: env.ARCADE_APPROVALS_TOOLKIT?.trim() || "Approvals",
     },
     identity: {
       idpIssuer: trimUrl(env.IDP_ISSUER),

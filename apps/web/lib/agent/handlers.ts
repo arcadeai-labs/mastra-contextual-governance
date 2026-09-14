@@ -65,8 +65,26 @@
  * The section is bounded deliberately. Once the `ReadableStream` is returned
  * the status is already sent and there is nothing left to shape; a failure
  * after that is a `fault` **event** on the stream, which `run.ts` owns.
+ *
+ * ## Two ways a turn starts (#20)
+ *
+ * `{ prompt }` is a person asking something. `{ resume: { request_id, prompt,
+ * reply } }` is the UI starting the next turn because an approval was decided
+ * — `DESIGN.md` → The wait: *"Agent ends its turn; SSE `approval.granted` event
+ * auto-resumes it."*
+ *
+ * Everything above about identity holds unchanged, and one thing is added to
+ * it: **the resume's facts are read from the approvals store, never taken from
+ * the browser.** The browser names an id and hands back the previous turn as
+ * context; this route then reads `GET /approvals/{id}` with its own bearer and
+ * builds the injected message from that record alone (`resume.ts`). A request
+ * that does not read back as decided, or whose requester is not the persona
+ * signed in here, is a `fault` — nothing decided anything, so nothing on
+ * screen may say it did.
  */
-import { agentProblems, readIdentitySurface, type IdentitySurface } from "../config.ts";
+import { agentProblems, readIdentitySurface, readWebConfig, type IdentitySurface } from "../config.ts";
+import { fetchApproval } from "../approvals-store.ts";
+import { planResume, readResumeRequest, type ResumeRequest } from "./resume.ts";
 import { anthropicModel, buildAgent } from "./agent.ts";
 import { CHAT_PATH, encodeEvent, NDJSON, type ChatEvent } from "./events.ts";
 import { serverFault } from "./fault.ts";
@@ -101,6 +119,16 @@ export type ModelFactory = (config: IdentitySurface) => unknown;
 export interface ChatOptions {
   config?: IdentitySurface;
   model?: ModelFactory;
+  /**
+   * Where the approvals store is and what bearer reaches it — #20's resume
+   * path reads `GET /approvals/{id}` itself rather than believing the browser.
+   *
+   * Optional, and resolved lazily from the environment when a resume actually
+   * arrives, so an ordinary turn is unaffected by a deployment that has no
+   * store configured. The suite supplies it because its store runs on an
+   * OS-assigned port.
+   */
+  store?: { hooksHost: string; approvalsStoreToken: string };
   /** Only for tests, which need to see what the gateway advertised. */
   onToolSurface?: (surface: { advertised: string[]; governed: string[]; dropped: string[] }) => void;
 }
@@ -129,6 +157,7 @@ export const PRE_STREAM = {
   probe: "ask the gateway whether it accepts this browser's token",
   agent: "build the agent and its model",
   seal: "reseal the refreshed session cookie",
+  approval: "read the approval this turn resumes",
 } as const;
 
 /**
@@ -159,8 +188,15 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
 
   try {
     const body = (await request.json().catch(() => null)) as { prompt?: unknown } | null;
+    // Two shapes, one route. `{ prompt }` opens a turn; `{ resume: { … } }` is
+    // the UI starting the next one because an approval was decided (#20). The
+    // resume is read here and acted on further down, once there is a session
+    // to check its requester against.
+    const resume = readResumeRequest(body);
     const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
-    if (prompt === "") return refuse(400, "Send a non-empty `prompt`.");
+    if (resume === null && prompt === "") {
+      return refuse(400, "Send a non-empty `prompt`, or a `resume` naming an approval request.");
+    }
 
     step = PRE_STREAM.session;
     const session = await readSession(request, config);
@@ -274,6 +310,42 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       );
     }
 
+    // The resume, resolved against the store before a token is spent. Every
+    // fact the injected message states comes from this read; the browser's
+    // `prompt` and `reply` are context and nothing more (`resume.ts`).
+    step = PRE_STREAM.approval;
+    let turn: { messages: Parameters<Streamable["stream"]>[0]; opening: ChatEvent[] } = {
+      messages: prompt,
+      opening: [],
+    };
+    if (resume !== null) {
+      const planned = await resolveResume(resume, live.session.email, options, config);
+      if (!planned.ok) {
+        await client.disconnect().catch(() => undefined);
+        // A `fault`, not a `denied` and not a 500: nothing decided anything
+        // here, and the UI must not claim a control-plane action that did not
+        // happen (`events.ts`). A stream because the page renders one; the
+        // status is 200 for the same reason `reauthorize` is.
+        return faultStream(request, config, live.session, session, {
+          kind: "fault",
+          tool: "resume",
+          message: planned.problem,
+        });
+      }
+      turn = {
+        messages: planned.messages,
+        opening: [
+          {
+            kind: "resumed",
+            request_id: resume.request_id,
+            decision: planned.decision,
+            decided_by: planned.decided_by,
+            message: planned.message,
+          },
+        ],
+      };
+    }
+
     step = PRE_STREAM.agent;
     const agent = buildAgent({
       model: (options.model?.(config) ??
@@ -288,7 +360,17 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
     const headers = new Headers({ "content-type": NDJSON, "cache-control": "no-store" });
     if (live.session !== session) await writeSession(headers, request, live.session as Session, config);
 
-    return streamTurn({ agent, prompt, client, headers });
+    return streamTurn({
+      agent,
+      prompt: turn.messages,
+      opening: turn.opening,
+      client,
+      headers,
+      // `Approvals_RequestApproval` as MCP spells it, from the toolkit name
+      // this deployment measured — not a literal, and not the second entry of
+      // the allow-list (`lib/config.ts` → `approvalsToolkit`).
+      requestApprovalTool: `${config.agent.approvalsToolkit}_RequestApproval`,
+    });
   } catch (cause) {
     // The connection belongs to a turn that will never happen. Same reason the
     // stream's `finally` closes it: an open transport is a live bearer token.
@@ -344,6 +426,82 @@ async function reauthorize(
 }
 
 /**
+ * The approval this resume names, read from the store and judged against the
+ * session.
+ *
+ * The read is the point: `planResume` is pure and cannot be told anything, so
+ * every assertion the injected message makes traces back to what
+ * `GET /approvals/{id}` answered here, with this service's own bearer. The
+ * browser named an id. It did not name an outcome, an approver or an amount,
+ * and there is no branch below that would read one if it had.
+ */
+async function resolveResume(
+  resume: ResumeRequest,
+  signedInAs: string,
+  options: ChatOptions,
+  config: IdentitySurface,
+): Promise<
+  | { ok: true; decision: "approved" | "denied"; decided_by: string; message: string; messages: Parameters<Streamable["stream"]>[0] }
+  | { ok: false; problem: string }
+> {
+  // Read here rather than at the top of `chat`, so a deployment with no
+  // approvals store configured still runs ordinary turns and only fails on the
+  // path that needs one.
+  const store = options.store ?? readWebConfig();
+  const lookup = await fetchApproval(resume.request_id, {
+    ...config,
+    hooksHost: store.hooksHost,
+    approvalsStoreToken: store.approvalsStoreToken,
+    approvalsToolkit: config.agent.approvalsToolkit,
+  }).catch((cause: unknown) => ({
+    found: false as const,
+    reason: `The approvals store could not be reached: ${String(cause)}`,
+  }));
+
+  if (!lookup.found) {
+    return {
+      ok: false,
+      problem: `${lookup.reason} Nothing was resumed, and no rule refused anything.`,
+    };
+  }
+
+  const planned = planResume(resume, lookup.request, signedInAs);
+  if (!planned.ok) return planned;
+  return {
+    ok: true,
+    decision: planned.decision,
+    decided_by: lookup.request.decided_by ?? lookup.request.approver_id,
+    message: planned.message,
+    messages: planned.messages as Parameters<Streamable["stream"]>[0],
+  };
+}
+
+/**
+ * One `fault` and a `done`, as a 200 stream.
+ *
+ * The same shape `reauthorize` uses and for the same reason: `Chat.tsx` renders
+ * a non-2xx as flat red text, and this has to land in the transcript as the
+ * grey plumbing card that says *no decision was made and nothing was recorded*.
+ * Saying it any other way would have the control surface assert a control-plane
+ * action that never happened (#14 review, and `events.ts` is explicit).
+ *
+ * A refreshed session is still resealed on the way out — the turn did not
+ * happen, but the token refresh did.
+ */
+async function faultStream(
+  request: Request,
+  config: IdentitySurface,
+  session: Session,
+  previous: Session,
+  fault: ChatEvent,
+): Promise<Response> {
+  const headers = new Headers({ "content-type": NDJSON, "cache-control": "no-store" });
+  if (session !== previous) await writeSession(headers, request, session, config);
+  const events: ChatEvent[] = [fault, { kind: "done", calls: 0 }];
+  return new Response(events.map(encodeEvent).join(""), { headers });
+}
+
+/**
  * The streamed half, from the first byte on.
  *
  * Split out so the `try` above ends exactly where the pre-stream section does.
@@ -353,11 +511,14 @@ async function reauthorize(
  */
 function streamTurn(turn: {
   agent: Streamable;
-  prompt: string;
+  prompt: Parameters<Streamable["stream"]>[0];
+  /** Events written before the model is asked anything. `resumed`, or nothing. */
+  opening: readonly ChatEvent[];
   client: ReturnType<typeof gatewayClient>;
   headers: Headers;
+  requestApprovalTool: string;
 }): Response {
-  const { agent, prompt, client, headers } = turn;
+  const { agent, prompt, opening, client, headers, requestApprovalTool } = turn;
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -365,7 +526,8 @@ function streamTurn(turn: {
         controller.enqueue(encoder.encode(encodeEvent(event)));
       };
       try {
-        await runTurn({ agent, prompt, emit });
+        for (const event of opening) emit(event);
+        await runTurn({ agent, prompt, emit, requestApprovalTool });
       } finally {
         // The MCP connection belongs to this turn and this persona. Leaving it
         // open would leave a bearer token alive in a process that serves every

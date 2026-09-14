@@ -28,6 +28,16 @@
  * #14 exists to measure. A wrapper that swallowed the second call would make
  * the acceptance criterion unfalsifiable.
  *
+ * **Nothing here waits for an approval.** #20's `waiting` event is a marker
+ * emitted after `Approvals_RequestApproval` returns, and the turn then ends
+ * like any other. There is no poll, no long-poll and no sleep in this file, and
+ * there must not be: `DESIGN.md` → The wait says the agent ends its turn, and
+ * the issue says why in two ways — a visibly spinning agent contradicts the
+ * "won't spin and waste your tokens" line the demo is built on, and a
+ * long-polling tool call would hit gateway timeouts in the least debuggable way
+ * possible, live. The resume is a *new* turn, started by the UI when the
+ * decision arrives on the governance stream.
+ *
  * **`maxSteps` is a ceiling, not a policy.** It stops a runaway from costing
  * money, and it is set well above the two or three steps this demo needs so
  * that a model which *does* spin hits it visibly rather than being quietly
@@ -46,7 +56,7 @@ export const TEMPERATURE = 0;
 /** Anything with the `stream` method an agent has. Narrow on purpose — this file uses one method. */
 export interface Streamable {
   stream(
-    messages: string,
+    messages: string | readonly TurnMessage[],
     options: Record<string, unknown>,
   ): Promise<{ fullStream: ReadableStream<{ type: string; payload?: Record<string, unknown> }> }>;
 }
@@ -104,10 +114,28 @@ export function failureText(result: unknown): string {
 
 export interface RunOptions {
   agent: Streamable;
-  prompt: string;
+  /** The turn, as one prompt or as a conversation ending in one (#20's resume). */
+  prompt: string | readonly TurnMessage[];
   maxSteps?: number;
+  /**
+   * The wire name of the escalation tool — `Approvals_RequestApproval` — so a
+   * successful call to it can be recognised and reported as `waiting`.
+   *
+   * Passed in rather than hard-coded because the toolkit name is an
+   * environment variable measured off a real deployment (`ARCADE_APPROVALS_TOOLKIT`),
+   * and this file is the wrong place to have an opinion about it. Unset, the
+   * run behaves exactly as it did before #20: every tool result is a
+   * `tool-result` and nothing else.
+   */
+  requestApprovalTool?: string;
   /** Fires for every event, in order. The caller writes them to the wire. */
   emit: (event: ChatEvent) => void | Promise<void>;
+}
+
+/** One message in a conversation handed to the agent. Mastra takes an array of these. */
+export interface TurnMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 /**
@@ -147,7 +175,17 @@ export async function runTurn(options: RunOptions): Promise<void> {
       }
 
       if (chunk.type === "tool-result") {
-        await emit({ kind: "tool-result", tool: String(payload.toolName ?? "unknown") });
+        const tool = String(payload.toolName ?? "unknown");
+        await emit({ kind: "tool-result", tool });
+
+        // The escalation landed. Nothing here waits for it — the turn ends the
+        // way every turn ends — but the page needs the request id to recognise
+        // the decision when it comes down the governance stream as *this*
+        // browser's rather than somebody else's. See `events.ts` → `waiting`.
+        if (options.requestApprovalTool !== undefined && tool === options.requestApprovalTool) {
+          const requested = approvalRequested(payload.result);
+          if (requested !== null) await emit({ kind: "waiting", tool, ...requested });
+        }
         continue;
       }
 
@@ -197,6 +235,63 @@ export async function runTurn(options: RunOptions): Promise<void> {
   }
 
   await emit({ kind: "done", calls });
+}
+
+/**
+ * The request id and the routed approver out of whatever
+ * `Approvals_RequestApproval` returned, or `null` when it carried neither.
+ *
+ * Written the way `failureText` is, and for the same reason: an MCP tool result
+ * reaches here through two wrappers, and which one is on top has changed with
+ * the transport. The tool's own return value is a flat object
+ * (`tools/approvals/approvals/__init__.py`), but it arrives as `content: [{
+ * type: "text", text: "<json>" }]` alongside `structuredContent`, and Mastra
+ * may hand over either. So all three are looked at, in order, and a shape
+ * carrying no `request_id` yields `null` rather than a `waiting` event with an
+ * empty id — a UI holding a turn open on an id nobody minted would never
+ * resume and would never say why.
+ *
+ * `approver` is a display name when there is one and the address when there is
+ * not; it is for the reader, and the resume matches on `request_id`.
+ */
+export function approvalRequested(result: unknown): { request_id: string; approver: string } | null {
+  for (const candidate of unwrapResult(result)) {
+    const id = candidate["request_id"];
+    if (typeof id !== "string" || id === "") continue;
+    const approver = candidate["approver_display_name"] ?? candidate["approver"];
+    return { request_id: id, approver: typeof approver === "string" ? approver : "" };
+  }
+  return null;
+}
+
+/** Every object a tool result might be, outermost first. */
+function unwrapResult(result: unknown): Array<Record<string, unknown>> {
+  if (typeof result !== "object" || result === null) return [];
+  const body = result as Record<string, unknown>;
+  const found: Array<Record<string, unknown>> = [body];
+
+  const structured = body["structuredContent"];
+  if (typeof structured === "object" && structured !== null) {
+    found.push(structured as Record<string, unknown>);
+  }
+
+  if (Array.isArray(body["content"])) {
+    for (const part of body["content"] as unknown[]) {
+      const text =
+        typeof part === "object" && part !== null ? (part as { text?: unknown }).text : undefined;
+      if (typeof text !== "string") continue;
+      try {
+        const parsed: unknown = JSON.parse(text);
+        if (typeof parsed === "object" && parsed !== null) {
+          found.push(parsed as Record<string, unknown>);
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return found;
 }
 
 /** `for await` over a web `ReadableStream`, which Node's typings do not make iterable. */
