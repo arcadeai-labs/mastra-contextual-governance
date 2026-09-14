@@ -4,10 +4,10 @@
  * half a screen and two columns at that width wrap every value into an
  * unreadable ribbon.
  *
- * Handed rows rather than payloads, because there are two ways to know what
- * changed and only one of them involves a payload: a real `/post` event carries
- * `redactions[]` and nothing else (#16). `lib/governance/diff.ts` decides which
- * account to read; this component only draws.
+ * Handed rows rather than payloads, because a `/post` event carries
+ * `redactions[]` and nothing else — `before` and `after` are not fields a
+ * `GovernanceEvent` has (#16, #101). `lib/governance/diff.ts` turns the records
+ * into rows; this component only draws.
  *
  * Every `before` here is a mask, and this component cannot print a removed
  * value because it is never handed one. The mask is drawn on a hatched field

@@ -287,8 +287,8 @@ locally by `test/identity-flow.test.ts` against a stand-in.
 the right half; it renders no `<html>` or `<body>` of its own.
 
 Three lanes — Access, Pre, Post — fed by a `text/event-stream` of `GovernanceEvent`s
-(#5). Green allow, red deny with the rule that fired, amber modify with a before/after
-diff. Newest at the top of each lane, so the freshest card never moves.
+(#5). Green allow, red deny with the rule that fired, amber modify with one row per
+redaction. Newest at the top of each lane, so the freshest card never moves.
 
 **`/access` is called on `tools/list` for every tool in the gateway and again on each
 call, so access rows outnumber pre rows by design.** That is the hook doing its job, not
@@ -394,18 +394,21 @@ argues against the thing this project argues for.
 
 Two limits, both deliberate.
 
-**A removed value is never rendered.** `before` is replaced by a mask built from the
-value's type and nothing else — not truncated, not partially shown, not hashed. The
-panel is the one surface guaranteed to be on a projector; act 3's whole point is that a
-bank account number did not reach the model, and printing it here would be worse than
-having no diff. `after` *is* shown, because that is what the model received.
+**A removed value is never rendered**, and since #101 the panel is never handed one.
+A `/post` event carries `redactions[]` — path, `rule_id`, `pattern_id`, kind — and
+`GovernanceEvent` has no `before`/`after` fields at all, so `redactionRows()` builds each
+row's mask from the *kind* that fired rather than from a value. The panel is the one
+surface guaranteed to be on a projector; act 3's whole point is that a bank account
+number did not reach the model. What the model *did* get in its place is shown —
+`masked`, `replaced`, `removed entirely` — because that is the half of the row that
+demonstrates the control.
 
-The mask says `text withheld` on a hatched field rather than drawing a row of dots. A
+The mask says `value withheld` on a hatched field rather than drawing a row of dots. A
 design review found the dots read, at projector distance, as a value in a masked font
-rather than as the absence of one — and the phrasing leaks strictly less, since the dots
-were length-proportional and these are not. `maskedDiff()` has an `annotation` slot
-ready for `redactions[]` chips; #8 has landed the `RedactionRecord` type but
-`GovernanceEvent` does not carry an array of them yet, so nothing populates it.
+rather than as the absence of one — and the phrase leaks strictly less, since the dots
+were length-proportional and this does not vary at all. Each row's `annotation` names the
+rule that took the leaf, and the pattern too when a sweep rather than a named field found
+it.
 
 **A layer-2 refusal never reaches this panel, and an empty lane is not proof that
 nothing was tried.** Arcade evaluates a tool's auth requirements *before* `/pre`, so a

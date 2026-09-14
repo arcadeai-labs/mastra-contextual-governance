@@ -40,11 +40,22 @@ interface AuditRow {
   decision: string;
   reason: string;
   rule_id: string | null;
-  before: string | null;
-  after: string | null;
   /** JSON array of `RedactionRecord`, or NULL. Never a removed value (#16). */
   redactions: string | null;
 }
+
+/**
+ * `audit_log` still has `before` and `after` columns and they are deliberately
+ * absent above.
+ *
+ * `GovernanceEvent` dropped the fields on #101, finishing what #16 decided: the
+ * event carries `redactions[]` — where and why — and never a payload. Nothing
+ * writes those columns any more, and {@link fromRow} does not read them, so a
+ * database carrying rows from before the change stops serving their payloads on
+ * an unauthenticated `GET /events` rather than failing to parse them. The
+ * columns themselves stay until a schema version has another reason to move;
+ * dropping one is a migration this slice has no cause to make anybody run.
+ */
 
 /**
  * Event ids double as the correlation token embedded in a denial's
@@ -84,10 +95,9 @@ export function record(
 
   const insert = db.prepare(
     `INSERT INTO audit_log
-       (id, ts, execution_id, hook, user_id, tool, decision, reason, rule_id, before, after, redactions)
+       (id, ts, execution_id, hook, user_id, tool, decision, reason, rule_id, redactions)
      VALUES
-       ($id, $ts, $execution_id, $hook, $user_id, $tool, $decision, $reason, $rule_id, $before, $after,
-        $redactions)`,
+       ($id, $ts, $execution_id, $hook, $user_id, $tool, $decision, $reason, $rule_id, $redactions)`,
   );
 
   // Collected inside the transaction, published only if it commits.
@@ -108,8 +118,6 @@ export function record(
           $decision: event.decision,
           $reason: event.reason,
           $rule_id: event.rule_id,
-          $before: event.before === undefined ? null : JSON.stringify(event.before),
-          $after: event.after === undefined ? null : JSON.stringify(event.after),
           $redactions: event.redactions === undefined ? null : JSON.stringify(event.redactions),
         });
         committed.push({ seq: Number(lastInsertRowid), event });
@@ -238,8 +246,8 @@ function fromRow(row: AuditRow): GovernanceEvent {
     decision: row.decision,
     reason: row.reason,
     rule_id: row.rule_id,
-    ...(row.before !== null && { before: JSON.parse(row.before) }),
-    ...(row.after !== null && { after: JSON.parse(row.after) }),
+    // `before`/`after` are not read even when an old row has them: see the note
+    // on `AuditRow`.
     ...(row.redactions !== null && { redactions: JSON.parse(row.redactions) }),
   });
 }

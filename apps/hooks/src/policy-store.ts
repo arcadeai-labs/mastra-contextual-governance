@@ -307,6 +307,10 @@ const SCHEMA = `
     decision     TEXT    NOT NULL CHECK (decision IN ('allow', 'deny', 'modify')),
     reason       TEXT    NOT NULL,
     rule_id      TEXT,
+    -- Retired on #101 and never written again: GovernanceEvent has no payload
+    -- fields, because this table is durable and GET /events is unauthenticated.
+    -- Kept as columns so a database with rows from before the change opens
+    -- without a migration; src/audit-log.ts neither writes nor reads them.
     before       TEXT,
     after        TEXT,
     -- What a /post modify removed: a JSON array of RedactionRecord — path,

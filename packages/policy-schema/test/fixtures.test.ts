@@ -159,14 +159,42 @@ describe("aGovernanceEventSequence", () => {
     );
   });
 
-  it("gives the panel a before/after diff to render on the modify", () => {
+  it("gives the panel the shape a live /post modify arrives in: redactions[], no payload", () => {
+    // The regression #101 fixed. The replay used to emit `before`/`after`, which
+    // `apps/hooks` stopped sending on #16, so the demo everyone reads first
+    // taught a contract the hook no longer speaks.
     const modified = events.filter((event) => event.decision === "modify");
     expect(modified).not.toHaveLength(0);
     for (const event of modified) {
-      expect(event.before).toBeDefined();
-      expect(event.after).toBeDefined();
-      expect(event.before).not.toEqual(event.after);
+      expect(event.redactions ?? []).not.toHaveLength(0);
+      expect(Object.keys(event)).not.toContain("before");
+      expect(Object.keys(event)).not.toContain("after");
     }
+  });
+
+  it("represents both redaction mechanisms, so the panel draws both annotations", () => {
+    const modified = events.find((event) => event.decision === "modify");
+    const records = modified?.redactions ?? [];
+
+    // A named field path attributes to a rule alone; a pattern sweep also names
+    // the scanner that matched. `apps/web`'s Post lane renders the two
+    // differently, and a fixture carrying only one leaves the other undrawn.
+    expect(records.some((record) => record.pattern_id === null)).toBe(true);
+    expect(records.some((record) => record.pattern_id !== null)).toBe(true);
+    expect(records.every((record) => record.path.startsWith("$"))).toBe(true);
+  });
+
+  it("puts no removed value anywhere in the replay", () => {
+    // The fixture it replaced carried the sample identifier and the injected
+    // sentence in plain sight, on records the panel draws on a projector.
+    // `execution_id` is excluded because Arcade's is a long run of zeros here
+    // and would match the sample identifier by coincidence, not by leak.
+    const rendered = JSON.stringify(events, (key, value) =>
+      key === "execution_id" ? undefined : value,
+    );
+
+    expect(rendered).not.toContain("0000000000");
+    expect(rendered).not.toContain("Ignore all previous instructions");
   });
 
   it("uses distinct ids, so a keyed list does not collapse rows", () => {

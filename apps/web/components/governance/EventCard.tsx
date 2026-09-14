@@ -58,13 +58,12 @@ export function EventCard({
   correlated?: boolean;
 }) {
   const decision = DECISIONS[event.decision];
-  // Two accounts of a change, one renderer. A `/post` redaction arrives as
-  // `redactions[]` with no payload at all (#16); anything that does send
-  // `before`/`after` is still diffed. Asking for the rows here rather than
-  // inside the component is what stopped the card from passing two
-  // `undefined`s and drawing "unchanged" over act 3.
+  // A `/post` redaction arrives as `redactions[]` and no payload at all (#16,
+  // #101). Asking for the rows here rather than inside the component is what
+  // stopped the card from passing two `undefined`s and drawing "unchanged" over
+  // act 3.
   const rows = diffRowsFor(event);
-  const showDiff = event.decision === "modify" || event.before !== undefined;
+  const showDiff = event.decision === "modify";
   const count = members.length;
   const grouped = count > 1;
 
