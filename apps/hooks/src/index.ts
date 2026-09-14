@@ -32,7 +32,11 @@ const log = (line: string) => console.log(`[${SERVICE}] ${line}`);
 // propagates as it did.
 const config = orExitConfig(SERVICE, readConfig);
 const db = openGovernance(config.dbPath, config);
-const cache = createPolicyCache(db, { log, pollMs: config.policyPollMs });
+const cache = createPolicyCache(db, {
+  log,
+  pollMs: config.policyPollMs,
+  scanners: config.injectionDetection,
+});
 // Warm before the port opens: Arcade's first /access may be the 1.6 MB one.
 const state = cache.start();
 
@@ -52,6 +56,15 @@ log(
     `streaming on ${EVENTS_PATH}`,
 );
 if (state.status === "failed") log(`STARTED FAIL-CLOSED: ${state.error}`);
+// Act 4's scanners, on the boot line whichever way they are set (#17). The
+// warning is printed by the cache on every reload; this is the one a reader
+// sees when the service comes up, and it is the reason a control run cannot be
+// mistaken for a protected one at a glance.
+const scanners = cache.status().scanners;
+log(
+  `injection detection: ${scanners.state} — ${scanners.patterns} free-text pattern(s) ` +
+    `from ${scanners.rules.length} rule(s) (INJECTION_DETECTION=${config.injectionDetection})`,
+);
 // Nothing prunes `audit_log` — the table is append-only and a compliance log
 // that can be quietly shortened is not one. So the bound is the disk, and the
 // only useful moment to mention it is the boot before it is reached.

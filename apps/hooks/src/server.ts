@@ -273,6 +273,13 @@ export function createServer(deps: ServerDeps) {
       service: SERVICE,
       hook_contract: HOOK_CONTRACT_VERSION,
       policy,
+      // Act 4's control, named rather than implied (#17). Not folded into
+      // `status`: a service running the control run is working exactly as
+      // asked, and 503-ing it would take the demo down instead of telling a
+      // reader what is switched off. The warning is what makes it impossible
+      // to boot with the scanners off and nobody the wiser.
+      injection_detection: policy.scanners,
+      warnings: policy.scanners.warning === null ? [] : [policy.scanners.warning],
       counts: counts(db),
       pending_approvals: pendingCount(db),
       audit_rows: auditCount(db),
