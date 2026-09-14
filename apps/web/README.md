@@ -846,7 +846,33 @@ that turns the pre-hook's pending grant on — and `components/chat/Chat.tsx` is
 to that stream for as long as it is mounted. On a notice naming **this browser's** request
 *and* the persona signed in here, it POSTs one more turn.
 
-Four things about the mechanism, in the order they would go wrong:
+**The turn ending is enforced, not hoped for.** Round 1 of #110's review found the `waiting`
+event emitted while the loop carried on reading, so a model that called `Loan_ApproveLoan`
+straight after the escalation got that call executed against a control plane holding no
+grant. Two mechanisms now, and only one of them is a guarantee:
+
+- `lib/agent/escalation.ts` → `closeTurnOnEscalation` wraps the turn's toolset and shuts it
+  **inside `execute`**, synchronously with the escalation's own return. Every later call in
+  that turn throws before calling through, so nothing reaches the gateway and `/pre` is
+  never asked. A consumer reading a stream is always a scheduling tick behind the model;
+  the guarantee cannot live there.
+- `run.ts` stops reading and aborts the agent loop on the first tool call after the
+  escalation. The model's *text* still streams — the sentence naming the approver is the
+  model's next step, and hard-stopping on the tool result would make it impossible — but a
+  refused call is not put on screen at all. No hook fired, so `denied` would be a lie and
+  `fault` would be one too; it goes to the server log.
+
+Nothing about any of this is told to the model. It is host-side machinery, the same
+category as `maxSteps`, and `DESIGN.md` → No model-side controls is exactly the rule that
+explaining it to the model instead would break.
+
+The `waiting` card carries the routed approver off the **tool's own result**, not out of
+the reply, so the routing is visible on stage whatever the model chooses to say. There is
+no role on it: the deployed toolkit's return value has `approver`, `approver_display_name`,
+`required_clearance` and `candidate_approvers` and no role at all, and inventing one from
+the name would be the card asserting something nothing measured.
+
+Four things about the resume, in the order they would go wrong:
 
 1. **The resume names an id, not an outcome.** The request body is
    `{ resume: { request_id, prompt, reply } }`: the id, and the previous turn as context.
@@ -901,6 +927,12 @@ The browser half is its own suite, driving the real component in a real DOM:
 
 ```sh
 bun test --cwd apps/web test/chat-resume.test.tsx
+```
+
+The turn boundary has its own suite, including the reviewer's round 1 repro verbatim:
+
+```sh
+bun test --cwd apps/web test/turn-ends-on-escalation.test.ts
 ```
 
 **The one thing offline cannot do is Slack.** `Approvals_RequestApproval` in

@@ -46,11 +46,24 @@ export type ChatEvent =
    * way possible, live.
    *
    * It follows the `tool-result` for `Approvals_RequestApproval` and says only
-   * what that result said. It is not a claim about what the agent will do next,
-   * and the agent's own reply — which names the approver — is the thing on
-   * screen; this is the id under it.
+   * what that result said. `approver` is the display name the tool returned and
+   * `approver_id` is the address; there is no role, because the deployed
+   * toolkit's return value does not carry one and inventing it would be the
+   * card asserting something nothing measured.
+   *
+   * The name is on the event, and not only in the model's reply, because the
+   * two are different kinds of claim. The reply is what the model chose to say
+   * and may be empty or wrong; this came out of the tool, which routed by the
+   * deterministic rule. On stage the card is what makes the routing visible
+   * whatever the model does with it.
    */
-  | { kind: "waiting"; tool: string; request_id: string; approver: string }
+  | {
+      kind: "waiting";
+      tool: string;
+      request_id: string;
+      approver: string;
+      approver_id: string;
+    }
   /**
    * This turn is a resume: an approval was decided and the UI started a new
    * turn carrying that fact (#20).

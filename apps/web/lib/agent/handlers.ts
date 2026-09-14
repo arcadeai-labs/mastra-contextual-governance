@@ -84,6 +84,7 @@
  */
 import { agentProblems, readIdentitySurface, readWebConfig, type IdentitySurface } from "../config.ts";
 import { fetchApproval } from "../approvals-store.ts";
+import { closeTurnOnEscalation } from "./escalation.ts";
 import { planResume, readResumeRequest, type ResumeRequest } from "./resume.ts";
 import { anthropicModel, buildAgent } from "./agent.ts";
 import { CHAT_PATH, encodeEvent, NDJSON, type ChatEvent } from "./events.ts";
@@ -347,10 +348,29 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
     }
 
     step = PRE_STREAM.agent;
+    // `Approvals_RequestApproval` as MCP spells it, from the toolkit name this
+    // deployment measured — not a literal, and not the second entry of the
+    // allow-list (`lib/config.ts` → `approvalsToolkit`).
+    const escalationTool = `${config.agent.approvalsToolkit}_RequestApproval`;
+    // The turn boundary, enforced where there is no gap: the moment the
+    // escalation returns a request id, every other tool in this turn's set
+    // stops calling through. Round 1 of #110's review found a model calling
+    // `Loan_ApproveLoan` straight after the escalation and that call reaching
+    // the gateway; a consumer reading a stream is always a tick behind, so the
+    // guarantee has to live in `execute`. See `escalation.ts`.
+    const closure = closeTurnOnEscalation(selected.tools, {
+      escalationTool,
+      onRefused: (tool) =>
+        console.warn(
+          `[chat] ${tool} was asked for after this turn ended on an approval request; ` +
+            `the turn's toolset refused it and nothing reached the gateway`,
+        ),
+    });
+
     const agent = buildAgent({
       model: (options.model?.(config) ??
         anthropicModel({ modelId: config.agent.modelId, apiKey: config.agent.anthropicApiKey })) as never,
-      tools: selected.tools,
+      tools: closure.tools,
     }) as unknown as Streamable;
 
     // A refreshed gateway token has to be resealed, and the only place to do it
@@ -366,10 +386,7 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       opening: turn.opening,
       client,
       headers,
-      // `Approvals_RequestApproval` as MCP spells it, from the toolkit name
-      // this deployment measured — not a literal, and not the second entry of
-      // the allow-list (`lib/config.ts` → `approvalsToolkit`).
-      requestApprovalTool: `${config.agent.approvalsToolkit}_RequestApproval`,
+      requestApprovalTool: escalationTool,
     });
   } catch (cause) {
     // The connection belongs to a turn that will never happen. Same reason the

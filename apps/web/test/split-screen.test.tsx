@@ -425,6 +425,7 @@ describe("a denial is a decision, not an error", () => {
           tool: "Approvals_RequestApproval",
           request_id: "apr_0m4xq7bd91kz",
           approver: "Riley Chen",
+          approver_id: "riley.chen@bank.example",
         }}
       />,
     );

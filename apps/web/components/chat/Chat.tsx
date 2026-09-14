@@ -549,11 +549,17 @@ export function EventView({ event }: { event: ChatEvent }) {
         // here and nothing was decided. The turn ended, and what happens next
         // belongs to a person — this one is just not the person reading it.
         <div style={pending} data-kind="waiting">
+          {/* The routed approver comes off the tool's own result, not out of
+              the model's sentence: the routing is deterministic and the
+              sentence is whatever the model chose to say. On stage this card is
+              what makes the routing visible even if the reply is empty. */}
           <strong style={label}>Approval requested — the turn has ended</strong>
           <p style={{ margin: "0.4em 0 0" }}>
-            Routed to <strong>{event.approver}</strong>. This turn is over: nothing is polling and
-            nothing is waiting on a socket. When the decision is recorded it arrives on the control
-            plane&apos;s own stream and the agent is asked again.
+            Routed to <strong>{event.approver}</strong>
+            {event.approver_id === "" ? null : <> — {event.approver_id}</>}. This turn is over:
+            nothing is polling, nothing is waiting on a socket, and no further tool call will be
+            made on it. When the decision is recorded it arrives on the control plane&apos;s own
+            stream and the agent is asked again.
           </p>
           <p style={{ margin: "0.4em 0 0", fontFamily: mono, fontSize: "0.85em", color: "var(--muted)" }}>
             {event.request_id}

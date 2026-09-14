@@ -67,7 +67,13 @@ const BLOCKED: ChatEvent[] = [
   },
   { kind: "tool-call", tool: "Approvals_RequestApproval", inputs: { resource_id: "LN-2291" } },
   { kind: "tool-result", tool: "Approvals_RequestApproval" },
-  { kind: "waiting", tool: "Approvals_RequestApproval", request_id: REQUEST_ID, approver: "Riley Chen" },
+  {
+    kind: "waiting",
+    tool: "Approvals_RequestApproval",
+    request_id: REQUEST_ID,
+    approver: "Riley Chen",
+    approver_id: "riley.chen@bank.example",
+  },
   { kind: "text", text: "Approval requested from Riley Chen, VP Credit. Waiting." },
   { kind: "done", calls: 2 },
 ];
