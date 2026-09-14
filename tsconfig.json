@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.base.json",
+  // The two directories that belong to the repo rather than to a workspace:
+  // `scripts/reset.ts` (#23) and the end-to-end test that drives it. Every
+  // workspace has its own tsconfig; without this one the root `typecheck`
+  // would run `--filter '*'` over the workspaces and never look at either.
+  "include": ["scripts", "test"]
+}

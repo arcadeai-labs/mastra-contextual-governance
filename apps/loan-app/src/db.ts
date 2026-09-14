@@ -145,7 +145,7 @@ export function openLoanBook(path: string): Database {
 
   try {
     if (hasSchema(db)) upgradeSchema(db, path);
-    else seed(db, fixtureSchema.parse(fixture).loans);
+    else seed(db, fixtureLoans());
   } catch (cause) {
     // Leave no half-open handle behind: the caller is about to exit, and a
     // lingering WAL lock is one more thing between a crash-looping service
@@ -188,7 +188,8 @@ export class SchemaTooNewError extends Error {
       `loans.db at ${path} was written by a newer build (PRAGMA user_version ${found}; ` +
         `this build understands ${SCHEMA_VERSION}) and cannot be migrated backwards. ` +
         `Reset it: stop the service, delete ${path} (and its -wal and -shm siblings), ` +
-        `and restart — the fixture reseeds on an empty disk. A one-command reset lands with #23.`,
+        `and restart — the fixture reseeds on an empty disk. POST /admin/reset cannot help ` +
+        `here: it is served by this process, and this process is about to exit.`,
     );
     this.name = "SchemaTooNewError";
   }
@@ -265,6 +266,18 @@ function bind(row: NamedBindings): NamedBindings {
 
 /** One loan as it appears in the fixture. */
 export type LoanSeed = z.infer<typeof loanFixtureSchema>;
+
+/**
+ * The seed rows, parsed off the fixture compiled into this build.
+ *
+ * Read on a fresh database and again by `reset.ts`, so the rows a reset writes
+ * are the rows this image ships rather than whatever an older file on the disk
+ * happened to hold. Parsed on every call: it is a handful of rows, and a
+ * cached copy would be one more thing that can be stale.
+ */
+export function fixtureLoans(): LoanSeed[] {
+  return fixtureSchema.parse(fixture).loans;
+}
 
 /**
  * Creates the schema and inserts the seed rows in **one** transaction.

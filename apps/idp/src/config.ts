@@ -43,6 +43,15 @@ export interface IdpConfig {
    * assumed, and with nothing configured it is the only one.
    */
   clients: OAuthClientSpec[];
+  /**
+   * The bearer `POST /admin/reset` requires (#23). Blank is a state, not a
+   * default: the route does not exist at all, `/health` reports
+   * `reset: "disabled"`, and there is no development fallback because a
+   * published one would be the same as no bearer. The same variable name and
+   * the same rules as `apps/hooks` and `apps/loan-app`, so one value
+   * configures all three.
+   */
+  resetToken: string;
 }
 
 /** The one client every deployment has, and the only one before #79. */
@@ -133,9 +142,15 @@ export function readConfig(env: Record<string, string | undefined> = process.env
     secret: secret || DEV_SECRET,
     redirectUris: clients[0]!.redirectUris,
     clients,
+    resetToken: env.RESET_TOKEN?.trim() ?? "",
   };
 }
 
 export function usingDevSecret(config: IdpConfig): boolean {
   return config.secret === DEV_SECRET;
+}
+
+/** Whether `POST /admin/reset` exists on this deployment. */
+export function resetEnabled(config: IdpConfig): boolean {
+  return config.resetToken.length > 0;
 }
