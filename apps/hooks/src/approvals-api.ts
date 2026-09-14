@@ -40,6 +40,7 @@ import { evaluatePermission } from "@cg/governance-core";
 import type { Subject } from "@cg/policy-schema";
 
 import { resolveAction } from "./action-binding.ts";
+import type { ApprovalNotice } from "./approval-notices.ts";
 import { createApproval, readApproval, recordDecision } from "./approvals-store.ts";
 import type { CacheState } from "./policy-cache.ts";
 
@@ -72,6 +73,17 @@ export interface ApprovalsDeps {
   /** The policy cache, for the roster, the catalogue and the rule that fired. */
   cache: { current(): CacheState };
   now: () => string;
+  /**
+   * Announce a recorded decision on `GET /events` (#20's resume half).
+   *
+   * Optional, like the bus itself: a server built without a stream records
+   * decisions exactly as before and simply has nobody to tell. Called **after**
+   * `recordDecision` has returned, which is after its transaction committed —
+   * and that transaction is the one that turns the pre-hook's pending grant on.
+   * Publishing any earlier would announce a grant that is still `pending` and
+   * therefore still refused. See `approval-notices.ts`.
+   */
+  publishNotice?: (notice: ApprovalNotice) => void;
 }
 
 /**
@@ -196,8 +208,33 @@ async function decide(
         },
         409,
       );
-    case "recorded":
-      return json({ request: outcome.approval.record });
+    case "recorded": {
+      const record = outcome.approval.record;
+      // After the transaction, and after nothing else: the commit is what
+      // activated the grant, and the browser on the other end of this notice
+      // is about to retry against it.
+      // `parsed.data.decision` rather than `record.status`: they are the same
+      // value — the swap wrote one from the other — but only this one is typed
+      // to the two outcomes, so a future third status cannot silently arrive
+      // here labelled `approval.denied`.
+      const settled = parsed.data.decision;
+      deps.publishNotice?.({
+        kind: settled === "approved" ? "approval.granted" : "approval.denied",
+        request_id: record.id,
+        // The only address this notice has. A client resumes on it and on the
+        // request id together, so one persona's open tab cannot resume
+        // another's turn.
+        requester_id: record.requester_id,
+        status: settled,
+        action: record.action,
+        resource_id: record.resource_id,
+        amount: record.amount,
+        decided_by: record.decided_by ?? parsed.data.decided_by,
+        decided_at: record.decided_at ?? deps.now(),
+        grants_activated: outcome.grantsActivated,
+      });
+      return json({ request: record });
+    }
   }
 }
 

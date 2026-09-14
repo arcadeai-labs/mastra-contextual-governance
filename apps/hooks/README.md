@@ -8,7 +8,7 @@ POST /access   which tools this user may see       → { deny: Toolkits }
 POST /pre      may this user make this call         → { code: OK | CHECK_FAILED, error_message? }
 POST /post     what the model may read of the result → { code: OK, override?: { output } }
 GET  /audit    the audit log, filtered              → { rows, count, total, limit, filters }
-GET  /events   the live governance stream           → text/event-stream   (no auth)
+GET  /events   the live governance stream, plus `event: approval` (#20) → text/event-stream (no auth)
 GET  /health   policy revision, row counts, 503 while failing closed   (no auth)
 
 GET  /approvals/roster        every subject, so routing can show who was not asked
@@ -384,6 +384,46 @@ The CORS preflight is not optional and is not cosmetic: the panel sends `cache-c
 its first connect and `last-event-id` on every resume, neither of which is a CORS-safelisted
 request header, so the browser asks first. Without the `OPTIONS` handler the panel cannot
 connect in a browser at all while every server-side test still passes.
+
+### The second event name: `approval` (#20, resume half)
+
+The same socket carries one other kind of frame, and it is deliberately not a
+`GovernanceEvent`:
+
+```
+event: approval
+data: {"kind":"approval.granted","request_id":"apr_0m4x…","requester_id":"dana.okafor@bank.example",
+       "status":"approved","action":"approve_loan","resource_id":"LN-2291","amount":95000,
+       "decided_by":"riley.chen@bank.example","decided_at":"2026-09-14T…Z","grants_activated":1}
+```
+
+It is emitted when `POST /approvals/{id}/decision` records an outcome, and it exists for one
+consumer: the browser whose agent ended its turn waiting for that approval. The type is
+`ApprovalNotice` in `@cg/policy-schema`, so both sides are typed off one definition.
+
+Three things about it, each of which is a decision rather than an accident
+(`src/approval-notices.ts` carries the argument at length):
+
+- **It is not an audit row.** `GovernanceEvent.hook` is `access|pre|post` and `audit_log`
+  enforces exactly that. A store write is not a hook decision and carries no `execution_id`;
+  recording one as a fourth kind of hook would be a fiction in the log. #19's driver ruling
+  said so, and it still holds — routing and outcome reach the panel through the real `/pre`
+  rows on `Approvals.RequestApproval` and `Approvals.Decide`.
+- **It carries no `id:` line.** `Last-Event-ID` here is defined over `audit_log`, and a
+  notice has no row and therefore no position. Per the SSE spec a frame with no `id:` leaves
+  the client's last event id untouched, so the governance replay is exactly as it was. The
+  cost is that a notice is **live-only**: a browser disconnected at that moment does not get
+  it on reconnect, which `apps/web` closes by re-reading `GET /approvals/{id}` when its
+  stream comes back rather than assuming the socket was up.
+- **It is published after the transaction commits**, like every governance frame, and for a
+  sharper reason: that transaction is the one that turns the pre-hook's pending grant on.
+  A notice published a line earlier would tell a browser to retry against a grant that is
+  still `pending` and therefore still refused. `test/approval-stream.test.ts` asserts the
+  ordering by firing the retry the instant the frame lands and requiring `/pre` to answer
+  `OK`.
+
+A client that filters on `event: governance` — which is what #21's adapter does, and always
+did — never sees one.
 
 ## Reading the log over HTTP (#62)
 

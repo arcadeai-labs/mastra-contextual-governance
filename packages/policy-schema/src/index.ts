@@ -29,6 +29,7 @@ import type {
 } from "./domain.ts";
 
 export {
+  ApprovalNotice,
   ApprovalRecord,
   ApprovalRequest,
   ApprovalStatus,

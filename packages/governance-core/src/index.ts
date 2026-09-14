@@ -75,7 +75,10 @@ export {
 export { routeApproval, type RoutingResult } from "./approver-router.ts";
 
 export {
+  createBus,
   createEventBus,
+  type Bus,
+  type BusSubscriber,
   type EventBus,
   type EventBusOptions,
   type EventBusSubscriber,

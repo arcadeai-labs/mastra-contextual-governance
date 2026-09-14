@@ -45,19 +45,34 @@ export interface PublishedEvent {
   readonly event: GovernanceEvent;
 }
 
-export type EventBusSubscriber = (batch: readonly PublishedEvent[]) => void;
+/**
+ * The fan-out, over whatever a caller publishes.
+ *
+ * Generic because #20's resume half needed a second one carrying something
+ * that is deliberately *not* a `GovernanceEvent`: an approval decision is a
+ * store write, not a hook decision, and `audit_log` enforces that distinction
+ * (`hook` is `access|pre|post`). The three properties above are the reason to
+ * share the implementation rather than write the registry twice — they are
+ * about the bus never damaging its publisher, and that argument does not
+ * depend on what is being carried.
+ */
+export type BusSubscriber<T> = (batch: readonly T[]) => void;
 
-export interface EventBus {
+export interface Bus<T> {
   /**
    * Hands `batch` to every current subscriber, in subscription order. Never
    * throws. A no-op when `batch` is empty or nobody is listening.
    */
-  publish(batch: readonly PublishedEvent[]): void;
+  publish(batch: readonly T[]): void;
   /** Registers `subscriber`. The returned function removes it, idempotently. */
-  subscribe(subscriber: EventBusSubscriber): () => void;
+  subscribe(subscriber: BusSubscriber<T>): () => void;
   /** How many subscribers are currently registered. For `/health`. */
   readonly subscribers: number;
 }
+
+/** The governance stream's bus. The original, and still the only publisher of audit rows. */
+export type EventBus = Bus<PublishedEvent>;
+export type EventBusSubscriber = BusSubscriber<PublishedEvent>;
 
 export interface EventBusOptions {
   /**
@@ -68,11 +83,16 @@ export interface EventBusOptions {
 }
 
 export function createEventBus(options: EventBusOptions = {}): EventBus {
+  return createBus<PublishedEvent>(options);
+}
+
+/** The same registry, for anything else one process wants to fan out. */
+export function createBus<T>(options: EventBusOptions = {}): Bus<T> {
   const onSubscriberError = options.onSubscriberError ?? (() => {});
-  const subscribers = new Set<EventBusSubscriber>();
+  const subscribers = new Set<BusSubscriber<T>>();
 
   return {
-    publish(batch: readonly PublishedEvent[]): void {
+    publish(batch: readonly T[]): void {
       if (batch.length === 0 || subscribers.size === 0) return;
       // A snapshot: a subscriber that unsubscribes while being delivered to
       // must not shift the iteration out from under the ones behind it.
@@ -87,7 +107,7 @@ export function createEventBus(options: EventBusOptions = {}): EventBus {
       }
     },
 
-    subscribe(subscriber: EventBusSubscriber): () => void {
+    subscribe(subscriber: BusSubscriber<T>): () => void {
       subscribers.add(subscriber);
       return () => {
         subscribers.delete(subscriber);

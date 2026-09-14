@@ -469,6 +469,59 @@ export const ApprovalRecord = z
 export type ApprovalRecord = z.infer<typeof ApprovalRecord>;
 
 /**
+ * What `GET /events` announces when an approval is decided — the resume
+ * trigger for #20's second half.
+ *
+ * **It is not a `GovernanceEvent` and it is not an audit row**, and that is the
+ * whole reason it is a separate type. `GovernanceEvent.hook` is
+ * `access|pre|post` and `audit_log` enforces exactly that; recording a store
+ * write as a fourth kind of hook decision would be the fiction `DESIGN.md`
+ * warns about, and #19's driver ruling says so in as many words. So this rides
+ * the same socket under a different SSE event name, carries no `id:` line —
+ * leaving `Last-Event-ID` replay, which is defined over `audit_log`, exactly
+ * where it was — and the panel's adapter ignores it by construction, because
+ * it already filters on the event name.
+ *
+ * What it is *for* is narrow: telling one browser that the approval its agent
+ * asked for has been settled, so the UI can start the next turn. Everything the
+ * resumed turn then asserts about that approval is re-read from
+ * `GET /approvals/{id}` server-side; this frame is a notification, never a
+ * source of facts the agent is told.
+ *
+ * `requester_id` and `request_id` are both required for the same reason: a
+ * client must resume only when the requester is the persona signed in on that
+ * browser *and* the request is one it watched its own agent create. Without
+ * the first, Morgan's open tab resumes Dana's turn.
+ */
+export const ApprovalNotice = z
+  .object({
+    kind: z.enum(["approval.granted", "approval.denied"]),
+    request_id: z.string().min(1),
+    /** The persona whose turn was blocked. The only address this notice has. */
+    requester_id: z.string().min(1),
+    /** `approved` or `denied` — the same value `status` now holds on the record. */
+    status: z.enum(["approved", "denied"]),
+    action: z.string().min(1),
+    resource_id: z.string().min(1),
+    amount: z.number(),
+    decided_by: z.string().min(1),
+    decided_at: Timestamp,
+    /**
+     * How many grants this decision turned on, in the transaction that
+     * recorded it.
+     *
+     * On the wire because it is the difference between "approved" and
+     * "approved and the retry will now pass": a granted notice with `0` says
+     * the decision was recorded but no pending grant existed to activate, which
+     * is a real state (a decision written straight to the store with no
+     * pre-hook behind it) and one a reader should not have to infer.
+     */
+    grants_activated: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ApprovalNotice = z.infer<typeof ApprovalNotice>;
+
+/**
  * A narrow, expiring permission produced by an approval — the thing the pre-hook
  * looks for on the retry.
  *
