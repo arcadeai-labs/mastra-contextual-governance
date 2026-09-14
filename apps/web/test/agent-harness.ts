@@ -94,6 +94,13 @@ export interface AgentHarness {
   /** The control plane's audit rows, newest first. */
   audit(): Promise<Array<Record<string, unknown>>>;
   /**
+   * The control plane's own account of itself, unauthenticated as Render and
+   * Arcade read it. Act 4's control run asserts on `injection_detection` here
+   * rather than trusting the environment it passed in: what the service says it
+   * is doing is the evidence, and what a test asked for is only a request.
+   */
+  health(): Promise<Record<string, unknown>>;
+  /**
    * Where this harness's `governance.db` is.
    *
    * Exposed for #22, which needs a rule that refuses a **read** in order to
@@ -127,7 +134,22 @@ export interface AgentHarness {
   stop(): Promise<void>;
 }
 
-export async function startAgentHarness(): Promise<AgentHarness> {
+export interface AgentHarnessOptions {
+  /**
+   * Extra environment for the `apps/hooks` subprocess.
+   *
+   * The one caller is act 4's control run (#17), which needs a control plane
+   * with `INJECTION_DETECTION=off` standing next to the armed one. Merged over
+   * the defaults below rather than replacing them, and deliberately narrow: a
+   * harness whose whole environment a test can rewrite is a harness that stops
+   * being the real service.
+   */
+  hooksEnv?: Record<string, string>;
+}
+
+export async function startAgentHarness(
+  options: AgentHarnessOptions = {},
+): Promise<AgentHarness> {
   // One directory per harness, removed on stop. `loans.db` has to be a real
   // file rather than `:memory:` — the suite asserts on rows the API wrote, and
   // an in-memory database per connection would make that vacuous.
@@ -161,6 +183,7 @@ export async function startAgentHarness(): Promise<AgentHarness> {
       ARCADE_APPROVALS_TOOLKIT: "Approvals",
       LOAN_APP_PUBLIC_HOST: "localhost:1",
       NODE_ENV: "test",
+      ...options.hooksEnv,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -239,6 +262,10 @@ export async function startAgentHarness(): Promise<AgentHarness> {
       if (!response.ok) throw new Error(`GET /audit -> ${response.status} ${await response.text()}`);
       const body = (await response.json()) as { rows?: Array<Record<string, unknown>> };
       return body.rows ?? [];
+    },
+    async health() {
+      const response = await fetch(`http://${hooksHost}/health`);
+      return (await response.json()) as Record<string, unknown>;
     },
     async stopLoanApp() {
       loanApp.kill();
