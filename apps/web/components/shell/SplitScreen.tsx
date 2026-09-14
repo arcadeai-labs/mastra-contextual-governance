@@ -47,6 +47,7 @@ import { useCallback, useState, type ReactNode } from "react";
 import { BankPane } from "../bank/BankPane.tsx";
 import type { ChatEvent } from "../../lib/agent/events.ts";
 import type { CorrelationKey } from "../../lib/governance/correlation.ts";
+import type { LoanFilesState } from "../../lib/loan-context/loans.ts";
 import type { PanelStream } from "../../lib/governance/stream-url.ts";
 // The panel's two public entry points, the same pair `app/panel/page.tsx` uses.
 // Nothing here reaches into a lane, a card or the decision table: the right half
@@ -61,11 +62,16 @@ export interface SplitScreenProps {
   signedInAs: string | null;
   /** #82's sign-in panel, server-rendered. */
   identity: ReactNode;
+  /**
+   * The two applications under review, read on the server in the same gateway
+   * session that produced `toolList` (#109). Passed straight through.
+   */
+  loanFiles: LoanFilesState;
   /** #15's tool list, when it lands. */
   toolList?: ReactNode;
 }
 
-export function SplitScreen({ stream, signedInAs, identity, toolList }: SplitScreenProps) {
+export function SplitScreen({ stream, signedInAs, identity, loanFiles, toolList }: SplitScreenProps) {
   const [correlationKey, setCorrelationKey] = useState<CorrelationKey | undefined>(undefined);
 
   const onChatEvent = useCallback((event: ChatEvent) => {
@@ -85,6 +91,7 @@ export function SplitScreen({ stream, signedInAs, identity, toolList }: SplitScr
         <BankPane
           signedInAs={signedInAs}
           identity={identity}
+          loanFiles={loanFiles}
           {...(toolList === undefined ? {} : { toolList })}
           onChatEvent={onChatEvent}
           onTurnStart={onTurnStart}

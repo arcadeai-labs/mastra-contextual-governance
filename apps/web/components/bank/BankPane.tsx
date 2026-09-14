@@ -33,7 +33,8 @@ import type { ReactNode } from "react";
 
 import { Chat } from "../chat/Chat.tsx";
 import type { ChatEvent } from "../../lib/agent/events.ts";
-import { LoanFiles } from "./LoanFiles.tsx";
+import { LoanFilesView } from "./LoanFiles.tsx";
+import type { LoanFilesState } from "../../lib/loan-context/loans.ts";
 import { ToolListSlot } from "./ToolListSlot.tsx";
 import "./bank.css";
 
@@ -54,6 +55,18 @@ export interface BankPaneProps {
    * changes a `user_id`.
    */
   identity: ReactNode;
+  /**
+   * The two applications under review, already read.
+   *
+   * Data rather than an element, and required rather than optional. The reads
+   * are two governed `Loan_GetLoan` calls made in `app/page.tsx` on the same
+   * gateway session that listed this persona's tools (#109), so by the time
+   * this component exists they have happened — there is nothing for it to
+   * fetch and no state for it to hold. Required because a left half that
+   * silently drew no applications would look exactly like a control plane that
+   * refused both.
+   */
+  loanFiles: LoanFilesState;
   /** #15's tool list, when there is one. */
   toolList?: ReactNode;
   onChatEvent?: (event: ChatEvent) => void;
@@ -65,6 +78,7 @@ export interface BankPaneProps {
 export function BankPane({
   signedInAs,
   identity,
+  loanFiles,
   toolList,
   onChatEvent,
   onTurnStart,
@@ -107,7 +121,7 @@ export function BankPane({
           not guessed: with the tool list second the Send button landed 31px
           under the fold. */}
       <div className="bank-body">
-        <LoanFiles />
+        <LoanFilesView state={loanFiles} />
 
         <section className="bank-panel bank-chat" aria-label="Assistant">
           <h2 className="bank-panel-title">Assistant</h2>

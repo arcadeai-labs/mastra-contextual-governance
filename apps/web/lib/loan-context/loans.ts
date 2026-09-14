@@ -20,16 +20,6 @@
  * visible in the chat and absent from the file beside it.
  */
 
-/**
- * Where the route lives.
- *
- * Here rather than beside the handler, and for the build failure rather than
- * for tidiness: this module depends on nothing, so a client component may
- * import it. `lib/agent/events.ts` records what happens when a client component
- * reaches into a module that has touched `@mastra/mcp`.
- */
-export const LOAN_CONTEXT_PATH = "/api/loan-context";
-
 /** The applications the shell shows. `DESIGN.md` → Cast, and #91 for the control. */
 export const DEMO_LOAN_IDS = ["LN-2291", "LN-2299"] as const;
 
@@ -86,7 +76,7 @@ export type LoanRead =
   /** Plumbing. Nothing decided anything. */
   | { loan_id: string; outcome: "fault"; message: string };
 
-/** What `GET /api/loan-context` answers with when it got far enough to try. */
+/** What the page produced when it got far enough to try. */
 export interface LoanContextBody {
   /** One entry per id in {@link DEMO_LOAN_IDS}, in that order. */
   reads: LoanRead[];
@@ -96,13 +86,31 @@ export interface LoanContextBody {
   tool: string;
 }
 
-/** What the route answers with when it could not get that far. */
+/** What it produced when it could not get that far. */
 export interface LoanContextRefusal {
   error: string;
   /** Where the reader has to go, when there is somewhere. Rendered as a link. */
   action?: "signin" | "gateway";
   detail?: unknown;
 }
+
+/**
+ * What the left half draws, and the only thing that crosses to the browser.
+ *
+ * Two states, not three. Until #109 there was a `loading` one, because the
+ * files were fetched from the browser after the page had already rendered; they
+ * are read in the server component now, on the same gateway session that lists
+ * the persona's tools, so by the time this type exists the reads have happened.
+ * A spinner for a fetch nobody makes is a picture of work that is not being
+ * done.
+ *
+ * Lives here, in the module that depends on nothing, because both sides need
+ * it: `lib/home/surface.ts` builds one on the server and
+ * `components/bank/LoanFiles.tsx` renders it in the browser.
+ */
+export type LoanFilesState =
+  | { status: "loaded"; body: LoanContextBody }
+  | { status: "refused"; refusal: LoanContextRefusal };
 
 /**
  * The loan file out of whatever one `tools/call` returned.

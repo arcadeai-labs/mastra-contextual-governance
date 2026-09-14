@@ -11,10 +11,18 @@
  * 1. It unseals the session here, so the gateway tokens in the cookie never
  *    reach the browser. `SignInPanel` is rendered on this side of the boundary
  *    and handed down as an element, so only what it prints crosses.
- * 2. It asks the gateway what this persona may see — one real `tools/list` with
- *    the session's bearer (#15, `lib/agent/tool-list.ts`) — and hands the answer
- *    down as data. That call belongs on the server for the same reason: the
- *    bearer never leaves this process.
+ * 2. It opens **one** gateway session and asks it everything this screen needs:
+ *    one real `tools/list` with the session's bearer (#15,
+ *    `lib/agent/tool-list.ts`), and, on that same listing, the two governed
+ *    `Loan_GetLoan` reads the left column shows (#22). Both answers are handed
+ *    down as data. They belong on the server for the same reason: the bearer
+ *    never leaves this process.
+ *
+ *    They are one session because of #109. The loan files used to be fetched
+ *    from the browser, from `GET /api/loan-context`, which had to list the
+ *    gateway's tools again to find `Loan_GetLoan` — so a page load cost two
+ *    `tools/list` calls and, against the real gateway, twice the `/access`
+ *    fan-out. That route is gone. `test/home-surface.test.ts` asserts the count.
  * 3. It resolves the panel's stream from the environment at request time.
  *    `next build` inlines `NEXT_PUBLIC_*` into the client bundle while Render
  *    supplies service variables at runtime, so a public variable would be
@@ -35,7 +43,7 @@ import { cookies } from "next/headers";
 import { configurationProblems, readIdentitySurface } from "../lib/config.ts";
 import { readSessionFromCookies } from "../lib/identity/session.ts";
 import { resolvePanelStream } from "../lib/governance/stream-url.ts";
-import { sessionTools } from "../lib/agent/tool-list.ts";
+import { homeSurface } from "../lib/home/surface.ts";
 import { PersonaToolList } from "../components/identity/PersonaToolList.tsx";
 import { SignInPanel } from "../components/identity/SignInPanel.tsx";
 import { SplitScreen } from "../components/shell/SplitScreen.tsx";
@@ -60,8 +68,9 @@ export default async function Home({
     new Map(jar.getAll().map((cookie) => [cookie.name, cookie.value])),
     config,
   );
-  // No session means no network call: `sessionTools` answers without asking.
-  const tools = await sessionTools(session, { config });
+  // No session means no network call: `homeSurface` answers without asking, on
+  // both halves at once.
+  const { tools, files } = await homeSurface(session, { config });
   // `?fixture=1` and the replay's tuning parameters work here exactly as they do
   // on `/panel`, which is what lets the whole screen be rehearsed with no
   // control plane running. The badge on the panel says which it is, always.
@@ -72,6 +81,7 @@ export default async function Home({
       stream={stream}
       signedInAs={session?.email ?? null}
       identity={<SignInPanel session={session} problems={configurationProblems(config)} />}
+      loanFiles={files}
       toolList={<PersonaToolList session={session} tools={tools} />}
     />
   );

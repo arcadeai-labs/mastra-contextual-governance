@@ -542,7 +542,7 @@ one file where they meet:
 | region | component | slice |
 |---|---|---|
 | left · chrome, tabs, the signed-in email | `components/bank/BankPane.tsx` | #22 |
-| left · applications under review | `components/bank/LoanFiles.tsx` | #22 |
+| left · applications under review | `components/bank/LoanFiles.tsx` | #22, #109 |
 | left · assistant | `components/chat/Chat.tsx` | #14 |
 | left · user access (`data-slot="tool-list"`) | `components/identity/PersonaToolList.tsx` | #15 |
 | left · user session | `components/identity/SignInPanel.tsx` | #82 |
@@ -550,12 +550,13 @@ one file where they meet:
 
 The tool list is #15's, hosted rather than reimplemented, and the slot exists so that it
 can be: a client-side list that merely hid a tool would look exactly like one the access
-hook shortened, which is the failure this project keeps naming. `sessionTools` is called
-in this server component so the persona's bearer never leaves the process, and the result
-arrives at the widget as data — the arrangement `PersonaToolList`'s own docstring asks
-for. Act 1 survives the layout: as Sam, `Loan_ApproveLoan` is absent from the list, and
-nothing in the shell draws it as hidden (`test/split-screen.test.tsx`, *"the shell hosts
-#15's gateway-sourced list, and act 1's absence survives it"*).
+hook shortened, which is the failure this project keeps naming. `homeSurface`
+(`lib/home/surface.ts`) is called in this server component so the persona's bearer never
+leaves the process, and the result arrives at the widget as data — the arrangement
+`PersonaToolList`'s own docstring asks for. Act 1 survives the layout: as Sam,
+`Loan_ApproveLoan` is absent from the list, and nothing in the shell draws it as hidden
+(`test/split-screen.test.tsx`, *"the shell hosts #15's gateway-sourced list, and act 1's
+absence survives it"*).
 
 The widget keeps its own card and is drawn in the left half's colours, because `--line`
 and `--muted` reach it from `.bank`. That is as far as this stylesheet goes: the card's
@@ -569,18 +570,34 @@ page.
 
 ### The left half reads the loan book through the governed path
 
-`GET /api/loan-context` (`lib/loan-context/`) is an MCP client of the gateway carrying
-the signed-in persona's bearer — the same path `lib/agent/tools.ts` takes — and calls
-`Loan_GetLoan` for `LN-2291` and `LN-2299`. **There is no direct read of `loans.db` in
-this service and there must never be one.** A second, ungoverned path into the bank's
-system of record sitting inches from a panel claiming there is only one would be a
-screen that lies, and once `/post` redaction lands (#16) the chat would show a masked
-account number beside a file that never had one masked.
+`lib/loan-context/read.ts` calls `Loan_GetLoan` for `LN-2291` and `LN-2299` over the MCP
+session `homeSurface` already opened, carrying the signed-in persona's bearer — the same
+path `lib/agent/tools.ts` takes. **There is no direct read of `loans.db` in this service
+and there must never be one.** A second, ungoverned path into the bank's system of record
+sitting inches from a panel claiming there is only one would be a screen that lies, and
+with `/post` redaction live (#16) the chat would show a masked account number beside a
+file that never had one masked.
 
-The honest cost: opening `/` makes two real governed tool calls plus the two `tools/list`
-requests behind #15's widget and this route's own tool lookup, so `access` rows and two
-`Loan.GetLoan` `pre` rows land on the panel before the presenter has said anything. That
-is what reading a loan file costs when reading one is governed.
+**One gateway session per page load (#109).** Until #109 the files were fetched from the
+browser, from a `GET /api/loan-context` route that had to run its own `tools/list` to
+find `Loan_GetLoan` — so loading `/` cost two listings, in two MCP sessions, because a
+separate HTTP request cannot share a connection with the server render before it. That
+route is gone and nothing fetches it. `sessionSurface` takes a continuation and runs it
+against the listing it just made, which is how one `tools/list` answers both halves of
+the screen. `test/home-surface.test.ts` (*"one load of / makes exactly one tools/list"*)
+counts the gateway stand-in's own record rather than trusting this paragraph.
+
+The honest cost that remains: opening `/` makes two real governed tool calls plus the one
+`tools/list`, so `access` rows and two `Loan.GetLoan` `pre` rows land on the panel before
+the presenter has said anything. That is what reading a loan file costs when reading one
+is governed.
+
+The sentence for a misconfigured toolkit moved with the reads and did not soften: nothing
+governed ending in `_GetLoan` puts *"The gateway advertised N tools and none of the
+governed ones is a `GetLoan` … Check `ARCADE_LOAN_TOOLKIT` against a real `tools/list`"*
+in the left column, with the advertised names under it. An empty column looks exactly
+like a control plane that denied both files, and only that sentence names the variable a
+human has to go and fix.
 
 A read that does not produce a file is classified exactly as a failed tool call in the
 chat is, by importing that judgement rather than repeating it: a denial needs positive
