@@ -33,10 +33,23 @@
  * possible output of this demo, so an empty toolset is an error rather than a
  * turn. It is also the shape a wrong `ARCADE_LOAN_TOOLKIT` or
  * `ARCADE_APPROVALS_TOOLKIT` takes.
+ *
+ * ## And the fifth thing, which nobody anticipated
+ *
+ * Everything above is a refusal: a sentence, a status, a fix. Anything else
+ * that throws before the first byte is not — it is a bug — and #92 is the
+ * record of what an unshaped one costs. `PRE_STREAM` names each step of this
+ * section and the `catch` at the bottom answers `serverFault(step, cause)`, so
+ * a break says *which* step broke rather than `500`.
+ *
+ * The section is bounded deliberately. Once the `ReadableStream` is returned
+ * the status is already sent and there is nothing left to shape; a failure
+ * after that is a `fault` **event** on the stream, which `run.ts` owns.
  */
 import { agentProblems, readIdentitySurface, type IdentitySurface } from "../config.ts";
 import { anthropicModel, buildAgent } from "./agent.ts";
 import { CHAT_PATH, encodeEvent, NDJSON, type ChatEvent } from "./events.ts";
+import { serverFault } from "./fault.ts";
 import { liveGatewayToken, GATEWAY_START_PATH, SIGNIN_PATH } from "../identity/handlers.ts";
 import { gatewayClient, governedToolset } from "./tools.ts";
 import { readSession, writeSession, type Session } from "../identity/session.ts";
@@ -76,6 +89,22 @@ function refuse(status: number, message: string, detail?: unknown): Response {
   return Response.json({ error: message, ...(detail === undefined ? {} : { detail }) }, { status });
 }
 
+/**
+ * Every step between the request arriving and the first byte leaving, in order.
+ *
+ * Exported so the suite asserts on the same strings the response carries rather
+ * than on a copy of them, and so a reader can see the whole pre-stream section
+ * as a list without reading the function.
+ */
+export const PRE_STREAM = {
+  body: "read the request body",
+  session: "open the session cookie",
+  token: "refresh this browser's gateway token",
+  client: "build the MCP client for the gateway",
+  agent: "build the agent and its model",
+  seal: "reseal the refreshed session cookie",
+} as const;
+
 export async function chat(request: Request, options: ChatOptions = {}): Promise<Response> {
   const config = options.config ?? readIdentitySurface();
 
@@ -86,65 +115,102 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
     return refuse(503, "The agent is not configured on this deployment.", problems);
   }
 
-  const body = (await request.json().catch(() => null)) as { prompt?: unknown } | null;
-  const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
-  if (prompt === "") return refuse(400, "Send a non-empty `prompt`.");
+  // Named before each step rather than after, so whatever throws is attributed
+  // to the step that was running. Held outside the `try` because the `catch`
+  // reads it, and so is the client: a throw after it is built still has to hand
+  // back this persona's bearer.
+  let step: string = PRE_STREAM.body;
+  let client: ReturnType<typeof gatewayClient> | null = null;
 
-  const session = await readSession(request, config);
-  if (!session) {
-    return refuse(401, `Nobody is signed in on this browser. Sign in at ${SIGNIN_PATH}.`);
-  }
-
-  const live = await liveGatewayToken(session, config);
-  if (live.token === null) {
-    return refuse(401, `${live.reason}. Authorize the gateway at ${GATEWAY_START_PATH}.`);
-  }
-
-  const client = gatewayClient({
-    arcadeApiUrl: config.arcadeApiUrl,
-    gatewayId: config.identity.gatewayId,
-    token: live.token,
-    timeoutMs: MCP_TIMEOUT_MS,
-  });
-
-  let selected: Awaited<ReturnType<typeof governedToolset>>;
   try {
-    selected = await governedToolset(client, { toolkits: config.agent.toolkits });
+    const body = (await request.json().catch(() => null)) as { prompt?: unknown } | null;
+    const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+    if (prompt === "") return refuse(400, "Send a non-empty `prompt`.");
+
+    step = PRE_STREAM.session;
+    const session = await readSession(request, config);
+    if (!session) {
+      return refuse(401, `Nobody is signed in on this browser. Sign in at ${SIGNIN_PATH}.`);
+    }
+
+    step = PRE_STREAM.token;
+    const live = await liveGatewayToken(session, config);
+    if (live.token === null) {
+      return refuse(401, `${live.reason}. Authorize the gateway at ${GATEWAY_START_PATH}.`);
+    }
+
+    step = PRE_STREAM.client;
+    client = gatewayClient({
+      arcadeApiUrl: config.arcadeApiUrl,
+      gatewayId: config.identity.gatewayId,
+      token: live.token,
+      timeoutMs: MCP_TIMEOUT_MS,
+    });
+
+    let selected: Awaited<ReturnType<typeof governedToolset>>;
+    try {
+      selected = await governedToolset(client, { toolkits: config.agent.toolkits });
+    } catch (cause) {
+      await client.disconnect().catch(() => undefined);
+      return refuse(502, `The gateway would not list its tools: ${String(cause)}`);
+    }
+
+    options.onToolSurface?.({
+      advertised: selected.advertised,
+      governed: Object.keys(selected.tools),
+      dropped: selected.dropped,
+    });
+
+    if (Object.keys(selected.tools).length === 0) {
+      await client.disconnect().catch(() => undefined);
+      return refuse(
+        502,
+        `The gateway advertised ${selected.advertised.length} tools and none of them belong to ` +
+          `${config.agent.toolkits.map((name) => `"${name}"`).join(" or ")}, so this agent has ` +
+          `nothing to call. Check ARCADE_LOAN_TOOLKIT and ARCADE_APPROVALS_TOOLKIT against a real ` +
+          `tools/list.`,
+        selected.dropped,
+      );
+    }
+
+    step = PRE_STREAM.agent;
+    const agent = buildAgent({
+      model: (options.model?.(config) ??
+        anthropicModel({ modelId: config.agent.modelId, apiKey: config.agent.anthropicApiKey })) as never,
+      tools: selected.tools,
+    }) as unknown as Streamable;
+
+    // A refreshed gateway token has to be resealed, and the only place to do it
+    // is a header on this response — the stream body cannot set one later. So the
+    // cookie is written before the first byte, whether or not the turn succeeds.
+    step = PRE_STREAM.seal;
+    const headers = new Headers({ "content-type": NDJSON, "cache-control": "no-store" });
+    if (live.session !== session) await writeSession(headers, request, live.session as Session, config);
+
+    return streamTurn({ agent, prompt, client, headers });
   } catch (cause) {
-    await client.disconnect().catch(() => undefined);
-    return refuse(502, `The gateway would not list its tools: ${String(cause)}`);
+    // The connection belongs to a turn that will never happen. Same reason the
+    // stream's `finally` closes it: an open transport is a live bearer token.
+    await client?.disconnect().catch(() => undefined);
+    return serverFault(step, cause);
   }
+}
 
-  options.onToolSurface?.({
-    advertised: selected.advertised,
-    governed: Object.keys(selected.tools),
-    dropped: selected.dropped,
-  });
-
-  if (Object.keys(selected.tools).length === 0) {
-    await client.disconnect().catch(() => undefined);
-    return refuse(
-      502,
-      `The gateway advertised ${selected.advertised.length} tools and none of them belong to ` +
-        `${config.agent.toolkits.map((name) => `"${name}"`).join(" or ")}, so this agent has ` +
-        `nothing to call. Check ARCADE_LOAN_TOOLKIT and ARCADE_APPROVALS_TOOLKIT against a real ` +
-        `tools/list.`,
-      selected.dropped,
-    );
-  }
-
-  const agent = buildAgent({
-    model: (options.model?.(config) ??
-      anthropicModel({ modelId: config.agent.modelId, apiKey: config.agent.anthropicApiKey })) as never,
-    tools: selected.tools,
-  }) as unknown as Streamable;
-
-  // A refreshed gateway token has to be resealed, and the only place to do it
-  // is a header on this response — the stream body cannot set one later. So the
-  // cookie is written before the first byte, whether or not the turn succeeds.
-  const headers = new Headers({ "content-type": NDJSON, "cache-control": "no-store" });
-  if (live.session !== session) await writeSession(headers, request, live.session as Session, config);
-
+/**
+ * The streamed half, from the first byte on.
+ *
+ * Split out so the `try` above ends exactly where the pre-stream section does.
+ * Nothing in here can become a status code — the response has already been
+ * handed back by the time `start` runs — so a failure inside is `run.ts`'s
+ * `fault` event instead.
+ */
+function streamTurn(turn: {
+  agent: Streamable;
+  prompt: string;
+  client: ReturnType<typeof gatewayClient>;
+  headers: Headers;
+}): Response {
+  const { agent, prompt, client, headers } = turn;
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
