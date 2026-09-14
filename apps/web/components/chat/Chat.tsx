@@ -8,7 +8,12 @@
  * criterion rather than decoration:
  *
  * 1. **It streams.** The reply appears as it is produced, so a tool call that
- *    takes two seconds looks like work rather than like a hang.
+ *    takes two seconds looks like work rather than like a hang. Streaming is
+ *    about *when* the words arrive and not about how they are broken up:
+ *    consecutive `text` events are one message that grows (`transcript.ts`),
+ *    rendered as a safe subset of markdown (`markdown.ts`). #99 found the
+ *    opposite live — one block per delta, so the first reply on the Render URL
+ *    read "It / looks like the lo / an system / need / s you".
  * 2. **It shows the tool calls.** A denial that only appeared as prose would
  *    leave nothing on screen distinguishing "the hook refused" from "the model
  *    decided not to" — and those are the two readings this whole demo exists to
@@ -16,7 +21,10 @@
  * 3. **It renders an authorization link as a link.** Layer 2 is a step for a
  *    person to take, not a refusal (`lib/agent/authorization.ts`). Printing the
  *    URL as text would leave a persona stuck on their first call with no
- *    visible way forward.
+ *    visible way forward. The name and the link are the *whole* card: the
+ *    event's `instructions` are words aimed at the model, and #99 found them on
+ *    screen with an Arcade authorize URL inside them, overflowing the card by
+ *    several hundred pixels. They stay on the wire and off the screen.
  * 4. **It gives a plumbing failure a different colour and different words.**
  *    A `fault` is grey and says no decision was made, because a demo whose claim
  *    is *"the control plane stopped this"* must not put that claim on screen
@@ -58,6 +66,8 @@ import { useRef, useState } from "react";
 // `lib/agent/handlers.ts` instead pulls `@mastra/mcp` — and its stdio
 // transport's `fs` import — into the browser bundle, and `next build` fails.
 import { CHAT_PATH, type ChatEvent } from "../../lib/agent/events.ts";
+import { Markdown } from "./Markdown.tsx";
+import { transcript } from "./transcript.ts";
 
 const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
@@ -226,9 +236,17 @@ export function Chat({ signedInAs, onEvent, onTurnStart }: ChatProps) {
         </div>
       )}
 
-      {events.map((event, index) => (
-        <EventView key={index} event={event} />
-      ))}
+      {/* Grouped, not one-per-event. A `text` event is a delta; the deltas
+          either side of a tool call are two messages and the deltas between
+          them are one. `transcript.ts` says why that distinction is the whole
+          bug #99 was filed for. */}
+      {transcript(events).map((block, index) =>
+        block.kind === "reply" ? (
+          <Markdown key={index} source={block.text} />
+        ) : (
+          <EventView key={index} event={block.event} />
+        ),
+      )}
     </section>
   );
 }
@@ -248,7 +266,10 @@ function detailOf(detail: unknown): string {
 export function EventView({ event }: { event: ChatEvent }) {
   switch (event.kind) {
     case "text":
-      return <p style={{ margin: "0.5em 0", whiteSpace: "pre-wrap" }}>{event.text}</p>;
+      // One event on its own. `Chat` folds consecutive ones first and renders
+      // the fold through the same component, so a reply looks the same whether
+      // it arrived whole or three characters at a time.
+      return <Markdown source={event.text} />;
 
     case "tool-call":
       return (
@@ -302,21 +323,32 @@ export function EventView({ event }: { event: ChatEvent }) {
         // than maroon, and a link rather than a message, because the next move
         // belongs to the person reading it.
         <div style={pending} data-kind="authorization">
+          {/* The name, and nothing decoded from it. Since #94 this event carries
+              two things a layer apart — a wire tool name for layer 2, the
+              gateway's id for hop 1 — and `tool` is the structured field that
+              already tells them apart. The card prints it and draws no further
+              conclusion: a card that named the hop would be inferring one from
+              a string, and the two spellings are Arcade's to change. */}
           <strong style={label}>{event.tool} — authorization needed</strong>
           <p style={{ margin: "0.4em 0 0" }}>
-            {/* "Authorize", not "authorize this tool": since #94 the same event
-                also carries hop 1, where the thing to authorize is the gateway
-                and not a tool — `url` is this service's own `/api/arcade/start`
-                rather than Arcade's `authorization_url`. The heading already
-                names which. */}
+            {/* "Authorize", not "authorize this tool": the thing to authorize is
+                whatever the heading just named. */}
             <a href={event.url} target="_blank" rel="noreferrer">
               Authorize
             </a>
             , then ask again.
           </p>
-          {event.instructions ? (
-            <p style={{ margin: "0.4em 0 0", color: "var(--muted)" }}>{event.instructions}</p>
-          ) : null}
+          {/* This card's own sentence, not the event's. `instructions` are words
+              written for the model — Arcade's `llm_instructions` on layer 2,
+              ours on hop 1 — and on layer 2 they carry the full authorize URL,
+              which is what overflowed the card by several hundred pixels on the
+              Render URL (#99). They stay in the event, where the tests read
+              them; the person gets the name, the link, and the one thing the
+              control plane can actually prove about this event. */}
+          <p style={{ margin: "0.4em 0 0", color: "var(--muted)" }}>
+            A credential is missing. Nothing was refused: no rule ran and nothing was written to
+            the audit log.
+          </p>
         </div>
       );
 
