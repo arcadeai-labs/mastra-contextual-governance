@@ -42,7 +42,7 @@ import { authorizeUrl, exchangeCode, fetchUserinfo, nonce, pkce } from "./oidc.t
 import { accessTokenOf, exchangeGatewayCode, expiryOf, gatewayAuthorizeUrl, gatewayClient, isExpiring,
   mcpUrl, refreshGatewayToken } from "./gateway.ts";
 import { knownPersona } from "./personas.ts";
-import { confirmUser, followNextUri } from "./verifier.ts";
+import { confirmUser, continuationOf, followNextUri, loggable } from "./verifier.ts";
 
 export const SIGNIN_PATH = "/api/auth/signin";
 export const SIGNIN_CALLBACK_PATH = "/api/auth/callback";
@@ -511,10 +511,13 @@ export async function verify(request: Request, config: IdentitySurface = readIde
 }
 
 /**
- * The two server-side calls, in the one order that finalises a grant.
+ * The two server-side calls, in the one order that finalises a grant, and then
+ * the one place the browser may be sent afterwards.
  *
  * Shared by the with-session path and the signed-in-just-now path, so the
- * parked flow completes through exactly the same code as an ordinary one.
+ * parked flow completes through exactly the same code as an ordinary one —
+ * which is why #100's double exchange had to be fixed in exactly one function
+ * to be fixed on both routes.
  */
 export async function completeVerification(
   flowId: string,
@@ -554,6 +557,47 @@ export async function completeVerification(
   // this. A 303 the browser follows is not enough — a scripted agent, a
   // prefetch-blocking extension or a closed tab leaves the grant half-made and
   // the tool re-challenging with nothing on screen to say why.
-  await followNextUri(next);
-  return redirect(next, headers);
+  const followed = await followNextUri(next);
+  // #100: this line did not exist, and its absence is most of why the bug took
+  // three sittings. The status and the continuation were computed and thrown
+  // away, so the one place that could have said "the server already walked this
+  // leg, and here is where it ended" said nothing at all. Neither value is a
+  // credential; `loggable` keeps it that way by printing parameter names only.
+  console.info(
+    `[verifier] next_uri answered ${followed.status}, location ${loggable(followed.location)} ` +
+      `(flow ${flowId})`,
+  );
+
+  // The browser goes to the continuation, never back to `next_uri`. Sending it
+  // to `next_uri` is the double exchange: the server fetch above already
+  // redeemed the authorization code at cg-idp, and Better Auth's token endpoint
+  // answers the replay with `invalid_grant "invalid code"` *and* revokes the
+  // tokens the first exchange minted. The grant Arcade stores is then dead on
+  // arrival and `get_loan` fails at `userinfo` a turn later (#100).
+  const continuation = continuationOf(next, followed.location);
+  if (continuation) return redirect(continuation, headers);
+
+  // Nothing further to walk. The grant is made — something landed on `next_uri`
+  // and it was this server — so this is a success page, not a failure one, and
+  // it says the one thing the person holding the browser has to do next.
+  return verifiedPage(email, headers);
+}
+
+/**
+ * The end of hop 2 when Arcade's continuation ends at `next_uri` itself.
+ *
+ * A blank 200 would be indistinguishable from a route that did nothing, and
+ * this is the screen a human sees at the exact moment they are wondering
+ * whether the authorization worked. It names the persona, because binding the
+ * grant to the wrong one is the failure mode hop 2 exists to prevent, and it
+ * points back at the chat rather than leaving the tab as the last word.
+ */
+function verifiedPage(email: string, headers: Headers): Response {
+  return page(
+    "Authorized",
+    `<p>This tool is now authorized as <code>${escapeHtml(email)}</code>.</p>` +
+      `<p><a href="/chat">Back to the chat</a> — ask the agent for the same thing again.</p>`,
+    200,
+    headers,
+  );
 }

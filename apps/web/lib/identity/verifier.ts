@@ -25,6 +25,17 @@
  *    this module fetches it **server-side** and then sends the browser on; a
  *    verifier that returns the redirect and trusts the browser to follow it is
  *    correct for a browser and wrong for everything else.
+ *
+ * And one measured on #100, which is the other half of that same sentence:
+ *
+ * 3. **`next_uri` is fetched exactly once, and the browser is never one of the
+ *    two.** The server fetch runs the authorization-code exchange at `cg-idp`;
+ *    a browser sent to the same URL runs it again, and Better Auth's token
+ *    endpoint does not merely refuse the replay — it revokes the tokens the
+ *    first exchange minted. The visible symptom is three layers away: `get_loan`
+ *    fails at `userinfo` with "The identity provider rejected the token." So the
+ *    browser is sent to the **continuation** the server fetch was handed, and to
+ *    a local page when there is none.
  */
 
 /** What `confirm_user` answers with on success. */
@@ -86,8 +97,9 @@ export async function confirmUser(options: {
  * the browser next.
  *
  * `redirect: "manual"` because following it here would run the browser's half
- * of the flow on the server. The only thing this call has to accomplish is that
- * *something* landed on the URL; the browser is then sent to the same place.
+ * of the flow on the server, and because the `Location` is the thing the caller
+ * needs: it is where the browser goes instead of back here. Landing on this URL
+ * is what finalises the grant, and it must happen once — see `continuationOf`.
  */
 export async function followNextUri(nextUri: string): Promise<{ status: number; location: string | null }> {
   const response = await fetch(nextUri, { redirect: "manual" });
@@ -95,4 +107,64 @@ export async function followNextUri(nextUri: string): Promise<{ status: number; 
   // held open by a response nobody read.
   await response.arrayBuffer().catch(() => undefined);
   return { status: response.status, location: response.headers.get("location") };
+}
+
+/**
+ * Where the browser goes once `followNextUri` has already been there.
+ *
+ * `null` means "nowhere it can be sent" and the caller renders a local page.
+ * Three things are refused, each because sending a browser there is a fault:
+ *
+ * - **No `Location`.** The continuation ended at `next_uri`; there is nothing
+ *   further to walk.
+ * - **A `Location` that resolves back to `next_uri`.** Following it would be the
+ *   second exchange of a single-use code, which is #100: Better Auth's token
+ *   endpoint answers `invalid_grant "invalid code"` *and* revokes the tokens the
+ *   first exchange minted (`checkVerificationValue` →
+ *   `revokeTokensIssuedForAuthorizationCode`). The grant is destroyed, not just
+ *   unfinished, and the tool then fails at `userinfo` with no log line here.
+ * - **A scheme that is not `http`/`https`.** The value comes off another
+ *   service's response header and ends up in a `Location` this server writes;
+ *   `javascript:` and `data:` are not somewhere a browser is sent.
+ */
+export function continuationOf(nextUri: string, location: string | null): string | null {
+  if (!location) return null;
+
+  let resolved: URL;
+  try {
+    resolved = new URL(location, nextUri);
+  } catch {
+    return null;
+  }
+  if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return null;
+
+  let target: URL;
+  try {
+    target = new URL(nextUri);
+  } catch {
+    return null;
+  }
+  if (resolved.href === target.href) return null;
+
+  return resolved.href;
+}
+
+/**
+ * A URL reduced to what is safe to write into a log: origin, path, and the
+ * *names* of its query parameters.
+ *
+ * Arcade's continuation carries the authorization leg's query string, and on
+ * some legs that includes a `code`. A log line is read by people and shipped to
+ * Render; the shape is the diagnosis and the values are credentials.
+ */
+export function loggable(value: string | null): string {
+  if (!value) return "(none)";
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "(unparseable)";
+  }
+  const names = [...new Set([...url.searchParams.keys()])];
+  return `${url.origin}${url.pathname}${names.length > 0 ? `?${names.map((name) => `${name}=…`).join("&")}` : ""}`;
 }
