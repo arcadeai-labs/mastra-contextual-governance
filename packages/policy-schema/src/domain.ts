@@ -309,8 +309,8 @@ export type OutputRule = z.infer<typeof OutputRule>;
 
 /**
  * One thing that was taken out of a tool's output — the unit `redactions[]` is
- * made of, and the row the control-plane panel renders beside its before/after
- * diff (#21).
+ * made of, and the only thing the control-plane panel has to draw a `modify`
+ * from (#21, #101).
  *
  * **It names where and why, never what.** There is deliberately no field for
  * the removed value, because this record is written to the audit log and drawn
@@ -651,18 +651,23 @@ export const GRANT_REJECTION_KINDS = GrantRejectionReason.options.map(
  * per thing removed — path, `rule_id`, `pattern_id`, kind — and never the
  * removed value. It is absent everywhere else.
  *
- * `before` and `after` are structural context either side of a `modify`, and
- * **neither ever carries removed content** (decided on #16, driver option A).
- * The obvious thing to put in `before` is the tool's raw output, which for
- * `Loan.GetLoan` is the borrower's bank account number and tax id — and this
- * row is written to `audit_log` and streamed on an unauthenticated `GET
- * /events`, so it would persist the secret and broadcast it to anyone who can
- * reach the hook host. `after` is no safer: a rule conditioned on clearance
- * does not fire for a privileged subject, so the "after" of *their* modify is
- * a payload still holding the identifiers. So the redaction acts are made
- * visible by `redactions[]` — where and why — and the panel renders the mask
- * from the path rather than from a value it was handed. Field names and types
- * are allowed here; content that a rule took out is not.
+ * **There is no slot for a payload at all.** `before` and `after` used to sit
+ * here as `z.unknown().optional()`, and they are gone (#101, finishing what #16
+ * decided). The obvious thing to put in `before` is the tool's raw output,
+ * which for `Loan.GetLoan` is the borrower's bank account number and tax id —
+ * and this row is written to `audit_log` and streamed on an unauthenticated
+ * `GET /events`, so it would persist the secret and broadcast it to anyone who
+ * can reach the hook host. `after` is no safer: a rule conditioned on clearance
+ * does not fire for a privileged subject, so the "after" of *their* modify is a
+ * payload still holding the identifiers.
+ *
+ * Deleting the fields rather than documenting them as unused is the whole
+ * point, and it is the same move `RedactionRecord` makes one screen up: this
+ * object is `.strict()`, so an event carrying `before` is now a parse error
+ * instead of a code review someone has to catch. An optional `unknown` left
+ * standing is exactly where the next contributor would park the raw output.
+ * What a `modify` did is said by `redactions[]` — where and why — and the panel
+ * renders the mask from the path rather than from a value it was handed.
  *
  * `execution_id` is Arcade's, and correlates `/pre` with `/post` exactly. It is
  * empty at `/access`, which has no execution to identify, and spike 02 found it
@@ -681,8 +686,6 @@ export const GovernanceEvent = z
     decision: Effect,
     reason: z.string(),
     rule_id: z.string().nullable(),
-    before: z.unknown().optional(),
-    after: z.unknown().optional(),
     /** What a `/post` `modify` removed. Absent on every other event. */
     redactions: z.array(RedactionRecord).optional(),
   })

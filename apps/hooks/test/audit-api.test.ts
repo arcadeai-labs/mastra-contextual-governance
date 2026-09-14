@@ -91,8 +91,7 @@ interface SeedFields {
   readonly tool?: string;
   readonly decision?: "allow" | "deny" | "modify";
   readonly ts?: string;
-  readonly before?: unknown;
-  readonly after?: unknown;
+  readonly redactions?: ReadonlyArray<Record<string, unknown>>;
 }
 
 /** Rows appended straight to the log, oldest first. Returns their ids. */
@@ -111,8 +110,7 @@ function seed(count: number, fields: SeedFields = {}): string[] {
       decision: fields.decision ?? "allow",
       reason: "seeded",
       rule_id: null,
-      ...(fields.before !== undefined && { before: fields.before }),
-      ...(fields.after !== undefined && { after: fields.after }),
+      ...(fields.redactions !== undefined && { redactions: fields.redactions }),
     });
   });
   record(db, events);
@@ -189,11 +187,23 @@ describe("the rows are the audit rows", () => {
     expect(page.rows.map((row) => row.id)).toEqual([...ids].reverse());
   });
 
-  test("a modify row keeps its before and after", async () => {
-    seed(1, { hook: "post", decision: "modify", before: { acct: "123" }, after: { acct: "***" } });
+  test("a modify row keeps its redactions[], which is its whole account of itself", async () => {
+    const records = [
+      {
+        path: "$.bank_account_number",
+        rule_id: "post.redact-borrower-identifiers",
+        pattern_id: null,
+        kind: "mask" as const,
+      },
+    ];
+    seed(1, { hook: "post", decision: "modify", redactions: records });
+
     const [row] = (await body(await audit())).rows;
-    expect(row!.before).toEqual({ acct: "123" });
-    expect(row!.after).toEqual({ acct: "***" });
+
+    expect(row!.redactions).toEqual(records);
+    // And no payload, on a response served without authentication.
+    expect(Object.keys(row!)).not.toContain("before");
+    expect(Object.keys(row!)).not.toContain("after");
   });
 });
 

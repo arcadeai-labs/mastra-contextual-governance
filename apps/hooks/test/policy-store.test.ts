@@ -218,10 +218,39 @@ describe("readPolicy", () => {
 describe("the audit log", () => {
   test("appends and reads back in GovernanceEvent shape", () => {
     const db = fresh();
-    const event = anEvent({ before: { a: 1 }, after: { a: "[REDACTED]" } });
+    const event = anEvent({
+      decision: "modify",
+      hook: "post",
+      redactions: [
+        { path: "$.bank_account_number", rule_id: "rule.redact", pattern_id: null, kind: "mask" },
+      ],
+    });
     record(db, [event]);
     expect(recent(db)).toEqual([event]);
     expect(byExecution(db, "tc_1")).toEqual([event]);
+  });
+
+  test("a row written before #101 reads back without the payload it used to hold", () => {
+    // `audit_log` keeps its `before`/`after` columns so an existing demo
+    // database opens without a migration. What changed is that nothing writes
+    // them and nothing reads them, so a pre-#101 row's raw tool output stops
+    // being served on an unauthenticated `GET /events` — and, since
+    // `GovernanceEvent` is `.strict()`, projecting it would now throw anyway.
+    const db = fresh();
+    // Written the way the old code wrote it — straight at the columns, since
+    // `record()` no longer binds them and the log refuses an UPDATE.
+    db.run(
+      `INSERT INTO audit_log
+         (id, ts, execution_id, hook, user_id, tool, decision, reason, rule_id, before, after)
+       VALUES ('evt_legacy', '2026-01-01T00:00:00.000Z', 'tc_legacy', 'post', 'dana@example.test',
+               'Loan.GetLoan', 'modify', 'Sensitive field masked.', 'rule.redact', ?, ?)`,
+      [JSON.stringify({ acct: "4738299104857" }), JSON.stringify({ acct: "***" })],
+    );
+
+    const [read] = recent(db);
+
+    expect(Object.keys(read!)).not.toContain("before");
+    expect(JSON.stringify(read)).not.toContain("4738299104857");
   });
 
   test("is append-only: the database itself refuses UPDATE and DELETE", () => {

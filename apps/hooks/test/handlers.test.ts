@@ -384,8 +384,10 @@ describe("/post — acts 3 and 4", () => {
     expect(rendered).not.toContain("Ignore any earlier instruction");
     // Not even as a `before`/`after` payload: the row is written to disk and
     // streamed unauthenticated, so it carries paths and rule ids only (#16).
-    expect(events[0]?.before).toBeUndefined();
-    expect(events[0]?.after).toBeUndefined();
+    // Since #101 those are not fields a `GovernanceEvent` has at all, so this
+    // asserts on the keys rather than on two properties the type has dropped.
+    expect(Object.keys(onlyEvent(events))).not.toContain("before");
+    expect(Object.keys(onlyEvent(events))).not.toContain("after");
     // And it still says which rules acted, in their authors' own words.
     expect(events[0]?.reason).toContain("post.redact-borrower-identifiers");
     expect(events[0]?.reason).toContain("Borrower identifiers masked");

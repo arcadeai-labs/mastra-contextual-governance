@@ -298,15 +298,35 @@ describe("GovernanceEvent", () => {
     ).toBe("");
   });
 
-  it("carries before and after only when something changed", () => {
+  it("says what a modify did through redactions[], and carries no payload", () => {
     const modified = GovernanceEvent.parse({
       ...minimal,
       decision: "modify",
-      before: { identifier: "0000000000" },
-      after: { identifier: "[REDACTED]" },
+      redactions: [
+        { path: "$.identifier", rule_id: "rule.redact", pattern_id: null, kind: "mask" },
+      ],
     });
-    expect(modified.before).toEqual({ identifier: "0000000000" });
-    expect(modified.after).toEqual({ identifier: "[REDACTED]" });
+    expect(modified.redactions).toEqual([
+      { path: "$.identifier", rule_id: "rule.redact", pattern_id: null, kind: "mask" },
+    ]);
+    expect(Object.keys(modified)).not.toContain("before");
+    expect(Object.keys(modified)).not.toContain("after");
+  });
+
+  it("has nowhere to put the payload either side of a modify", () => {
+    // The same argument `RedactionRecord` makes, one level up. This row is
+    // persisted to `audit_log` and streamed on an unauthenticated `GET /events`,
+    // so `before` holding `Loan.GetLoan`'s raw output would write the borrower's
+    // account number to disk and broadcast it — and `after` is no safer, because
+    // a clearance-conditioned rule does not fire for a privileged subject and
+    // *their* "after" still holds the identifiers (#16, #101). `.strict()` is
+    // what makes that a parse error rather than a code review someone has to
+    // catch.
+    for (const leak of ["before", "after", "output", "payload", "value"]) {
+      expect(() =>
+        GovernanceEvent.parse({ ...minimal, decision: "modify", [leak]: { tax_id: "12-3456789" } }),
+      ).toThrow();
+    }
   });
 
   it("survives a JSON round-trip, which is how it reaches the panel", () => {
