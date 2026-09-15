@@ -116,7 +116,9 @@ basis. One rule survives the swap, and one known exception is tracked:
   permission and `/pre` never fired; one "do not ask the person to confirm" line pushed it
   the other way. The current checked-in loan toolkit still contains those caution lines
   (`tools/loan/loan/__init__.py:186,200`), and the local stand-in mirrors them
-  (`apps/web/scripts/gateway-stand-in.ts:236,254`); the cleanup is **#90**, still open.
+  (`apps/web/scripts/gateway-stand-in.ts:236,254`). The kept approvals toolkit also has
+  flow-steering instructions at `tools/approvals/approvals/__init__.py:169`; do not copy
+  those either. The loan-description cleanup is **#90**, still open.
   When you copy the toolkit, say what each tool does and what its arguments mean, then
   complete #90's equivalent cleanup before deploying.
 - **`tool.metadata` never reaches a hook payload**, for any tool. `Behavior`,
