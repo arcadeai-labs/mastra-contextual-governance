@@ -49,6 +49,12 @@ export function ControlPlanePanel({ stream, correlationKey }: ControlPlanePanelP
         // nothing — looks identical to a control plane deciding nothing.
         console.warn(`[control-plane] unusable frame (${problem}):`, data);
       },
+      // The home page's server render reads both loan files through the
+      // governed gateway before this hydrated component can open its browser
+      // stream. Ask the existing resumable endpoint for the complete log on
+      // the first connection so those committed audit rows are visible; after
+      // that, subscribe.ts resumes from the last id it actually received.
+      initialLastEventId: "0",
       signal: controller.signal,
     });
 

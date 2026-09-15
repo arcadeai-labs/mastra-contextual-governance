@@ -241,6 +241,30 @@ describe("frames the panel cannot use", () => {
 });
 
 describe("reconnecting", () => {
+  test("an initial replay anchor is sent once, then normal resume takes over", async () => {
+    let connections = 0;
+    const { url, requests } = serve((_request, write) => {
+      connections += 1;
+      write(frame(aGovernanceEvent({ id: `evt_initial_${connections}` })));
+    });
+
+    const controller = new AbortController();
+    const events: GovernanceEvent[] = [];
+    const done = subscribeToGovernanceEvents(url, {
+      initialLastEventId: "0",
+      onEvents: (batch) => events.push(...batch),
+      signal: controller.signal,
+      retryMs: 20,
+    });
+
+    await until(() => events.length >= 2, "the replayed event and its resume");
+    controller.abort();
+    await done;
+
+    expect(requests[0]?.headers.get("last-event-id")).toBe("0");
+    expect(requests[1]?.headers.get("last-event-id")).toBe("evt_initial_1");
+  });
+
   test("the stream reopens after the server closes it", async () => {
     let connections = 0;
     const { url } = serve((_request, write) => {
