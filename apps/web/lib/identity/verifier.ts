@@ -46,6 +46,8 @@
  * because there is no longer a caller that would use one.
  */
 
+import { createHash } from "node:crypto";
+
 /** What `confirm_user` answers with on success. */
 export interface ConfirmResponse {
   auth_id?: string;
@@ -138,6 +140,26 @@ export function loggable(value: string | null): string {
   } catch {
     return "(unparseable)";
   }
-  const names = [...new Set([...url.searchParams.keys()])];
-  return `${url.origin}${url.pathname}${names.length > 0 ? `?${names.map((name) => `${name}=…`).join("&")}` : ""}`;
+  const names = [...new Set([...url.searchParams.keys()])]
+    .map((name) => name.replace(/[^A-Za-z0-9_.~-]/g, "?").slice(0, 64))
+    .filter((name) => name.length > 0);
+  // The continuation is supplied by Arcade, but it is still input to this
+  // service. Keep the diagnostic line bounded and strip control characters so
+  // a hostile Location cannot become a second log line. Values never appear.
+  const safe = (part: string) => part.replace(/[\u0000-\u001f\u007f]/g, "?").slice(0, 160);
+  return `${safe(url.origin)}${safe(url.pathname)}${names.length > 0 ? `?${names.map((name) => `${name}=…`).join("&")}` : ""}`.slice(0, 400);
+}
+
+/**
+ * A stable, non-secret reference for one persona. The email is normalised
+ * before hashing so the same person joins across the verifier and a later
+ * tool-call observation without putting the address in a production log.
+ */
+export function identityReference(email: string): string {
+  return `id_${createHash("sha256").update(email.trim().toLowerCase()).digest("hex").slice(0, 16)}`;
+}
+
+/** A stable, bounded reference for Arcade's flow id. */
+export function flowReference(flowId: string): string {
+  return `flow_${createHash("sha256").update(flowId).digest("hex").slice(0, 16)}`;
 }

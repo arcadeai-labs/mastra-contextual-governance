@@ -42,7 +42,7 @@ import { authorizeUrl, exchangeCode, fetchUserinfo, nonce, pkce } from "./oidc.t
 import { accessTokenOf, exchangeGatewayCode, expiryOf, gatewayAuthorizeUrl, gatewayClient, isExpiring,
   mcpUrl, refreshGatewayToken } from "./gateway.ts";
 import { knownPersona } from "./personas.ts";
-import { confirmUser, followNextUri, loggable } from "./verifier.ts";
+import { confirmUser, flowReference, followNextUri, identityReference, loggable } from "./verifier.ts";
 
 export const SIGNIN_PATH = "/api/auth/signin";
 export const SIGNIN_CALLBACK_PATH = "/api/auth/callback";
@@ -631,8 +631,9 @@ export async function completeVerification(
   // leg, and here is where it ended" said nothing at all. Neither value is a
   // credential; `loggable` keeps it that way by printing parameter names only.
   console.info(
-    `[verifier] next_uri answered ${followed.status}, location ${loggable(followed.location)} ` +
-      `(flow ${flowId})`,
+    `[verifier] hop2 finalized flow_ref=${flowReference(flowId)} ` +
+      `persona_ref=${identityReference(email)} next_uri answered ${followed.status}, ` +
+      `location ${loggable(followed.location)}`,
   );
 
   // And the browser stays here. `followed.location` is read for the log line
