@@ -560,6 +560,14 @@ Until #125 lands, state the promise the way it is true: **"touch nothing under
 `packages/`" holds for executable code and for both enforced boundary tests. It does
 not yet hold for a grep.**
 
+The pending package cleanup is [PR #130](https://github.com/ArcadeAI-labs/mastra-contextual-governance/pull/130),
+commit `01dacd5`; it moves the acts 3 and 4 pin beside the app fixture, neutralises the
+remaining package-source examples, and records neutral contract roles. `git grep -i loan
+01dacd5 -- packages/` returns **no matches**. PR #130 is not merged into this branch, so
+that is pending evidence rather than the result above; after it merges or this branch is
+rebased, rerun `grep -ri loan packages/` and update this paragraph from the measured
+`38` to the passing result in that merged state.
+
 ---
 
 ## 10. Run it
