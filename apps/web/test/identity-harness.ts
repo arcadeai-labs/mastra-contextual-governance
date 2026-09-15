@@ -41,6 +41,7 @@ import {
   verify,
 } from "../lib/identity/handlers.ts";
 import { forgetGatewayClients } from "../lib/identity/gateway.ts";
+import { nonce, pkce } from "../lib/identity/oidc.ts";
 
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
 
@@ -306,6 +307,39 @@ export interface ArcadeStandIn {
   rotateRefreshTokens: boolean;
   /** Every `grant_type` the token endpoint was asked for, in order. */
   grants: string[];
+  /**
+   * Test-only view of a hop-2 grant. It intentionally carries identities, but
+   * never an authorization code, access token, refresh token or URL value.
+   * This is the observation that joins the verifier's confirmation to the
+   * real IdP token/userinfo exchange below.
+   */
+  grantObservations: Array<{
+    flow_id: string;
+    confirmed_user_id: string;
+    effective_user_id: string | null;
+    finalized: boolean;
+  }>;
+  /** The later Loan_SearchLoans auth decision, with no credential material. */
+  loanSearchCalls: Array<{
+    user_id: string;
+    grant_flow_id: string | null;
+    outcome: "grant" | "fresh_challenge";
+  }>;
+  /** Configure the real local IdP route used by the provider leg below. */
+  configureIdpProvider(options: {
+    issuer: string;
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+  }): void;
+  /** The local provider's public client id; the secret never leaves the stand-in. */
+  providerClientIdForTest(): string;
+  /** Capture one provider code inside the harness; the code never leaves it. */
+  bindProviderCode(flowId: string, authorizationState: string, codeVerifier: string): void;
+  /** A gateway bearer whose actor is the supplied test persona. */
+  issueToolToken(email: string): string;
+  /** Reset only the stand-in's provider grants between focused test cases. */
+  clearToolGrantsForTest(): void;
   stop(): void;
 }
 
@@ -315,16 +349,34 @@ export interface ArcadeStandIn {
  * Faithful where it matters and no further: the discovery chain is the one
  * measured on #04, PKCE is verified rather than accepted, `confirm_user`
  * demands the project API key, and the grant is only recorded once something
- * fetches `next_uri`. Everything about tool execution is absent, because this
- * slice does not execute a tool.
+ * fetches `next_uri`. The focused `Loan_SearchLoans` probe below is the one
+ * tool path modeled here; all other tool execution remains absent because this
+ * harness does not attempt to model the whole gateway.
  */
 export function startArcadeStandIn(): ArcadeStandIn {
   const codes = new Map<string, { challenge: string; clientId: string; redirectUri: string }>();
   const refreshTokens = new Map<string, string>();
   const flows = new Map<
     string,
-    { user_id: string; next_uri: string; authorized: boolean; redeemed: boolean }
+    {
+      user_id: string;
+      next_uri: string;
+      authorized: boolean;
+      redeemed: boolean;
+      provider?: { code: string; codeVerifier: string };
+      effective_user_id?: string | null;
+    }
   >();
+  const providerCodes = new Map<string, string>();
+  const pendingProvider = new Map<string, { code: string; codeVerifier: string }>();
+  const actors = new Map<string, string>();
+  const grantsByUser = new Map<string, string>();
+  let idpProvider: {
+    issuer: string;
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+  } | null = null;
 
   /** Access tokens the gateway still accepts. Expiry is removal from this set. */
   const liveAccess = new Set<string>();
@@ -351,6 +403,31 @@ export function startArcadeStandIn(): ArcadeStandIn {
     dropConnections: false,
     rotateRefreshTokens: false,
     grants: [],
+    grantObservations: [],
+    loanSearchCalls: [],
+    configureIdpProvider(options) {
+      idpProvider = options;
+    },
+    providerClientIdForTest() {
+      if (!idpProvider) throw new Error("the local IdP provider is not configured");
+      return idpProvider.clientId;
+    },
+    bindProviderCode(flowId, authorizationState, codeVerifier) {
+      const code = providerCodes.get(authorizationState);
+      if (!code) throw new Error(`no local IdP authorization code captured for state ${authorizationState}`);
+      const flow = flows.get(flowId);
+      if (flow) flow.provider = { code, codeVerifier };
+      else pendingProvider.set(flowId, { code, codeVerifier });
+    },
+    issueToolToken(email) {
+      const token = `gw-tool-${crypto.randomUUID()}`;
+      actors.set(token, email.trim().toLowerCase());
+      liveAccess.add(token);
+      return token;
+    },
+    clearToolGrantsForTest() {
+      grantsByUser.clear();
+    },
     stop: () => server.stop(true),
   };
 
@@ -440,6 +517,41 @@ export function startArcadeStandIn(): ArcadeStandIn {
           });
         }
         if (body.method === "tools/call") {
+          const toolName = body.params?.name;
+          if (toolName === "Loan_SearchLoans") {
+            const actor = actors.get(bearer) ?? "";
+            const grantFlowId = grantsByUser.get(actor) ?? null;
+            state.loanSearchCalls.push({
+              user_id: actor,
+              grant_flow_id: grantFlowId,
+              outcome: grantFlowId === null ? "fresh_challenge" : "grant",
+            });
+            if (grantFlowId === null) {
+              return Response.json({
+                jsonrpc: "2.0",
+                id: body.id,
+                result: {
+                  isError: true,
+                  content: [
+                    {
+                      type: "text",
+                      text: JSON.stringify({
+                        authorization_url: `${state.url}/oauth/authorize?tool=Loan_SearchLoans`,
+                        llm_instructions: "Authorize the tool and try again.",
+                      }),
+                    },
+                  ],
+                },
+              });
+            }
+            return Response.json({
+              jsonrpc: "2.0",
+              id: body.id,
+              result: {
+                content: [{ type: "text", text: JSON.stringify({ count: 1, loans: [{ loan_id: "LN-2291" }] }) }],
+              },
+            });
+          }
           return Response.json({
             jsonrpc: "2.0",
             id: body.id,
@@ -559,7 +671,15 @@ export function startArcadeStandIn(): ArcadeStandIn {
           return new Response(JSON.stringify({ code: 400, msg: "Bad request" }), { status: 400 });
         }
         const nextUri = `${state.url}/api/v1/oauth/callback_success?flow_id=${encodeURIComponent(body.flow_id)}`;
-        flows.set(body.flow_id, { user_id: body.user_id, next_uri: nextUri, authorized: false, redeemed: false });
+        const provider = pendingProvider.get(body.flow_id);
+        flows.set(body.flow_id, {
+          user_id: body.user_id,
+          next_uri: nextUri,
+          authorized: false,
+          redeemed: false,
+          ...(provider ? { provider } : {}),
+        });
+        pendingProvider.delete(body.flow_id);
         state.confirmations.push({ flow_id: body.flow_id, user_id: body.user_id, authorized: false });
         return Response.json({
           auth_id: `auth_${body.flow_id}`,
@@ -596,8 +716,57 @@ export function startArcadeStandIn(): ArcadeStandIn {
         flow.redeemed = true;
         flow.authorized = true;
         state.nextUriFetches.push(flowId);
+
+        // In the live path Arcade exchanges the provider code after the
+        // verifier confirms the user. When a test binds a real local IdP code
+        // to this flow, perform that same server-to-server exchange here and
+        // derive the effective identity from /userinfo. The ordinary identity
+        // tests do not bind a code, so their narrower stand-in behavior stays
+        // unchanged.
+        if (flow.provider && idpProvider) {
+          const formEncode = (value: string) => new URLSearchParams({ value }).toString().slice("value=".length);
+          const basic = Buffer.from(
+            `${formEncode(idpProvider.clientId)}:${formEncode(idpProvider.clientSecret)}`,
+          ).toString("base64");
+          const tokenResponse = await fetch(`${idpProvider.issuer}/oauth2/token`, {
+            method: "POST",
+            headers: {
+              authorization: `Basic ${basic}`,
+              "content-type": "application/x-www-form-urlencoded",
+              "user-agent": "identity-harness/1.0",
+            },
+            body: new URLSearchParams({
+              grant_type: "authorization_code",
+              code: flow.provider.code,
+              redirect_uri: idpProvider.redirectUri,
+              client_id: idpProvider.clientId,
+              code_verifier: flow.provider.codeVerifier,
+            }).toString(),
+          });
+          const token = (await tokenResponse.json().catch(() => null)) as
+            | { access_token?: string }
+            | null;
+          let effective: string | null = null;
+          if (tokenResponse.ok && typeof token?.access_token === "string") {
+            const userinfo = await fetch(`${idpProvider.issuer}/oauth2/userinfo`, {
+              headers: { authorization: `Bearer ${token.access_token}` },
+            });
+            const identity = (await userinfo.json().catch(() => null)) as { email?: string } | null;
+            if (userinfo.ok && typeof identity?.email === "string") effective = identity.email.trim().toLowerCase();
+          }
+          flow.effective_user_id = effective;
+          flow.authorized = effective === flow.user_id.trim().toLowerCase();
+          state.grantObservations.push({
+            flow_id: flowId,
+            confirmed_user_id: flow.user_id,
+            effective_user_id: effective,
+            finalized: flow.authorized,
+          });
+          if (flow.authorized) grantsByUser.set(flow.user_id.trim().toLowerCase(), flowId);
+        }
+
         for (const confirmation of state.confirmations) {
-          if (confirmation.flow_id === flowId) confirmation.authorized = true;
+          if (confirmation.flow_id === flowId) confirmation.authorized = flow.authorized;
         }
         if (state.nextUriAnswer === "terminal") {
           return new Response("authorized", { headers: { "content-type": "text/plain" } });
@@ -613,6 +782,13 @@ export function startArcadeStandIn(): ArcadeStandIn {
 
       // Where Arcade's continuation lands. Renders no form, so a browser
       // walking the chain stops here.
+      if (pathname === "/idp/callback") {
+        const code = url.searchParams.get("code");
+        const state = url.searchParams.get("state");
+        if (code && state) providerCodes.set(state, code);
+        return Response.json({ received: Boolean(code && state) });
+      }
+
       if (pathname === "/authorized") {
         return new Response("<!doctype html><p>Arcade: authorized", {
           headers: { "content-type": "text/html; charset=utf-8" },
@@ -679,7 +855,7 @@ export async function startIdentityHarness(): Promise<IdentityHarness> {
     // Client A stays the Arcade registration; client C is `apps/web`'s own —
     // DESIGN.md's "one OAuth client per relying party", settled on #75/#79.
     IDP_OAUTH_CLIENTS: "web",
-    IDP_OAUTH_REDIRECT_URIS_WEB: `${webUrl}/api/auth/callback`,
+    IDP_OAUTH_REDIRECT_URIS_WEB: `${webUrl}/api/auth/callback,${arcade.url}/idp/callback`,
     NODE_ENV: "test",
   };
 
@@ -721,6 +897,18 @@ export async function startIdentityHarness(): Promise<IdentityHarness> {
   };
   const clientC = credentials.clients.find((each) => each.key === "web");
   if (!clientC?.client_secret) throw new Error(`no readable secret for client C in:\n${rotateOut}`);
+
+  // The same real local IdP client is used as the provider leg in the focused
+  // hop-2 regression. The callback is a route on the Arcade stand-in, so the
+  // browser captures the authorization code there and the stand-in exchanges
+  // it through the actual `/oauth2/token` and `/oauth2/userinfo` routes during
+  // next_uri finalization. No code or token is exposed by the harness API.
+  arcade.configureIdpProvider({
+    issuer: idpUrl,
+    clientId: clientC.client_id,
+    clientSecret: clientC.client_secret,
+    redirectUri: `${arcade.url}/idp/callback`,
+  });
 
   const config = readWebConfig({
     ARCADE_API_URL: arcade.url,
@@ -772,6 +960,40 @@ export async function startIdentityHarness(): Promise<IdentityHarness> {
       rmSync(dirname(dbPath), { recursive: true, force: true });
     },
   };
+}
+
+/**
+ * Mint a provider authorization code in the real local IdP, retaining it only
+ * inside the Arcade stand-in until a flow's `next_uri` is finalized.
+ */
+export async function prepareProviderCode(
+  browser: Browser,
+  harness: IdentityHarness,
+  persona: PersonaKey,
+): Promise<{ authorizationState: string; codeVerifier: string }> {
+  const { verifier, challenge } = await pkce();
+  const authorizationState = nonce();
+  const authorize = new URL(`${harness.idpUrl}/oauth2/authorize`);
+  authorize.search = new URLSearchParams({
+    response_type: "code",
+    client_id: harness.arcade.providerClientIdForTest(),
+    redirect_uri: `${harness.arcade.url}/idp/callback`,
+    scope: "openid email",
+    state: authorizationState,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  }).toString();
+  await browser.follow(
+    authorize.toString(),
+    (fields) => ({
+      ...fields,
+      ...(fields.email !== undefined
+        ? { email: PEOPLE[persona].email, password: PEOPLE[persona].password }
+        : {}),
+      ...(fields.decision !== undefined ? { decision: "allow" } : {}),
+    }),
+  );
+  return { authorizationState, codeVerifier: verifier };
 }
 
 /**

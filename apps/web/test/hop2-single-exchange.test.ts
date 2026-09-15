@@ -36,7 +36,7 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
-import { followNextUri, loggable } from "../lib/identity/verifier.ts";
+import { flowReference, followNextUri, identityReference, loggable } from "../lib/identity/verifier.ts";
 import {
   Browser,
   PEOPLE,
@@ -244,11 +244,16 @@ describe("the verifier says what next_uri answered", () => {
       browser.fetch(`${harness.webUrl}/api/arcade/verify?flow_id=${flowId}`),
     );
 
-    const line = lines.find((each) => each.includes("[verifier] next_uri answered"));
+    const line = lines.find((each) => each.includes("[verifier] hop2 finalized"));
     expect(line).toBeTruthy();
+    if (!line) throw new Error("verifier diagnostic line was not captured");
     expect(line).toContain("302");
     expect(line).toContain("/authorized");
-    expect(line).toContain(flowId);
+    expect(line).toContain(`flow_ref=${flowReference(flowId)}`);
+    expect(line).toContain(`persona_ref=${identityReference(PEOPLE.dana.email)}`);
+    expect(line).not.toContain(flowId);
+    expect(line).not.toContain(PEOPLE.dana.email);
+    expect(line.length).toBeLessThanOrEqual(400);
     // The stand-in puts this on the continuation's query string on purpose.
     // Parameter names are the diagnosis; the values are credentials.
     expect(line).toContain("code=…");
@@ -265,7 +270,7 @@ describe("the verifier says what next_uri answered", () => {
       browser.fetch(`${harness.webUrl}/api/arcade/verify?flow_id=${flowId}`),
     );
 
-    const line = lines.find((each) => each.includes("[verifier] next_uri answered"));
+    const line = lines.find((each) => each.includes("[verifier] hop2 finalized"));
     expect(line).toContain("200");
     expect(line).toContain("(none)");
   });
@@ -312,5 +317,14 @@ describe("loggable — a URL with the values taken out", () => {
   test("absence and garbage are named rather than printed", () => {
     expect(loggable(null)).toBe("(none)");
     expect(loggable("not a url")).toBe("(unparseable)");
+  });
+
+  test("a hostile continuation cannot expand or split the diagnostic line", () => {
+    const value = `https://cloud.arcade.dev/${"x".repeat(800)}\nsecond-line?code=secret`;
+    const logged = loggable(value);
+    expect(logged.length).toBeLessThanOrEqual(400);
+    expect(logged).not.toContain("\n");
+    expect(logged).toContain("code=…");
+    expect(logged).not.toContain("secret");
   });
 });
