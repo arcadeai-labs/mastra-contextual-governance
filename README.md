@@ -184,7 +184,12 @@ instead — the address the loan API asks for userinfo. Move `IDP_PUBLIC_HOST` a
 sides follow.
 
 Every `/loans` call needs a bearer token, and the API asks the identity provider who it
-belongs to:
+belongs to. The `dev:<email>` curl below is **only an offline stub example**: it works
+only when `IDP_PUBLIC_HOST` points to the host and port where `dev:idp-stub` is listening.
+If `IDP_PUBLIC_HOST` points to the real `apps/idp` service (`cg-idp` in the deployed
+setup), this same `dev:<email>` request is expected to return **HTTP 401** because that
+service accepts OAuth access tokens, not the stub token. For the real path, preserve the
+`cg-idp` OAuth setup in [Setup from zero](#setup-from-zero), steps 1–4.
 
 ```sh
 curl -H 'Authorization: Bearer dev:dana@example.test' localhost:8082/loans/LN-2291
