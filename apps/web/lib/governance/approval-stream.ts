@@ -17,7 +17,7 @@
  * governance log at a consumer that discards every frame of it.
  *
  * **Which means a notice can be missed**, and this is the one thing about it
- * worth stating out loud: a browser whose socket is down at the moment Riley
+ * worth stating out loud: a browser whose socket is down at the moment Charlie
  * presses Approve never sees that frame. The issue names the conditions —
  * conference wifi — so the gap is closed rather than documented: every
  * reconnect fires `onReconnect`, and the caller answers it by asking the
@@ -149,8 +149,8 @@ export async function subscribeToApprovalNotices(
  * Both halves are required and neither is enough alone. The request id says it
  * is the approval this browser's agent asked for; the requester says the turn
  * is this persona's to resume. Without the second, an open tab signed in as
- * Morgan would resume Dana's turn — and the resumed turn's tool calls would be
- * made as Morgan, because every call is made as whoever this browser is signed
+ * Michael would resume Alice's turn — and the resumed turn's tool calls would be
+ * made as Michael, because every call is made as whoever this browser is signed
  * in as.
  *
  * The server checks both again, against the store record rather than against

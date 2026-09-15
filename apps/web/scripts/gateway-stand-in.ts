@@ -371,7 +371,7 @@ function createApprovalsStore(options: {
           candidate_approvers: routed.candidates.map((subject) => subject.user_id),
           approval_url: `${options.webHost}/approvals/${requestId}`,
           // Not a `slack_message_ts`, because no message was sent. Saying so
-          // is the difference between "go and tell Riley" and an agent that
+          // is the difference between "go and tell Charlie" and an agent that
           // believes it has escalated something nobody has seen — the same
           // distinction `tools/approvals` raises a `ToolExecutionError` for
           // when Slack refuses.

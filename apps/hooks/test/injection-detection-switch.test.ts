@@ -46,7 +46,7 @@ import { createServer } from "../src/server.ts";
 import { loanFixture } from "./loan-fixture.ts";
 
 const SECRET = "test-secret";
-const DANA = "dana.okafor@bank.example";
+const DANA = "alice@bank.example";
 const POLL_MS = 10;
 
 const LOAN = loanFixture("LN-2291");

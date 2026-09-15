@@ -14,10 +14,10 @@ import { handleAccess, handlePost, handlePre, type HandlerContext } from "../src
 import { createPolicyCache, type CacheState } from "../src/policy-cache.ts";
 import { openGovernance } from "../src/policy-store.ts";
 
-const DANA = "dana.okafor@bank.example";
-const SAM = "sam.reyes@bank.example";
-const RILEY = "riley.chen@bank.example";
-const MORGAN = "morgan.ellis@bank.example";
+const DANA = "alice@bank.example";
+const SAM = "bob@bank.example";
+const RILEY = "charlie@bank.example";
+const MORGAN = "michael@bank.example";
 
 const governance = (): Database =>
   openGovernance(":memory:", { loanToolkit: "Loan", approvalsToolkit: "Approvals", personaEmails: {} });
@@ -77,7 +77,7 @@ const pre = (user_id: string, name: string, inputs: Record<string, unknown>) => 
 });
 
 describe("/access — act 1", () => {
-  test("hides ApproveLoan from Sam, in the request's own shape down to the version array", () => {
+  test("hides ApproveLoan from Bob, in the request's own shape down to the version array", () => {
     const { response, events } = handleAccess(
       { user_id: SAM, toolkits: { Loan: { tools: LOAN_TOOLS } } },
       ready(),
@@ -224,7 +224,7 @@ describe("/pre — act 2", () => {
     );
   });
 
-  test("blocks Dana's $95K with the remediation instruction and a correlation token", () => {
+  test("blocks Alice's $95K with the remediation instruction and a correlation token", () => {
     const { response, events } = handlePre(pre(DANA, "ApproveLoan", { loan_id: "LN-2291", amount: 95_000 }), ready(), ctx);
 
     expect(response.code).toBe("CHECK_FAILED");
@@ -263,17 +263,17 @@ describe("/pre — act 2", () => {
   });
 
   test.each([
-    ["Dana at her limit", DANA, 50_000],
-    ["Dana under her limit", DANA, 40_000],
-    ["Riley, the minimum-sufficient approver", RILEY, 95_000],
-    ["Morgan", MORGAN, 4_000_000],
+    ["Alice at her limit", DANA, 50_000],
+    ["Alice under her limit", DANA, 40_000],
+    ["Charlie, the minimum-sufficient approver", RILEY, 95_000],
+    ["Michael", MORGAN, 4_000_000],
   ])("allows %s", (_label, user, amount) => {
     const { response, events } = handlePre(pre(user, "ApproveLoan", { loan_id: "LN-2291", amount }), ready(), ctx);
     expect(response).toEqual({ code: "OK" });
     expect(events[0]).toMatchObject({ decision: "allow", rule_id: null, user_id: user });
   });
 
-  test("Sam's $0 clearance denies any positive approval even if the tool were reached", () => {
+  test("Bob's $0 clearance denies any positive approval even if the tool were reached", () => {
     const { response } = handlePre(pre(SAM, "ApproveLoan", { loan_id: "LN-2291", amount: 1 }), ready(), ctx);
     expect(response.code).toBe("CHECK_FAILED");
   });
@@ -383,7 +383,7 @@ describe("/post — acts 3 and 4", () => {
     expect(events[0]?.redactions).toBeUndefined();
   });
 
-  test("as Dana, the identifiers are masked and the injected note is stripped", () => {
+  test("as Alice, the identifiers are masked and the injected note is stripped", () => {
     const { response, events } = handlePost(postBody(DANA), ready(), ctx);
     expect(PostHookResult.parse(response)).toEqual(response);
 
@@ -393,7 +393,7 @@ describe("/post — acts 3 and 4", () => {
     // Byte equality with the half of the note the underwriter wrote: the whole
     // pasted block goes, separator line included, and nothing legitimate does.
     expect(output.underwriter_notes).toBe(LEGITIMATE_NOTE);
-    // The fields Dana needs to do the work survive untouched.
+    // The fields Alice needs to do the work survive untouched.
     expect(output.borrower_name).toBe(LOAN.borrower_name);
     expect(output.amount).toBe(LOAN.amount);
     expect(output.credit_score).toBe(LOAN.credit_score);
@@ -433,8 +433,8 @@ describe("/post — acts 3 and 4", () => {
   });
 
   test.each([
-    ["Riley, VP Credit, clearance 250000", RILEY],
-    ["Morgan, Chief Credit Officer, clearance 5000000", MORGAN],
+    ["Charlie, VP Credit, clearance 250000", RILEY],
+    ["Michael, Chief Credit Officer, clearance 5000000", MORGAN],
   ])("%s reads the identifiers — redaction is conditioned on the subject", (_label, user) => {
     const { response, events } = handlePost(postBody(user), ready(), ctx);
     const output = response.override?.output as Record<string, unknown>;
@@ -451,7 +451,7 @@ describe("/post — acts 3 and 4", () => {
     expect(event.redactions?.map((record) => record.path)).toEqual(["$.underwriter_notes"]);
   });
 
-  test("Sam, whose clearance is 0, is redacted like Dana", () => {
+  test("Bob, whose clearance is 0, is redacted like Alice", () => {
     const { response } = handlePost(postBody(SAM), ready(), ctx);
     const output = response.override?.output as Record<string, unknown>;
     expect(output.bank_account_number).toBe("[REDACTED]");

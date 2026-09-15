@@ -4,7 +4,7 @@
  * human would actually read.
  *
  * The denial screen is a first-class part of this file rather than an error
- * boundary, and that is deliberate. Dana clicking her own link gets the same
+ * boundary, and that is deliberate. Alice clicking her own link gets the same
  * `CHECK_FAILED` her agent got — that is separation of duties working, and it
  * is a beat worth showing. Rendered as a stack trace or a generic error page,
  * the audience reads it as the demo breaking.

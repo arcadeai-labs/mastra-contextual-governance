@@ -7,7 +7,7 @@
  * driven by hand:
  *
  *     bun run dev:idp-stub                  # binds the port in IDP_PUBLIC_HOST
- *     curl -H 'Authorization: Bearer dev:dana@example.test' "$LOAN_APP_PUBLIC_HOST/loans"
+ *     curl -H 'Authorization: Bearer dev:alice@example.test' "$LOAN_APP_PUBLIC_HOST/loans"
  *
  * A token is `dev:<email>`; the email after the prefix is who you are. That
  * is the whole protocol, so this must never run anywhere but a laptop. It

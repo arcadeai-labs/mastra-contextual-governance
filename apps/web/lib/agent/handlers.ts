@@ -15,7 +15,7 @@
  * same reason: an actor the request can name is an actor the model can forge
  * (`DESIGN.md` rule 1, and act 4 is the model trying).
  *
- * "Acting as Dana" means **signed in as Dana in this browser**. That is the
+ * "Acting as Alice" means **signed in as Alice in this browser**. That is the
  * whole mechanism.
  *
  * ## What it refuses, and why each refusal is separate

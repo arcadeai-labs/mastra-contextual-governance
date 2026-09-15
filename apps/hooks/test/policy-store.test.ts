@@ -32,7 +32,7 @@ const anEvent = (overrides: Partial<Parameters<typeof record>[1][number]> = {}) 
   ts: new Date().toISOString(),
   execution_id: "tc_1",
   hook: "pre" as const,
-  user_id: "dana.okafor@bank.example",
+  user_id: "alice@bank.example",
   tool: "Loan.ApproveLoan",
   decision: "deny" as const,
   reason: "because",
@@ -79,10 +79,10 @@ describe("the seed", () => {
 
   test("carries the cast with the limits DESIGN.md names", () => {
     const byName = Object.fromEntries(loadSeed(OPTIONS).subjects.map((s) => [s.display_name, s]));
-    expect(byName["Dana Okafor"]).toMatchObject({ role: "loan_officer", clearance: 50_000 });
-    expect(byName["Sam Reyes"]).toMatchObject({ role: "credit_analyst", clearance: 0 });
-    expect(byName["Riley Chen"]).toMatchObject({ role: "vp_credit", clearance: 250_000 });
-    expect(byName["Morgan Ellis"]).toMatchObject({ role: "chief_credit_officer", clearance: 5_000_000 });
+    expect(byName["Alice"]).toMatchObject({ role: "loan_officer", clearance: 50_000 });
+    expect(byName["Bob"]).toMatchObject({ role: "credit_analyst", clearance: 0 });
+    expect(byName["Charlie"]).toMatchObject({ role: "vp_credit", clearance: 250_000 });
+    expect(byName["Michael"]).toMatchObject({ role: "chief_credit_officer", clearance: 5_000_000 });
   });
 
   test("uses the same fallback emails as apps/idp, the join key", async () => {
@@ -91,21 +91,21 @@ describe("the seed", () => {
     expect(ours).toEqual(people.map((p) => p.email).sort());
   });
 
-  test("substitutes PERSONA_<KEY>_EMAIL at seed time", () => {
-    const data = loadSeed({ ...OPTIONS, personaEmails: { dana: "dana@corp.example" } });
-    expect(data.subjects.find((s) => s.display_name === "Dana Okafor")?.user_id).toBe("dana@corp.example");
-    expect(data.subjects.find((s) => s.display_name === "Sam Reyes")?.user_id).toBe("sam.reyes@bank.example");
+  test("substitutes a role email variable at seed time", () => {
+    const data = loadSeed({ ...OPTIONS, personaEmails: { dana: "alice@corp.example" } });
+    expect(data.subjects.find((s) => s.display_name === "Alice")?.user_id).toBe("alice@corp.example");
+    expect(data.subjects.find((s) => s.display_name === "Bob")?.user_id).toBe("bob@bank.example");
   });
 
   // #58. The override carries whatever capitalisation the Arcade account was
   // invited under, and `apps/idp` now stores the same person lowercase. A
-  // roster seeded `Dana.Okafor@…` would be one `subjectKey` can never hit, so
-  // every call Dana makes would be denied as an unregistered subject.
-  test("lowercases the address a PERSONA_<KEY>_EMAIL override carries", () => {
-    const data = loadSeed({ ...OPTIONS, personaEmails: { dana: "Dana.Okafor@MegaForce.Tech" } });
+  // roster seeded `Alice@…` would be one `subjectKey` can never hit, so
+  // every call Alice makes would be denied as an unregistered subject.
+  test("lowercases the address a role email override carries", () => {
+    const data = loadSeed({ ...OPTIONS, personaEmails: { dana: "Alice@Example.Test" } });
 
-    expect(data.subjects.find((s) => s.display_name === "Dana Okafor")?.user_id).toBe(
-      "dana.okafor@megaforce.tech",
+    expect(data.subjects.find((s) => s.display_name === "Alice")?.user_id).toBe(
+      "alice@example.test",
     );
     expect(data.subjects.every((s) => s.user_id === s.user_id.toLowerCase())).toBe(true);
   });
@@ -178,12 +178,12 @@ describe("seeding", () => {
     const path = join(tmpdir(), `cg-governance-${crypto.randomUUID()}`, "governance.db");
 
     const first = openGovernance(path, OPTIONS);
-    first.run("UPDATE subjects SET clearance = 100000 WHERE display_name = 'Dana Okafor'");
+    first.run("UPDATE subjects SET clearance = 100000 WHERE display_name = 'Alice'");
     record(first, [anEvent()]);
     first.close();
 
     const second = openGovernance(path, OPTIONS);
-    const dana = readPolicy(second).subjects.find((s) => s.display_name === "Dana Okafor");
+    const dana = readPolicy(second).subjects.find((s) => s.display_name === "Alice");
     const audit = auditCount(second);
     second.close();
     rmSync(dirname(path), { recursive: true, force: true });
@@ -198,7 +198,7 @@ describe("the revision counter", () => {
     const db = fresh();
     const r0 = readRevision(db);
 
-    db.run("UPDATE subjects SET clearance = 1 WHERE display_name = 'Sam Reyes'");
+    db.run("UPDATE subjects SET clearance = 1 WHERE display_name = 'Bob'");
     const r1 = readRevision(db);
     db.run("UPDATE policy_rules SET enabled = 0 WHERE id = 'access.analysts-cannot-see-approve'");
     const r2 = readRevision(db);
@@ -224,7 +224,7 @@ describe("the revision counter", () => {
 
     // A presenter's sqlite3 shell.
     const shell = new Database(path);
-    shell.run("UPDATE subjects SET clearance = 100000 WHERE display_name = 'Dana Okafor'");
+    shell.run("UPDATE subjects SET clearance = 100000 WHERE display_name = 'Alice'");
     shell.close();
 
     const after = readRevision(server);
@@ -280,7 +280,7 @@ describe("the audit log", () => {
       db.run(
         `INSERT INTO audit_log
            (id, ts, execution_id, hook, user_id, tool, decision, reason, rule_id, before, after)
-         VALUES ('evt_legacy', '2026-01-01T00:00:00.000Z', 'tc_legacy', 'post', 'dana@example.test',
+         VALUES ('evt_legacy', '2026-01-01T00:00:00.000Z', 'tc_legacy', 'post', 'alice@example.test',
                  'Loan.GetLoan', 'modify', 'Sensitive field masked.', 'rule.redact', ?, ?)`,
         [JSON.stringify({ acct: "4738299104857" }), JSON.stringify({ acct: "***" })],
       ),

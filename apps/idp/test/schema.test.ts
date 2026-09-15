@@ -31,28 +31,28 @@ describe("the user.email column is case-insensitive", () => {
     db.exec(await Bun.file(SCHEMA_SQL).text());
     db.exec(
       `INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt")
-       VALUES ('u1', 'Dana Okafor', '${email}', 1, '2026-09-10', '2026-09-10')`,
+       VALUES ('u1', 'Alice', '${email}', 1, '2026-09-10', '2026-09-10')`,
     );
     return db;
   }
 
   test("a row stored capitalised is found by the lowercased address Better Auth looks up", async () => {
-    const db = await seeded("Dana.Okafor@Bank.Example");
+    const db = await seeded("Alice@Bank.Example");
 
     const found = db
-      .query<{ id: string }, []>(`SELECT "id" FROM "user" WHERE "email" = 'dana.okafor@bank.example'`)
+      .query<{ id: string }, []>(`SELECT "id" FROM "user" WHERE "email" = 'alice@bank.example'`)
       .get();
 
     expect(found?.id).toBe("u1");
   });
 
   test("the unique index is case-insensitive too, so one person cannot be seeded twice", async () => {
-    const db = await seeded("dana.okafor@bank.example");
+    const db = await seeded("alice@bank.example");
 
     expect(() =>
       db.exec(
         `INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt")
-         VALUES ('u2', 'Dana Okafor', 'DANA.OKAFOR@BANK.EXAMPLE', 1, '2026-09-10', '2026-09-10')`,
+         VALUES ('u2', 'Alice', 'ALICE@BANK.EXAMPLE', 1, '2026-09-10', '2026-09-10')`,
       ),
     ).toThrow(/UNIQUE/);
   });

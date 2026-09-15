@@ -4,7 +4,7 @@
  * `apps/hooks` runs as a subprocess and answers `/pre` and `/approvals` for
  * real; the only stand-in is Arcade itself, and it stands in by *calling the
  * real pre-hook* and running the tool only when the answer is `OK`. So the
- * refusal Dana sees in these tests is produced by the actual policy, not by a
+ * refusal Alice sees in these tests is produced by the actual policy, not by a
  * fixture that says "denied".
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -54,14 +54,14 @@ describe("resolving the request id", () => {
 
     const html = renderToStaticMarkup(<RequestDetails request={lookup.request} />);
 
-    expect(html).toContain("Dana Okafor");
+    expect(html).toContain("Alice");
     expect(html).toContain(DANA);
     expect(html).toContain("approve_loan");
     expect(html).toContain("LN-2291");
     expect(html).toContain("$95,000");
     expect(html).toContain("pre.approve-within-clearance");
     expect(html).toContain("Eleven years in business");
-    expect(html).toContain("Riley Chen");
+    expect(html).toContain("Charlie");
     // Who was deliberately not bothered is the point being demonstrated.
     expect(html).toContain(MORGAN);
   });
@@ -87,7 +87,7 @@ describe("resolving the request id", () => {
 });
 
 describe("pressing a button", () => {
-  test("Riley approves: the call goes through Arcade as Riley, and it is recorded", async () => {
+  test("Charlie approves: the call goes through Arcade as Charlie, and it is recorded", async () => {
     const result = await press(RILEY, "approved", "Coverage checks out.");
 
     expect(result).toEqual({
@@ -102,7 +102,7 @@ describe("pressing a button", () => {
     expect(after).toMatchObject({ status: "approved", decided_by: RILEY, note: "Coverage checks out." });
   });
 
-  test("Riley denies: recorded, and the request cannot then be approved", async () => {
+  test("Charlie denies: recorded, and the request cannot then be approved", async () => {
     expect((await press(RILEY, "denied", "Too thin.")).state).toBe("recorded");
 
     const second = await press(RILEY, "approved");
@@ -112,7 +112,7 @@ describe("pressing a button", () => {
     expect(await harness.read(request.id)).toMatchObject({ status: "denied", note: "Too thin." });
   });
 
-  test("Dana clicking her own link gets CHECK_FAILED, and the request is untouched", async () => {
+  test("Alice clicking her own link gets CHECK_FAILED, and the request is untouched", async () => {
     const result = await press(DANA, "approved");
 
     expect(result.state).toBe("refused");
@@ -202,7 +202,7 @@ describe("acting as", () => {
     );
 
     expect(html).toContain("Acting as");
-    expect(html).toContain("Dana Okafor");
+    expect(html).toContain("Alice");
     expect(html).toContain("Approvals.Decide");
     expect(html).toContain("carries no authority");
   });

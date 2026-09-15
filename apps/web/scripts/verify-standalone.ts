@@ -101,7 +101,7 @@ function docker(args: string[], options: { allowFailure?: boolean } = {}): strin
   return `${result.stdout ?? ""}${result.stderr ?? ""}`;
 }
 
-/** The cookie a browser signed in as Dana and holding a live gateway token would send. */
+/** The cookie a browser signed in as Alice and holding a live gateway token would send. */
 async function browserCookie(harness: AgentHarness): Promise<string> {
   const session: Session = {
     email: DANA,
@@ -254,7 +254,7 @@ async function main(): Promise<number> {
       );
       const rows = await harness.audit();
       // The same row `test/tracer-bullet.test.ts` asserts on: `/pre` refusing
-      // `Loan.ApproveLoan` for Dana, attributed to the rule that made the call.
+      // `Loan.ApproveLoan` for Alice, attributed to the rule that made the call.
       const preRow = rows.find(
         (row) => row.hook === "pre" && row.tool === "Loan.ApproveLoan" && row.decision === "deny",
       );

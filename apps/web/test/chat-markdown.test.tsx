@@ -246,7 +246,7 @@ describe("the authorization card is a name and a link", () => {
           tool: "cg-demo-us",
           url: "/api/arcade/start?next=%2Fchat",
           instructions:
-            "The gateway rejected this browser's bearer with a 401 for dana.okafor@bank.example.",
+            "The gateway rejected this browser's bearer with a 401 for alice@bank.example.",
         }}
       />,
     );
@@ -256,7 +256,7 @@ describe("the authorization card is a name and a link", () => {
     // Ours are still instructions for the model. Off the screen too — the wire
     // keeps them, and `test/gateway-token-rejected.test.tsx` reads them there.
     expect(hop1).not.toContain("401");
-    expect(hop1).not.toContain("dana.okafor@bank.example");
+    expect(hop1).not.toContain("alice@bank.example");
   });
 });
 

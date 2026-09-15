@@ -3,7 +3,7 @@
  *
  * Act 1, on screen. Two facts side by side: the person the session asserts,
  * with the role and authority `DESIGN.md`'s cast gives them, and the tools the
- * **gateway** answered `tools/list` with for that person's bearer. As Sam Reyes
+ * **gateway** answered `tools/list` with for that person's bearer. As Bob
  * the approval tool is not in the list — not greyed out, not struck through,
  * not there — because `access.analysts-cannot-see-approve` removed it before
  * the gateway answered.
@@ -12,7 +12,7 @@
  *
  * It has no idea which tools exist. There is no catalogue in this file, no
  * `ApproveLoan` literal, and nothing that could render a tool as hidden — so
- * there is no version of this component that shows Sam a crossed-out approval
+ * there is no version of this component that shows Bob a crossed-out approval
  * tool, which would be the picture of a control that does nothing. It renders
  * the list it is handed and says where the list came from.
  *
@@ -89,7 +89,7 @@ export function PersonaToolList({ session, tools }: PersonaToolListProps) {
             </dl>
           ) : (
             <p style={{ ...muted, fontSize: "0.875rem", marginBottom: 0 }}>
-              None of this deployment&rsquo;s <code>PERSONA_*_EMAIL</code> variables names anybody at that
+              None of this deployment&rsquo;s role email variables names anybody at that
               address, so there is no role or authority to show.
               {missing.length > 0 ? <> Unset: {missing.map((name) => <code key={name}>{name} </code>)}</> : null}{" "}
               The control plane decides on the address above regardless of what this panel can label.

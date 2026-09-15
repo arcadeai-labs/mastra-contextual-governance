@@ -4,7 +4,7 @@
  *
  * Two applications, both named by `DESIGN.md`:
  *
- * - `LN-2291`, Northwind Bakery LLC, $95,000 — acts 2, 3 and 4. Over Dana's
+ * - `LN-2291`, Northwind Bakery LLC, $95,000 — acts 2, 3 and 4. Over Alice's
  *   $50,000 authority, carries the fields act 3 redacts, and its
  *   `underwriter_notes` carries act 4's injected instruction.
  * - `LN-2299`, Meridian Physical Therapy, $88,000 — the control. Also over her

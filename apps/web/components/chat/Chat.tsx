@@ -73,7 +73,7 @@
  * properties are load-bearing:
  *
  * - **The transcript continues rather than clearing.** A resume appends. The
- *   denial, the escalation and the agent's "waiting for Riley" stay on screen
+ *   denial, the escalation and the agent's "waiting for Charlie" stay on screen
  *   while the thing they caused happens underneath them.
  * - **This side names no outcome.** The resume request carries an id and the
  *   previous turn as context; the server reads `GET /approvals/{id}` itself and
@@ -207,7 +207,7 @@ export function Chat({
    * `append` is the whole difference between a question and a resume: a
    * question clears the transcript, a resume continues it. A resume that
    * cleared would take the denial, the escalation and the agent's *"waiting for
-   * Riley"* off the screen at the exact moment the audience is being shown that
+   * Charlie"* off the screen at the exact moment the audience is being shown that
    * they caused what happens next.
    */
   async function run(body: unknown, options: { append: boolean }): Promise<void> {
@@ -330,7 +330,7 @@ export function Chat({
    *
    * Opened once rather than when a turn starts waiting, so the socket is
    * already up when the decision lands — on stage the gap between the
-   * escalation and Riley's click is where the presenter talks, and a
+   * escalation and Charlie's click is where the presenter talks, and a
    * subscription that started then would be racing it.
    *
    * `onConnected` fires on every successful connect, including reconnects, and

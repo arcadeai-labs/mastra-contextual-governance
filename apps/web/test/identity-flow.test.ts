@@ -101,7 +101,7 @@ describe("signing in as a person", () => {
     expect(landed.html).toContain("Sign in");
   });
 
-  test("after login the sealed cookie carries Dana's lowercase email", async () => {
+  test("after login the sealed cookie carries Alice's lowercase email", async () => {
     const browser = new Browser();
     const ended = await signInAs(browser, harness, "dana", { stopAt: "/api/arcade/start" });
     expect(ended.url).toContain("/api/arcade/start");
@@ -177,12 +177,12 @@ describe("signing in as a person", () => {
 });
 
 describe("switching persona", () => {
-  test("Dana then Sam in one browser: the second sign-in asks for a password again", async () => {
+  test("Alice then Bob in one browser: the second sign-in asks for a password again", async () => {
     const browser = new Browser();
     await signInAs(browser, harness, "dana", { stopAt: "/api/arcade/start" });
     expect((await sessionOf(browser))?.email).toBe(PEOPLE.dana.email);
 
-    // The browser still holds the IdP's own session cookie from Dana's login.
+    // The browser still holds the IdP's own session cookie from Alice's login.
     // This is the condition the measurement needs: without `prompt=login`,
     // Better Auth would continue the authorization off that session and never
     // show a form.
@@ -195,14 +195,14 @@ describe("switching persona", () => {
     // Measured, not assumed. Run with `prompt: "login"` commented out of
     // `signin()`, the same two sign-ins produce:
     //
-    //   after 'Sign in as Dana' : dana.okafor@bank.example | pages shown: 2
-    //   after 'Sign in as Sam'  : dana.okafor@bank.example | new pages: 0
+    //   after 'Sign in as Alice' : alice@bank.example | pages shown: 2
+    //   after 'Sign in as Bob'  : alice@bank.example | new pages: 0
     //
-    // No page, and the session is still Dana's while the button said Sam. That
+    // No page, and the session is still Alice's while the button said Bob. That
     // is the failure the issue names: every tool call for the rest of the demo
     // made as the wrong person, with the screen saying otherwise. With it:
     //
-    //   after 'Sign in as Sam'  : sam.reyes@bank.example   | new pages: 2
+    //   after 'Sign in as Bob'  : bob@bank.example   | new pages: 2
     expect(browser.pageHosts.length).toBeGreaterThan(pagesBefore);
     expect(browser.pageHosts.at(-1)).toBe(new URL(harness.idpUrl).host);
 
@@ -222,9 +222,9 @@ describe("switching persona", () => {
     await signInAs(browser, harness, "dana", { stopAt: "/api/arcade/start" });
     expect((await sessionOf(browser))?.email).toBe(PEOPLE.dana.email);
 
-    // Press "Sign in as Sam" and then abandon it at the IdP's login page.
+    // Press "Sign in as Bob" and then abandon it at the IdP's login page.
     await browser.fetch(`${harness.webUrl}/api/auth/signin?persona=sam`);
-    // This browser is now signed in as nobody — never still as Dana.
+    // This browser is now signed in as nobody — never still as Alice.
     expect(await sessionOf(browser)).toBeNull();
   });
 
@@ -391,7 +391,7 @@ describe("hop 2 — the custom verifier", () => {
     await signInAs(browser, harness, "sam", { stopAt: "/api/arcade/start" });
 
     const flowId = `flow-${crypto.randomUUID()}`;
-    // A parameter Arcade does not send and this route does not read. Sam's
+    // A parameter Arcade does not send and this route does not read. Bob's
     // session is what decides, not the query string.
     await browser.fetch(`${harness.webUrl}/api/arcade/verify?flow_id=${flowId}&persona=dana`);
     expect(harness.arcade.confirmations.at(-1)?.user_id).toBe(PEOPLE.sam.email);
@@ -402,10 +402,10 @@ describe("hop 2 — the custom verifier", () => {
     await signInAs(browser, harness, "dana", { stopAt: "/api/arcade/start" });
 
     for (const [name, value] of [
-      ["user_id", "morgan.ellis@bank.example"],
-      ["email", "morgan.ellis@bank.example"],
-      ["sub", "morgan.ellis@bank.example"],
-      ["login_hint", "morgan.ellis@bank.example"],
+      ["user_id", "michael@bank.example"],
+      ["email", "michael@bank.example"],
+      ["sub", "michael@bank.example"],
+      ["login_hint", "michael@bank.example"],
     ]) {
       const refused = await browser.fetch(
         `${harness.webUrl}/api/arcade/verify?flow_id=f-${name}&${name}=${encodeURIComponent(value!)}`,
@@ -523,7 +523,7 @@ describe("/health", () => {
       gateway: "configured",
       verifier: "configured",
       // The fourth since #14. `ANTHROPIC_API_KEY` is set on this harness for
-      // this line alone — a deployment that signs Dana in and then cannot run
+      // this line alone — a deployment that signs Alice in and then cannot run
       // a turn is not `ok` either.
       agent: "configured",
     });
@@ -546,7 +546,7 @@ describe("/health", () => {
     });
     expect(deploymentReadiness(signinOnly)).toEqual({
       // One of four configured is still `degraded`: a deployment that can sign
-      // Dana in and then cannot make a tool call is not `ok`, and round 2 of
+      // Alice in and then cannot make a tool call is not `ok`, and round 2 of
       // this PR's review found exactly that shape reporting itself as fine.
       status: "degraded",
       signin: "configured",

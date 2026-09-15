@@ -58,7 +58,7 @@ if (!existsSync(clientEntry)) {
 const { subscribeToGovernanceEvents } = (await import(clientEntry)) as typeof import("./types/subscribe.d.ts");
 
 const SECRET = "interop-secret";
-const DANA = "dana.okafor@bank.example";
+const DANA = "alice@bank.example";
 const BURST = 3000;
 const MISSED = 25;
 
@@ -89,7 +89,7 @@ const port = server.port;
 if (typeof port !== "number" || port === 0) throw new Error("the server did not bind a port");
 const base = `http://localhost:${port}`;
 
-/** A `/pre` Dana is refused: one audit row, one event, act 2's first beat. */
+/** A `/pre` Alice is refused: one audit row, one event, act 2's first beat. */
 const denyDana = (executionId: string): Promise<Response> =>
   fetch(`${base}/pre`, {
     method: "POST",

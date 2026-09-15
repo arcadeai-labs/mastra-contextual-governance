@@ -177,7 +177,7 @@ class Service {
     }
   }
 
-  /** Walks Dana through a whole flow for one client and returns the access token. */
+  /** Walks Alice through a whole flow for one client and returns the access token. */
   async completeFlow(
     client: { client_id: string; client_secret: string },
     redirectUri: string,

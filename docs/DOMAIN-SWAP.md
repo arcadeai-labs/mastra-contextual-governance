@@ -194,13 +194,13 @@ get right and the first thing to check when a rule silently does nothing.
 ### `subjects` — the roster
 
 ```json
-{ "persona": "dana", "user_id": "dana.okafor@bank.example",
-  "display_name": "Dana Okafor", "role": "loan_officer", "clearance": 50000 }
+{ "persona": "dana", "user_id": "alice@bank.example",
+  "display_name": "Alice", "role": "loan_officer", "clearance": 50000 }
 ```
 
 `user_id` is an **email**, lowercase, and it is the join key: Arcade's `user_id`, the
 OAuth subject, and the actor your API records are the same string. If they diverge,
-your audit trail is fiction. `PERSONA_<KEY>_EMAIL` overrides each address at seed time;
+your audit trail is fiction. The role-based persona email variables override each address at seed time;
 the fixture's own addresses are the local-run fallback and must match
 `apps/idp/src/fixtures/people.json`.
 
@@ -434,7 +434,7 @@ Every variable, its owner and where its value comes from is one table in the
 | `ARCADE_APPROVALS_TOOLKIT` | unchanged unless you rename `tools/approvals` |
 | `ARCADE_IDP_PROVIDER_ID` | the Arcade auth provider id your tools require |
 | `LOAN_APP_PUBLIC_HOST` | your API's host. Rename the variable, and rename it in the toolkit's `requires_secrets` at the same time |
-| `PERSONA_*_EMAIL` | your cast's addresses, read once at first seed |
+| `PERSONA_<ROLE>_EMAIL` | your cast's role addresses, read once at first seed |
 | `LOANS_DB_PATH` | only if you keep a database of your own |
 
 Renaming a `*_PUBLIC_HOST` variable is three places, and all three must move together:

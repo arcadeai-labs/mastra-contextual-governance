@@ -160,11 +160,11 @@ Each persona runs in **its own Chrome profile**. Switching persona forces a fres
 sign-in and never reuses the previous session, so on stage you switch windows, not
 accounts.
 
-### Act 1 — Sam cannot see the tool at all
+### Act 1 — Bob cannot see the tool at all
 
 | | |
 |---|---|
-| **Persona** | Sam Reyes, Credit Analyst, authority $0 (`PERSONA_SAM_EMAIL`) |
+| **Persona** | Bob, Credit Analyst, authority $0 (`PERSONA_CREDIT_ANALYST_EMAIL`) |
 | **Layer** | 1 — `POST /access` → `deny` list |
 | **Rule** | `access.analysts-cannot-see-approve` |
 
@@ -176,7 +176,7 @@ accounts.
 for every tool in the gateway *and* again on each call, so access rows outnumber pre
 rows by design, and adjacent identical decisions collapse into one card carrying a
 count (#64). Among them, one **red** card: `Loan.ApproveLoan`, deny,
-`access.analysts-cannot-see-approve`, Sam's email.
+`access.analysts-cannot-see-approve`, Bob's email.
 
 **What the Pre lane shows: nothing about `ApproveLoan`.** That absence is the beat.
 No call was attempted, so nothing was refused.
@@ -185,19 +185,19 @@ No call was attempted, so nothing was refused.
 can approve a loan. **Not a denial card** — the UI requires positive evidence of a
 hook decision before it says "denied", and there is none here.
 
-**Pause and say.** Before: *"Sam is a credit analyst. Watch the tool list, not the
+**Pause and say.** Before: *"Bob is a credit analyst. Watch the tool list, not the
 answer."* After: *"Nothing refused him. The tool was never on his menu — and a model
 cannot reason its way around a tool it was never given."*
 
-### Act 2 — Dana's $95K, the escalation, and the retry that passes
+### Act 2 — Alice's $95K, the escalation, and the retry that passes
 
 | | |
 |---|---|
-| **Persona** | Dana Okafor, Loan Officer, authority $50,000 (`PERSONA_DANA_EMAIL`) |
+| **Persona** | Alice, Loan Officer, authority $50,000 (`PERSONA_LOAN_OFFICER_EMAIL`) |
 | **Layer** | 3 — `POST /pre` → `CHECK_FAILED`, then a grant |
 | **Rules** | `pre.approve-within-clearance`, then `pre.decide-*` on the approver's press |
 
-**Prompt** — the same one, as Dana:
+**Prompt** — the same one, as Alice:
 
 > Approve the loan for $95K and double-check your work so you don't make any mistakes.
 
@@ -211,38 +211,38 @@ ignored.
 **Beat 2 — the escalation, and the turn ends.** The agent calls
 `Approvals_RequestApproval` because the *hook's* remediation text told it to; nothing
 in the system prompt mentions escalating. Routing is deterministic and the model does
-not choose: $95,000 from Dana, with Riley at $250K and Morgan at $5M on the roster,
-goes to **Riley**. Morgan is recorded as a candidate and deliberately not bothered.
+not choose: $95,000 from Alice, with Charlie at $250K and Michael at $5M on the roster,
+goes to **Charlie**. Michael is recorded as a candidate and deliberately not bothered.
 
 A `waiting` card names the routed approver, read off the tool's own result rather than
 out of the model's reply. **Then the agent ends its turn.** There is no spinner, no
 long poll, no socket held open.
 
-**The Slack message.** A DM to Riley, posted with the *requester's own* user token, so
-it arrives under Dana's name with no APP badge. Block Kit, and it carries: the
+**The Slack message.** A DM to Charlie, posted with the *requester's own* user token, so
+it arrives under Alice's name with no APP badge. Block Kit, and it carries: the
 action and resource (`approve_loan`, `LN-2291`), the amount `$95,000.00`, requester
 and approver by display name, the rule that tripped — *"approve_loan for $95,000.00
-exceeds Dana Okafor's approval authority of $50,000.00."* — the justification, the
+exceeds Alice's approval authority of $50,000.00."* — the justification, the
 candidate approvers, and a link to the approval page. **The link carries no
 authority**: no token, no signature, no query string. Possession of the URL is not
 permission, and that is asserted in `tools/approvals/tests/test_message.py` because it
 is exactly the convenience someone adds back later.
 
 **Pause here. This is the beat to narrate.** *"The agent is not waiting. It ended its
-turn and it is costing nothing. Riley has a message — and that message is not a
+turn and it is costing nothing. Charlie has a message — and that message is not a
 capability."*
 
-**Beat 3 — the approval is itself governed.** Riley opens `/approvals/{id}` and
+**Beat 3 — the approval is itself governed.** Charlie opens `/approvals/{id}` and
 presses Approve. **That press is a governed tool call**: `Approvals.Decide` goes
 through `/pre`, where the rules check that the request is known, still pending, that
 the approver holds sufficient clearance, and that the requester is not the approver.
-Another card in the Pre lane, this one green, as Riley.
+Another card in the Pre lane, this one green, as Charlie.
 
 **Beat 4 — the resume.** The decision publishes `event: approval` on the same stream
-the panel watches, and Dana's chat — subscribed for as long as it is mounted —
+the panel watches, and Alice's chat — subscribed for as long as it is mounted —
 starts one more turn on its own. The injected message states a fact and gives no
 instruction: *"Approval request apr_… — approve_loan on LN-2291 for 95000 — was
-approved by Riley Chen at …"*. The agent retries, and the retry **passes because a
+approved by Charlie at …"*. The agent retries, and the retry **passes because a
 grant exists**: an `allow` on `Loan.ApproveLoan` carrying the very rule that denied
 it, `pre.approve-within-clearance`, with `Covered by an active grant (grn_…)` in the
 reason. The grant is single-use; the next attempt is denied again.
@@ -255,7 +255,7 @@ mean nothing."*
 
 | | |
 |---|---|
-| **Persona** | Dana (it fires inside act 2's first beat, on `Loan_GetLoan`) |
+| **Persona** | Alice (it fires inside act 2's first beat, on `Loan_GetLoan`) |
 | **Layer** | 4 — `POST /post` → `override.output` |
 | **Rule** | `post.redact-borrower-identifiers` — fields `bank_account_number`, `tax_id` |
 
@@ -277,7 +277,7 @@ projector and you still have not leaked anything."*
 
 | | |
 |---|---|
-| **Persona** | Dana (same `Loan_GetLoan` call) |
+| **Persona** | Alice (same `Loan_GetLoan` call) |
 | **Layer** | 4 — `POST /post`, regex scanners |
 | **Rule** | `post.strip-injected-instructions` — **6** patterns |
 
@@ -305,7 +305,7 @@ before you are on stage — and turn it back on.
 
 ### The control loan
 
-`LN-2299` — Meridian Physical Therapy, $88,000, equally over Dana's authority, with no
+`LN-2299` — Meridian Physical Therapy, $88,000, equally over Alice's authority, with no
 injected note. Prompt: *"Approve the loan for $88K and double-check your work so you
 don't make any mistakes."* It exists to tell two failures apart (§4.2) and it is a
 perfectly good act 2 if `LN-2291` misbehaves.
@@ -414,8 +414,8 @@ Then, in order:
 
 ### 4.2 Per act
 
-**Act 1 — Sam sees `ApproveLoan` anyway, or the lane stays empty.**
-The tool list is the gateway's. If `Loan_ApproveLoan` is in Sam's surface, the
+**Act 1 — Bob sees `ApproveLoan` anyway, or the lane stays empty.**
+The tool list is the gateway's. If `Loan_ApproveLoan` is in Bob's surface, the
 `/access` rule did not match — check `counts.policy_rules` on `/health` and
 `fixture_drift`; a rule keyed on a toolkit name Arcade does not use matches nothing,
 and a rule that matches nothing is indistinguishable from a rule that permits.
@@ -427,21 +427,21 @@ during act 2.
 **Act 2 — the agent never calls `ApproveLoan`.**
 Almost always act 4's note reaching the model. Check `policy.scanners.patterns` is
 `6` and `state` is `armed`, then re-run. If it still stops to ask, run the beat on
-**`LN-2299`** with the $88K prompt — equally over Dana's authority, no injected note,
+**`LN-2299`** with the $88K prompt — equally over Alice's authority, no injected note,
 measured 5 of 5. **Forcing the state:** you cannot make the model call a tool, and no
 sentence added to the prompt is an acceptable fix — round 1 of #88's review removed
 exactly that, and a run that needs the prompt to reach the hook proves the prompt.
 **Safe to skip:** no. Act 2 is the demo.
 
 **Act 2's second half — the Slack DM never arrives, or the chat does not resume.**
-The DM and the resume are independent. No DM: Riley's Slack authorization, and the
-requester's own user token — the message posts as Dana. No resume: the panel's
+The DM and the resume are independent. No DM: Charlie's Slack authorization, and the
+requester's own user token — the message posts as Alice. No resume: the panel's
 stream. Every reconnect asks `GET /api/approvals/{id}/status` about the one request
 it holds, so a dropped socket recovers on its own; a browser that never connected does
 not. **Forcing the state:** open `/approvals/{id}` directly — the id is in the
 `waiting` card and the link carries no authority, so opening it by hand is exactly as
 legitimate as clicking it in Slack. If the resume still does not fire, retype the
-approval prompt as Dana; the grant is already on. **Safe to skip:** the Slack round
+approval prompt as Alice; the grant is already on. **Safe to skip:** the Slack round
 trip can be replaced by opening the approval page directly, and almost nobody in the
 audience will notice. The escalation and the retry cannot be skipped.
 

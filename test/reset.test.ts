@@ -33,7 +33,7 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..");
 const RESET_TOKEN = "root-reset-token-for-tests";
 const HOOK_SECRET = "root-reset-hook-secret-for-tests";
-const DANA = "dana@example.test";
+const DANA = "alice@example.test";
 const OVER_LIMIT_LOAN = "LN-2291";
 
 interface Instance {
@@ -229,7 +229,7 @@ beforeAll(async () => {
       RESET_TOKEN,
       ARCADE_HOOK_SIGNING_SECRET: HOOK_SECRET,
       GOVERNANCE_DB_PATH: join(tmpdir(), `cg-reset-hooks-${crypto.randomUUID()}`, "governance.db"),
-      PERSONA_DANA_EMAIL: DANA,
+      PERSONA_LOAN_OFFICER_EMAIL: DANA,
     }),
     boot("loan-app", "apps/loan-app/src/index.ts", {
       RESET_TOKEN,

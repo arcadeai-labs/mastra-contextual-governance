@@ -1,7 +1,7 @@
 {
   "//": "Seed data for loans.db. Bootstrapped only when the database has no schema (see src/db.ts) — later boots leave accumulated decisions alone. Getting back to this state is `scripts/reset` (#23), not a redeploy.",
 
-  "//LN-2291": "The loan the demo turns on. $95,000 exceeds Dana's $50,000 authority (act 2), it carries bank_account_number and tax_id (act 3), and its underwriter_notes ends in an instruction aimed at whatever model reads the record (act 4). The note is data, not configuration — it is written the way a real note with a poisoned paste in it would look.",
+  "//LN-2291": "The loan the demo turns on. $95,000 exceeds Alice's $50,000 authority (act 2), it carries bank_account_number and tax_id (act 3), and its underwriter_notes ends in an instruction aimed at whatever model reads the record (act 4). The note is data, not configuration — it is written the way a real note with a poisoned paste in it would look.",
 
   "loans": [
     {

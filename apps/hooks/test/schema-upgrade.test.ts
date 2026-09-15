@@ -107,13 +107,13 @@ const SCHEMA_BEFORE_APPROVAL_REQUESTS = `
   INSERT INTO policy_revision (id, revision) VALUES (1, 7);
 
   INSERT INTO subjects (user_id, display_name, role, clearance)
-    VALUES ('dana.okafor@bank.example', 'Dana Okafor', 'loan_officer', 100000);
+    VALUES ('alice@bank.example', 'Alice', 'loan_officer', 100000);
   INSERT INTO catalogue (toolkit, tool, arguments)
     VALUES ('Loan', 'GetLoan', '["loan_id"]');
   INSERT INTO policy_rules (id, hook, toolkit, tool, effect, reason, priority)
     VALUES ('access.stale-fixture', 'access', 'Loan', '*', 'allow', 'from the old disk', 100);
   INSERT INTO audit_log (id, ts, hook, user_id, tool, decision, reason)
-    VALUES ('ev_old', '2026-01-01T00:00:00.000Z', 'pre', 'dana.okafor@bank.example',
+    VALUES ('ev_old', '2026-01-01T00:00:00.000Z', 'pre', 'alice@bank.example',
             'Loan.GetLoan', 'allow', 'recorded before the upgrade');
 `;
 
@@ -198,7 +198,7 @@ describe("a database written before a table existed", () => {
         const before = db
           .query<{ revision: number }, []>("SELECT revision FROM policy_revision WHERE id = 1")
           .get()?.revision;
-        db.run("UPDATE subjects SET clearance = 1 WHERE user_id = 'dana.okafor@bank.example'");
+        db.run("UPDATE subjects SET clearance = 1 WHERE user_id = 'alice@bank.example'");
         const after = db
           .query<{ revision: number }, []>("SELECT revision FROM policy_revision WHERE id = 1")
           .get()?.revision;
@@ -231,7 +231,7 @@ describe("a database written before a table existed", () => {
             ts: new Date().toISOString(),
             execution_id: "tc_post",
             hook: "post",
-            user_id: "dana.okafor@bank.example",
+            user_id: "alice@bank.example",
             tool: "Loan.GetLoan",
             decision: "modify",
             reason: "redacted",
@@ -288,14 +288,14 @@ describe("a fresh database", () => {
   test("reopening it changes nothing — a restart is not a reset", () => {
     withPath("reopen", (path) => {
       const first = openGovernance(path, OPTIONS);
-      first.run("UPDATE subjects SET clearance = 123456 WHERE display_name = 'Dana Okafor'");
+      first.run("UPDATE subjects SET clearance = 123456 WHERE display_name = 'Alice'");
       record(first, [
         {
           id: newEventId(),
           ts: new Date().toISOString(),
           execution_id: "tc_1",
           hook: "pre",
-          user_id: "dana.okafor@bank.example",
+          user_id: "alice@bank.example",
           tool: "Loan.ApproveLoan",
           decision: "allow",
           reason: "because",
@@ -307,7 +307,7 @@ describe("a fresh database", () => {
       const second = openGovernance(path, OPTIONS);
       try {
         expect(
-          readPolicy(second).subjects.find((s) => s.display_name === "Dana Okafor")?.clearance,
+          readPolicy(second).subjects.find((s) => s.display_name === "Alice")?.clearance,
         ).toBe(123_456);
         expect(auditCount(second)).toBe(1);
         expect(counts(second).subjects).toBe(4);
@@ -472,7 +472,7 @@ function writeDiskAtVersion2(path: string, rows = 200): void {
         new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString(),
         `tc_${i}`,
         "post",
-        "dana.okafor@bank.example",
+        "alice@bank.example",
         "Loan.GetLoan",
         "modify",
         "Sensitive field masked.",

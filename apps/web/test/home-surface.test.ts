@@ -121,7 +121,7 @@ describe("the files on the left half", () => {
    * The whole reason these reads exist rather than a database read.
    *
    * `harness.calls` is what the gateway saw. Two `tools/call`s, both
-   * `Loan_GetLoan`, both as Dana, both of which ran only because the real `/pre`
+   * `Loan_GetLoan`, both as Alice, both of which ran only because the real `/pre`
    * said `OK` — that is the claim the left half is making by putting a loan
    * file on screen at all.
    */
@@ -217,7 +217,7 @@ describe("what one page load costs", () => {
     expect([...surface.tools.tools.map((tool) => tool.name), ...surface.tools.filtered].sort()).toEqual(
       [...(listing?.advertised ?? [])].sort(),
     );
-    // Act 1 survives the fold: as Sam, the approval tool is absent from the
+    // Act 1 survives the fold: as Bob, the approval tool is absent from the
     // listing itself, so it is absent from the widget without anything here
     // hiding it.
     expect(listing?.hidden).toContain("Loan_ApproveLoan");
@@ -328,7 +328,7 @@ describe("when the read does not produce a file", () => {
    * The seeded policy has nothing that refuses `Loan.GetLoan` — acts 1 and 2 are
    * about `ApproveLoan` — so this test writes one and lets the policy cache poll
    * it up, which is the live-edit mechanism `DESIGN.md` describes rather than a
-   * stub standing in for one. Sam is the subject, so Dana's reads above and
+   * stub standing in for one. Bob is the subject, so Alice's reads above and
    * below are untouched, and the rule is removed afterwards.
    *
    * What is being proved is not that a hook can deny. It is that when one does,

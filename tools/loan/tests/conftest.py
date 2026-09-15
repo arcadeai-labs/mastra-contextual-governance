@@ -27,8 +27,8 @@ from loan import LOAN_APP_HOST_SECRET
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LOAN_APP_ENTRYPOINT = REPO_ROOT / "apps" / "loan-app" / "src" / "index.ts"
 
-DANA = "dana@example.test"
-RILEY = "riley@example.test"
+DANA = "alice@example.test"
+RILEY = "charlie@example.test"
 TOKENS = {"tok-dana": DANA, "tok-riley": RILEY}
 
 

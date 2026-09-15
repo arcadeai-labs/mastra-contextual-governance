@@ -20,8 +20,8 @@
 import type { GovernanceEvent } from "@cg/policy-schema";
 import { aGovernanceEvent, FIXTURE_EPOCH } from "@cg/policy-schema";
 
-/** Dana Okafor, the protagonist — the address `governance.json` seeds. */
-const DANA = "dana.okafor@bank.example";
+/** Alice, the protagonist — the address `governance.json` seeds. */
+const DANA = "alice@bank.example";
 
 /**
  * The two calls, in the counts they were measured at. Ordered as they arrived:

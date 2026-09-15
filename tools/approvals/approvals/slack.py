@@ -2,7 +2,7 @@
 
 Act 2 posts **as the requester**, not as a bot. Arcade's stock Slack provider
 issues a user token (`xoxp`) because it requests scopes as `user_scope`, so the
-DM arrives under Dana's name and avatar with no APP badge — measured end to end
+DM arrives under Alice's name and avatar with no APP badge — measured end to end
 in `docs/spikes/03-slack-scopes.md` (#3). There is no bot token anywhere in this
 repo and no custom Slack app; the spike records both fallbacks for a forker who
 wants one.

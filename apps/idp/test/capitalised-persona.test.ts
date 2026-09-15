@@ -1,9 +1,9 @@
 /**
  * The test #58 says would have caught it: seed with a capitalised
- * `PERSONA_*_EMAIL` and assert `/sign-in/email` answers 200.
+ * role-based persona email configuration and assert `/sign-in/email` answers 200.
  *
  * Every other fixture in this directory is lowercase, which is why a persona
- * configured as `Dana.Okafor@megaforce.tech` reached a live sitting before
+ * configured as `Alice@Example.Test` reached a live sitting before
  * anyone noticed they could not log in. Better Auth lowercases the address
  * before it looks the row up and SQLite compares text case-sensitively, so
  * the row was unreachable — and `handleLogin` reports that as "That email and
@@ -24,9 +24,9 @@ const dbPath = join(tmpdir(), `cg-idp-${crypto.randomUUID()}`, "idp.db");
 const SECRET = "test-secret-".padEnd(48, "x");
 
 /** As a human types it into Render's dashboard, copying the Arcade invite. */
-const CONFIGURED = "Dana.Okafor@Bank.Example";
+const CONFIGURED = "Alice@Bank.Example";
 const STORED = CONFIGURED.toLowerCase();
-/** The fixture's password for Dana, which the override does not change. */
+/** The fixture's password for Alice, which the override does not change. */
 const PASSWORD = "dana-demo-2026";
 
 let child: Subprocess;
@@ -70,7 +70,7 @@ beforeAll(async () => {
       IDP_PUBLIC_URL: baseUrl,
       IDP_OAUTH_REDIRECT_URIS: "http://127.0.0.1:9/callback",
       BETTER_AUTH_SECRET: SECRET,
-      PERSONA_DANA_EMAIL: CONFIGURED,
+      PERSONA_LOAN_OFFICER_EMAIL: CONFIGURED,
     },
     stdout: "pipe",
     stderr: "pipe",

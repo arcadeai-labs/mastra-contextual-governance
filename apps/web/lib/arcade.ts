@@ -16,7 +16,7 @@
  * `CHECK_FAILED` — the code `apps/hooks` returns — and whose message is the
  * remediation string the policy rule wrote, with the audit row's correlation
  * token on the end. That message is what the page shows, verbatim: it is the
- * same text Dana's agent received, which is the point of the beat.
+ * same text Alice's agent received, which is the point of the beat.
  *
  * Anything else that goes wrong is `failed`, not `refused`, and the page says
  * so differently. A network error rendered as "you are not allowed" would be a

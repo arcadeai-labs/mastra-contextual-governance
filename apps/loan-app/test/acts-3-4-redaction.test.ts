@@ -88,7 +88,7 @@ const rule = anOutputRule({
 });
 
 const dana = aSubject({
-  user_id: "dana@example.com",
+  user_id: "alice@example.com",
   role: "loan_officer",
   clearance: 50_000,
 });

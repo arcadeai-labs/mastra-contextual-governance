@@ -35,7 +35,7 @@
  * `PersonaToolList` says so from its own side — *"#22 owns the split-screen
  * shell and hosts this widget inside it, so everything this component needs
  * arrives as data"* — and this is the line where the two halves of that
- * sentence meet. Act 1 is an absence: as Sam, `Loan_ApproveLoan` is missing
+ * sentence meet. Act 1 is an absence: as Bob, `Loan_ApproveLoan` is missing
  * from a list the **gateway** answered, not struck through by anything here.
  */
 import { cookies } from "next/headers";

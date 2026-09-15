@@ -19,7 +19,7 @@
  *    missing. The chat renders the link as a step for the person to take and
  *    stops, rather than letting the model retry into the same wall.
  *
- * Dana and Sam hold live `cg-idp` grants, so a rehearsal will not reach this
+ * Alice and Bob hold live `cg-idp` grants, so a rehearsal will not reach this
  * path. That is exactly why it has a test: a path the demo never walks is a
  * path that rots, and the first person it breaks for is a forker on their first
  * run, when every persona is unauthorized.

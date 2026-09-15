@@ -82,7 +82,7 @@ Two rules are seeded, and they are two on purpose:
 
 | rule | what it does | who it applies to |
 |---|---|---|
-| `post.redact-borrower-identifiers` | masks `bank_account_number` and `tax_id` on `Loan.GetLoan` | clearance under 250000 — Dana and Sam, not Riley or Morgan |
+| `post.redact-borrower-identifiers` | masks `bank_account_number` and `tax_id` on `Loan.GetLoan` | clearance under 250000 — Alice and Bob, not Charlie or Michael |
 | `post.strip-injected-instructions` | removes an instruction addressed to the model out of free text | everyone |
 
 Act 3 is a claim about identity, so its rule names a bar: if everybody were redacted, the
@@ -162,7 +162,7 @@ Six tables you can read at a glance, because one gets edited live on stage:
 
 | table | what | edited on stage? |
 |---|---|---|
-| `subjects` | the cast — `user_id` (email), `display_name`, `role`, `clearance` | yes: `UPDATE subjects SET clearance = 100000 WHERE display_name = 'Dana Okafor'` |
+| `subjects` | the cast — `user_id` (email), `display_name`, `role`, `clearance` | yes: `UPDATE subjects SET clearance = 100000 WHERE display_name = 'Alice'` |
 | `catalogue` | every governed tool and the arguments a call must supply | rarely |
 | `policy_rules` | `/access` and `/pre` rules, one row each; `enabled = 0` switches one off | yes |
 | `output_rules` | `/post` redaction rules, evaluated on every call; `enabled = 0` switches one off | yes |
@@ -233,7 +233,7 @@ line below is the 473 MB synthetic run above, not the live disk:
 
 Two things in the fixture are substituted at seed time and nowhere else: the toolkit names
 (`$LOAN`, `$APPROVALS` → `ARCADE_LOAN_TOOLKIT`, `ARCADE_APPROVALS_TOOLKIT`) and the persona
-emails (`PERSONA_<KEY>_EMAIL`, the same four variables `apps/idp` reads, so the two databases
+emails (the same four role variables `apps/idp` reads, so the two databases
 cannot disagree about who a persona is). Tool names are PascalCase — `ApproveLoan`, not
 `approve_loan` — because that is what `arcade-mcp` produces (measured, #35). A rule keyed on the
 wrong string is refused at boot by `compilePolicy`; it does not silently match nothing.
@@ -534,9 +534,9 @@ The same socket carries one other kind of frame, and it is deliberately not a
 
 ```
 event: approval
-data: {"kind":"approval.granted","request_id":"apr_0m4x…","requester_id":"dana.okafor@bank.example",
+data: {"kind":"approval.granted","request_id":"apr_0m4x…","requester_id":"alice@bank.example",
        "status":"approved","action":"approve_loan","resource_id":"LN-2291","amount":95000,
-       "decided_by":"riley.chen@bank.example","decided_at":"2026-09-14T…Z","grants_activated":1}
+       "decided_by":"charlie@bank.example","decided_at":"2026-09-14T…Z","grants_activated":1}
 ```
 
 It is emitted when `POST /approvals/{id}/decision` records an outcome, and it exists for one
@@ -576,13 +576,13 @@ denials rather than a runaway loop meant hand-writing a `bun:sqlite` query again
 
 ```sh
 curl -fsS -H "authorization: Bearer $ARCADE_HOOK_SIGNING_SECRET" \
-  "https://$HOOKS_PUBLIC_HOST/audit?user_id=dana.okafor@bank.example&hook=pre&decision=deny&limit=20"
+  "https://$HOOKS_PUBLIC_HOST/audit?user_id=alice@bank.example&hook=pre&decision=deny&limit=20"
 ```
 
 ```json
 { "rows": [ { "id": "evt_4k7xq2m9hz", "ts": "…", "hook": "pre", "decision": "deny", … } ],
   "count": 20, "total": 137, "limit": 20, "order": "newest_first",
-  "filters": { "user_id": "dana.okafor@bank.example", "hook": "pre", "decision": "deny" } }
+  "filters": { "user_id": "alice@bank.example", "hook": "pre", "decision": "deny" } }
 ```
 
 `rows` are `audit_log` rows exactly as the table holds them — the same `GovernanceEvent` the
@@ -789,7 +789,7 @@ cache's next poll with nothing to redeploy. The configured `ARCADE_*_TOOLKIT` na
 fallback only while no policy has loaded — the one state in which there is no catalogue, and
 the one in which the enumerating call would otherwise write thousands of fail-closed rows.
 
-Measured against the running service: **1,204 tools in, 5 rows out**, with Sam's hidden tool
+Measured against the running service: **1,204 tools in, 5 rows out**, with Bob's hidden tool
 and its rule id intact; and `bun run --cwd apps/hooks bench`, **10,804 tools in, 5 rows out**.
 The live per-listing figure needs a deploy to confirm. `test/access-audit.test.ts` is the only
 place this answer is asserted, so changing it is one file.

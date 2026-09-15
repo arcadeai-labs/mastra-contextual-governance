@@ -49,14 +49,14 @@ function shell(options: { stream?: PanelStream; signedInAs?: string | null; loan
   return renderToStaticMarkup(
     <SplitScreen
       stream={options.stream ?? FIXTURE_STREAM}
-      signedInAs={options.signedInAs === undefined ? "dana.okafor@bank.example" : options.signedInAs}
+      signedInAs={options.signedInAs === undefined ? "alice@bank.example" : options.signedInAs}
       identity={<p>the sign-in panel, server-rendered</p>}
       loanFiles={options.loanFiles ?? FILES}
     />,
   );
 }
 
-const SAM = "sam.reyes@bank.example";
+const SAM = "bob@bank.example";
 
 const samSession = (): Session => ({
   email: SAM,
@@ -65,7 +65,7 @@ const samSession = (): Session => ({
 });
 
 /**
- * What the gateway answers `tools/list` with for Sam — three tools, not four.
+ * What the gateway answers `tools/list` with for Bob — three tools, not four.
  *
  * `Loan_ApproveLoan` is missing because `access.analysts-cannot-see-approve`
  * removed it before the gateway answered, which is act 1. It is measured
@@ -106,7 +106,7 @@ const NORTHWIND: LoanRead = {
  */
 const FILES: LoanFilesState = {
   status: "loaded",
-  body: { reads: [NORTHWIND], actor: "dana.okafor@bank.example", tool: "Loan_GetLoan" },
+  body: { reads: [NORTHWIND], actor: "alice@bank.example", tool: "Loan_GetLoan" },
 };
 
 describe("the split", () => {
@@ -161,10 +161,10 @@ describe("the split", () => {
   });
 
   test("the person the whole screen is acting as is named, large, on the left", () => {
-    const markup = shell({ signedInAs: "dana.okafor@bank.example" });
+    const markup = shell({ signedInAs: "alice@bank.example" });
 
     expect(markup).toContain("Signed in as");
-    expect(markup).toContain("dana.okafor@bank.example");
+    expect(markup).toContain("alice@bank.example");
     expect(markup).toContain(`data-signed-in="true"`);
   });
 
@@ -192,7 +192,7 @@ describe("the split", () => {
 
   test("the tool list has a named slot, and the shell does not fill it with its own", () => {
     const markup = renderToStaticMarkup(
-      <BankPane signedInAs="dana.okafor@bank.example" identity={null} loanFiles={FILES} />,
+      <BankPane signedInAs="alice@bank.example" identity={null} loanFiles={FILES} />,
     );
 
     expect(markup).toContain(`data-slot="${TOOL_LIST_SLOT}"`);
@@ -205,7 +205,7 @@ describe("the split", () => {
   test("the slot renders what it is given and drops the placeholder", () => {
     const markup = renderToStaticMarkup(
       <BankPane
-        signedInAs="dana.okafor@bank.example"
+        signedInAs="alice@bank.example"
         identity={null}
         loanFiles={FILES}
         toolList={<p>four tools, from the gateway</p>}
@@ -221,7 +221,7 @@ describe("the split", () => {
    *
    * `app/page.tsx` asks the gateway what this session may see and hands
    * `PersonaToolList` into the shell's slot. This is that arrangement rendered:
-   * act 1's absence — `Loan_ApproveLoan` missing from Sam's list — surviving
+   * act 1's absence — `Loan_ApproveLoan` missing from Bob's list — surviving
    * inside #22's layout, with the list still saying where it came from.
    *
    * Both halves of the claim are checked, because only one of them is about
@@ -339,12 +339,12 @@ describe("the loan context", () => {
       <LoanFilesView
         state={{
           status: "loaded",
-          body: { reads: [NORTHWIND], actor: "dana.okafor@bank.example", tool: "Loan_GetLoan" },
+          body: { reads: [NORTHWIND], actor: "alice@bank.example", tool: "Loan_GetLoan" },
         }}
       />,
     );
 
-    expect(markup).toContain("dana.okafor@bank.example");
+    expect(markup).toContain("alice@bank.example");
   });
 });
 
@@ -437,13 +437,13 @@ describe("a denial is a decision, not an error", () => {
           kind: "waiting",
           tool: "Approvals_RequestApproval",
           request_id: "apr_0m4xq7bd91kz",
-          approver: "Riley Chen",
-          approver_id: "riley.chen@bank.example",
+          approver: "Charlie",
+          approver_id: "charlie@bank.example",
         }}
       />,
     );
 
-    expect(waiting).toContain("Riley Chen");
+    expect(waiting).toContain("Charlie");
     expect(waiting).toContain("apr_0m4xq7bd91kz");
     expect(waiting).not.toContain(`role="alert"`);
     expect(background(waiting)).not.toBe(background(denied));
@@ -456,14 +456,14 @@ describe("a denial is a decision, not an error", () => {
     // message would be asking them to take it on trust.
     const message =
       "Approval request apr_0m4xq7bd91kz — approve_loan on LN-2291 for 95000 — was approved " +
-      "by Riley Chen (riley.chen@bank.example) at 2026-09-14T10:00:00.000Z.";
+      "by Charlie (charlie@bank.example) at 2026-09-14T10:00:00.000Z.";
     const resumed = renderToStaticMarkup(
       <EventView
         event={{
           kind: "resumed",
           request_id: "apr_0m4xq7bd91kz",
           decision: "approved",
-          decided_by: "riley.chen@bank.example",
+          decided_by: "charlie@bank.example",
           message,
         }}
       />,

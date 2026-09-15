@@ -144,12 +144,12 @@ describe("a denial shows the specific rule that fired", () => {
         id: "evt_1",
         decision: "deny",
         tool: "Loan.ApproveLoan",
-        user_id: "dana@northwind.test",
+        user_id: "alice@northwind.test",
       }),
     ]);
 
     expect(markup).toContain("Loan.ApproveLoan");
-    expect(markup).toContain("dana@northwind.test");
+    expect(markup).toContain("alice@northwind.test");
   });
 
   test("a rule_id of null renders no empty rule slot", () => {
@@ -413,7 +413,7 @@ describe("nothing is hidden behind a hover", () => {
         id: "evt_1",
         decision: "deny",
         tool: "Loan.ApproveLoan",
-        user_id: "dana@northwind.test",
+        user_id: "alice@northwind.test",
         rule_id: "rule.clearance",
         reason: "Exceeds your authority.",
       }),
@@ -421,7 +421,7 @@ describe("nothing is hidden behind a hover", () => {
 
     for (const text of [
       "Loan.ApproveLoan",
-      "dana@northwind.test",
+      "alice@northwind.test",
       "rule.clearance",
       "Exceeds your authority.",
       "Denied",
@@ -692,7 +692,7 @@ describe("the type hierarchy the card is read through", () => {
     id: "evt_1",
     decision: "deny",
     tool: "Loan.ApproveLoan",
-    user_id: "dana@northwind.test",
+    user_id: "alice@northwind.test",
     rule_id: "rule.clearance",
     reason: "Exceeds your approval authority of 50000.",
   });

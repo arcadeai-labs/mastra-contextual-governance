@@ -43,8 +43,8 @@ Arcade's own.
 
 | # | Beat | Control | Mechanism |
 |---|---|---|---|
-| 1 | Sam, a credit analyst, literally cannot see `ApproveLoan` | Access | `/access` → `deny` |
-| 2 | Dana's $95K exceeds her $50K authority → blocked → routed approval → retry succeeds | Pre | `/pre` → `CHECK_FAILED` + remediation |
+| 1 | Bob, a credit analyst, literally cannot see `ApproveLoan` | Access | `/access` → `deny` |
+| 2 | Alice's $95K exceeds her $50K authority → blocked → routed approval → retry succeeds | Pre | `/pre` → `CHECK_FAILED` + remediation |
 | 3 | `GetLoan` returns a bank account number → redacted before the model reads it | Post | `/post` → `override.output` |
 | 4 | A seeded underwriter note carries an injected instruction → stripped | Post | `/post` → regex scanners |
 
@@ -192,7 +192,7 @@ service accepts OAuth access tokens, not the stub token. For the real path, pres
 `cg-idp` OAuth setup in [Setup from zero](#setup-from-zero), steps 1–4.
 
 ```sh
-curl -H 'Authorization: Bearer dev:dana@example.test' localhost:8082/loans/LN-2291
+curl -H 'Authorization: Bearer dev:alice@example.test' localhost:8082/loans/LN-2291
 ```
 
 Each service answers `GET /health` with one field per capability:
@@ -269,13 +269,15 @@ because Arcade's OAuth genuinely runs against them.
 
 | Persona | Role | Limit | Why they exist |
 |---|---|---:|---|
-| Dana Okafor | Loan Officer | $50,000 | The protagonist |
-| Sam Reyes | Credit Analyst | $0 | Act 1 — `ApproveLoan` hidden entirely |
-| Riley Chen | VP Credit | $250,000 | Minimum-sufficient approver for $95K |
-| Morgan Ellis | Chief Credit Officer | $5,000,000 | Deliberately *not* bothered — proves routing |
+| Alice | Loan Officer | $50,000 | The protagonist |
+| Bob | Credit Analyst | $0 | Act 1 — `ApproveLoan` hidden entirely |
+| Charlie | VP Credit | $250,000 | Minimum-sufficient approver for $95K |
+| Michael | Chief Credit Officer | $5,000,000 | Deliberately *not* bothered — proves routing |
 
-The addresses themselves are **not in this repo** and never should be. They live in
-`PERSONA_*_EMAIL` on `cg-web`, `cg-hooks` and `cg-idp`, set in the Render dashboard.
+The addresses themselves are **not in this repo** and never should be. They live in the
+four role variables `PERSONA_LOAN_OFFICER_EMAIL`, `PERSONA_CREDIT_ANALYST_EMAIL`,
+`PERSONA_VP_CREDIT_EMAIL` and `PERSONA_CHIEF_CREDIT_OFFICER_EMAIL` on `cg-web`,
+`cg-hooks` and `cg-idp`, set in the Render dashboard.
 
 ### 1. Deploy the four services — Render blueprint
 
@@ -474,7 +476,7 @@ curl -fsS https://<cg-hooks host>/health | jq '{status, counts, fixture_drift, w
 ```
 
 `counts.output_rules` must be `2` and `policy.scanners.patterns` must be `6`.
-`fixture_drift` must be `null`. Then sign in as Dana and run act 2 once, end to end.
+`fixture_drift` must be `null`. Then sign in as Alice and run act 2 once, end to end.
 [`docs/RUNBOOK.md`](./docs/RUNBOOK.md) §1 is the full pre-flight, and it is the document
 to work from fifteen minutes before a demo.
 
@@ -531,7 +533,7 @@ is read off the Render service page.** See the warning in step 1.
 | `IDP_CLIENT_ID` / `IDP_CLIENT_SECRET` **SECRET** | `apps/web` | Client C, printed once by `bun run oauth-client --client web --rotate` (step 2) |
 | `IDP_SCOPES` | `apps/web` | Default `openid email`. `email` is the join key — set it only to ask for *more* |
 | `SESSION_SECRET` **SECRET** | `apps/web` | `openssl rand -hex 32`. **At least 32 characters and 8 distinct ones**, enforced: below that, `/health` reports every identity capability `missing` and each route answers 503. No fallback — a default key is a key everybody has |
-| `PERSONA_DANA_EMAIL`, `PERSONA_SAM_EMAIL`, `PERSONA_RILEY_EMAIL`, `PERSONA_MORGAN_EMAIL` | `apps/web`, `apps/hooks`, `apps/idp` | The four real addresses from step 0, set in the Render dashboard. **Never written into this repo.** Read once, at first seed |
+| `PERSONA_LOAN_OFFICER_EMAIL`, `PERSONA_CREDIT_ANALYST_EMAIL`, `PERSONA_VP_CREDIT_EMAIL`, `PERSONA_CHIEF_CREDIT_OFFICER_EMAIL` | `apps/web`, `apps/hooks`, `apps/idp` | The four real addresses from step 0, set in the Render dashboard. **Never written into this repo.** Read once, at first seed. Deprecated name-based variables are refused. |
 
 ### Databases and reset
 
@@ -676,9 +678,9 @@ registration in the Arcade dashboard goes stale right before you present.
 
 **Email is the join key, and it is case-insensitive.** `apps/idp` and `apps/hooks`
 lowercase what they seed, `apps/loan-app` lowercases what `/oauth2/userinfo` returns, and
-the pre-hook folds case on the `user_id` Arcade sends. So the four `PERSONA_*_EMAIL`
-values can be typed in whatever case the Arcade accounts use and the three databases still
-describe one person.
+the pre-hook folds case on the `user_id` Arcade sends. So the four role email variables can
+be typed in whatever case the Arcade accounts use and the three databases still describe one
+person.
 
 ## Two things that will bite you
 

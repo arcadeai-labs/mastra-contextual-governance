@@ -132,7 +132,7 @@ describe("the stand-in a person runs", () => {
     expect(banner).toContain(hooks.host);
   });
 
-  test("Riley approves: the decision is recorded through the real pre-hook", async () => {
+  test("Charlie approves: the decision is recorded through the real pre-hook", async () => {
     const result = await press(RILEY, "approved");
 
     expect(result).toEqual({
@@ -143,7 +143,7 @@ describe("the stand-in a person runs", () => {
     expect(await read()).toMatchObject({ status: "approved", decided_by: RILEY });
   });
 
-  test("Dana pressing her own link gets CHECK_FAILED, and the request is untouched", async () => {
+  test("Alice pressing her own link gets CHECK_FAILED, and the request is untouched", async () => {
     const result = await press(DANA, "approved");
 
     expect(result.state).toBe("refused");

@@ -2,26 +2,26 @@
   "people": [
     {
       "persona": "dana",
-      "name": "Dana Okafor",
-      "email": "dana.okafor@bank.example",
+      "name": "Alice",
+      "email": "alice@bank.example",
       "password": "dana-demo-2026"
     },
     {
       "persona": "sam",
-      "name": "Sam Reyes",
-      "email": "sam.reyes@bank.example",
+      "name": "Bob",
+      "email": "bob@bank.example",
       "password": "sam-demo-2026"
     },
     {
       "persona": "riley",
-      "name": "Riley Chen",
-      "email": "riley.chen@bank.example",
+      "name": "Charlie",
+      "email": "charlie@bank.example",
       "password": "riley-demo-2026"
     },
     {
       "persona": "morgan",
-      "name": "Morgan Ellis",
-      "email": "morgan.ellis@bank.example",
+      "name": "Michael",
+      "email": "michael@bank.example",
       "password": "morgan-demo-2026"
     }
   ]

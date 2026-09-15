@@ -3,7 +3,7 @@
  * grant a valid approval buys.
  *
  * Everything here goes over real HTTP against the real service, in the order
- * the demo runs it — Dana is refused, the escalation is written, somebody
+ * the demo runs it — Alice is refused, the escalation is written, somebody
  * presses a button, the retry succeeds or does not. The only test that reaches
  * past HTTP is the expiry one, which needs a clock it can move.
  *
@@ -33,10 +33,10 @@ import { createPolicyCache, type PolicyCache } from "../src/policy-cache.ts";
 import { openGovernance } from "../src/policy-store.ts";
 import { createServer } from "../src/server.ts";
 
-const DANA = "dana.okafor@bank.example";
-const SAM = "sam.reyes@bank.example";
-const RILEY = "riley.chen@bank.example";
-const MORGAN = "morgan.ellis@bank.example";
+const DANA = "alice@bank.example";
+const SAM = "bob@bank.example";
+const RILEY = "charlie@bank.example";
+const MORGAN = "michael@bank.example";
 
 const HOOK_SECRET = "hook-secret-for-tests";
 const STORE_TOKEN = "store-token-for-tests";
@@ -142,7 +142,7 @@ const denied = (result: PreHookResult): string => {
 // ---------------------------------------------------------------------------
 
 describe("act 2, end to end", () => {
-  test("Dana is refused, the escalation is written, Riley decides, and the retry succeeds", async () => {
+  test("Alice is refused, the escalation is written, Charlie decides, and the retry succeeds", async () => {
     // The block. $95,000 against a $50,000 authority.
     const blocked = await pre(DANA, "Loan", "ApproveLoan", { loan_id: "LN-2291", amount: 95_000 });
     expect(denied(blocked)).toContain("exceeds your approval authority of 50000");
@@ -181,9 +181,9 @@ describe("act 2, end to end", () => {
     expect(result.code).toBe("OK");
 
     const row = lastRowFor("Approvals.RequestApproval");
-    expect(row?.reason).toContain("Riley Chen");
+    expect(row?.reason).toContain("Charlie");
     // Not bothering the chief credit officer for a mid-size decision is the point.
-    expect(row?.reason).toContain("also sufficient and not asked: Morgan Ellis");
+    expect(row?.reason).toContain("also sufficient and not asked: Michael");
   });
 });
 
@@ -212,7 +212,7 @@ describe("who may decide", () => {
   test("a clicker whose clearance does not cover the amount is denied", async () => {
     const request = await escalate();
 
-    // Sam holds no approval authority at all.
+    // Bob holds no approval authority at all.
     const result = await pre(SAM, "Approvals", "Decide", {
       request_id: request.id,
       decision: "approved",
@@ -287,7 +287,7 @@ describe("who may decide", () => {
 });
 
 describe("the grant an approval buys", () => {
-  /** Escalate, press approve as Riley, record it. Returns the request. */
+  /** Escalate, press approve as Charlie, record it. Returns the request. */
   async function approved(overrides: Partial<typeof ESCALATION> = {}): Promise<ApprovalRecord> {
     const request = await escalate(overrides);
     const press = await pre(RILEY, "Approvals", "Decide", {
@@ -366,7 +366,7 @@ describe("the grant an approval buys", () => {
   test("cannot be used by anyone but the person it was issued to", async () => {
     await approved();
 
-    // Sam presenting Dana's grant: the grant is not even selected, because it
+    // Bob presenting Alice's grant: the grant is not even selected, because it
     // is not his, and his own clearance does not cover the call.
     const sam = await pre(SAM, "Loan", "ApproveLoan", { loan_id: "LN-2291", amount: 95_000 });
     expect(denied(sam)).toContain("exceeds your approval authority of 0");

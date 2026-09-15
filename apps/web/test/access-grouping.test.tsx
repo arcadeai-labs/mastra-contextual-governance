@@ -44,7 +44,7 @@ function access(
     ts: new Date(EPOCH + afterMs).toISOString(),
     execution_id: "",
     hook: overrides.hook ?? "access",
-    user_id: overrides.user_id ?? "dana.okafor@bank.example",
+    user_id: overrides.user_id ?? "alice@bank.example",
     tool: overrides.tool ?? "Loan.GetLoan",
     decision: overrides.decision ?? "allow",
     rule_id: null,
@@ -92,7 +92,7 @@ describe("nothing is dropped and nothing is reordered", () => {
   test("flattening the rows reproduces the input exactly", () => {
     const events = newestFirst([
       ...anAccessFanout(),
-      access("evt_other", 400, { user_id: "sam.reyes@bank.example" }),
+      access("evt_other", 400, { user_id: "bob@bank.example" }),
       access("evt_denied", 440, { decision: "deny" }),
     ]);
 
@@ -135,7 +135,7 @@ describe("what splits a row", () => {
 
   test("a different person", () => {
     const rows = groupAccessEvents(
-      newestFirst([access("evt_1", 0), access("evt_2", 20, { user_id: "sam.reyes@bank.example" })]),
+      newestFirst([access("evt_1", 0), access("evt_2", 20, { user_id: "bob@bank.example" })]),
     );
 
     expect(rows).toHaveLength(2);

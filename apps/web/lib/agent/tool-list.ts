@@ -1,7 +1,7 @@
 /**
  * The tool list the page shows — **from the gateway, for this session**.
  *
- * Act 1's entire claim is that `Loan_ApproveLoan` is *absent* for Sam rather
+ * Act 1's entire claim is that `Loan_ApproveLoan` is *absent* for Bob rather
  * than present-and-refused, and a list assembled in the browser could not make
  * that claim about anything. So this is one real `tools/list` over MCP with the
  * signed-in persona's gateway bearer, which is the same call

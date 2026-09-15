@@ -50,8 +50,8 @@ const { encodeEvent } = await import("../lib/agent/events.ts");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const DANA = "dana.okafor@bank.example";
-const MORGAN = "morgan.ellis@bank.example";
+const DANA = "alice@bank.example";
+const MORGAN = "michael@bank.example";
 const REQUEST_ID = "apr_0m4xq7bd91kz";
 
 /** The turn that ends waiting: a denial, the escalation, and the reply. */
@@ -71,10 +71,10 @@ const BLOCKED: ChatEvent[] = [
     kind: "waiting",
     tool: "Approvals_RequestApproval",
     request_id: REQUEST_ID,
-    approver: "Riley Chen",
-    approver_id: "riley.chen@bank.example",
+    approver: "Charlie",
+    approver_id: "charlie@bank.example",
   },
-  { kind: "text", text: "Approval requested from Riley Chen, VP Credit. Waiting." },
+  { kind: "text", text: "Approval requested from Charlie, VP Credit. Waiting." },
   { kind: "done", calls: 2 },
 ];
 
@@ -84,8 +84,8 @@ const RESUMED: ChatEvent[] = [
     kind: "resumed",
     request_id: REQUEST_ID,
     decision: "approved",
-    decided_by: "riley.chen@bank.example",
-    message: `Approval request ${REQUEST_ID} — approve_loan on LN-2291 for 95000 — was approved by Riley Chen at 2026-09-14T10:00:00.000Z.`,
+    decided_by: "charlie@bank.example",
+    message: `Approval request ${REQUEST_ID} — approve_loan on LN-2291 for 95000 — was approved by Charlie at 2026-09-14T10:00:00.000Z.`,
   },
   { kind: "tool-call", tool: "Loan_ApproveLoan", inputs: { loan_id: "LN-2291", amount: 95000 } },
   { kind: "tool-result", tool: "Loan_ApproveLoan" },
@@ -102,7 +102,7 @@ function notice(overrides: Partial<ApprovalNotice> = {}): ApprovalNotice {
     action: "approve_loan",
     resource_id: "LN-2291",
     amount: 95_000,
-    decided_by: "riley.chen@bank.example",
+    decided_by: "charlie@bank.example",
     decided_at: "2026-09-14T10:00:00.000Z",
     grants_activated: 1,
     ...overrides,
@@ -287,7 +287,7 @@ describe("a turn that ends waiting", () => {
     expect(harness.posts).toHaveLength(1);
 
     expect(container.querySelector('[data-kind="waiting"]')).not.toBeNull();
-    expect(textOf(container)).toContain("Riley Chen");
+    expect(textOf(container)).toContain("Charlie");
     expect(textOf(container)).toContain(REQUEST_ID);
   });
 });
@@ -306,7 +306,7 @@ describe("approval.granted starts the next turn", () => {
     expect(resume?.request_id).toBe(REQUEST_ID);
     // Context, and only context: the turn that ended waiting.
     expect(resume?.prompt).toContain("Approve the loan for $95K");
-    expect(String(resume?.reply)).toContain("Approval requested from Riley Chen");
+    expect(String(resume?.reply)).toContain("Approval requested from Charlie");
     // Nothing this browser could have made up about the decision itself.
     expect(Object.keys(resume ?? {}).sort()).toEqual(["prompt", "reply", "request_id"]);
   });
@@ -355,10 +355,10 @@ describe("a notice that is not this browser's starts nothing", () => {
     expect(harness.posts).toHaveLength(1);
   });
 
-  test("another requester — Morgan's tab does not resume Dana's turn", async () => {
-    // Signed in as Morgan, watching the same stream. The frame names Dana as
-    // the requester; without the check the turn would run, as Morgan, on
-    // Dana's approval.
+  test("another requester — Michael's tab does not resume Alice's turn", async () => {
+    // Signed in as Michael, watching the same stream. The frame names Alice as
+    // the requester; without the check the turn would run, as Michael, on
+    // Alice's approval.
     await mountAndAsk(MORGAN);
     await act(async () => {
       harness.announce(notice({ requester_id: DANA }));

@@ -134,7 +134,7 @@ class TestRequestApproval:
         assert result["approver_display_name"] == RILEY.display_name
         assert result["request_id"].startswith("apr_")
         assert result["status"] == "pending"
-        # Morgan was sufficient and deliberately not chosen.
+        # Michael was sufficient and deliberately not chosen.
         assert result["candidate_approvers"] == [RILEY.user_id, MORGAN.user_id]
         assert result["required_clearance"] == 95_000.0
 
@@ -213,7 +213,7 @@ class TestTheSlackMessage:
         self, as_dana, store: StoreState, slack: SlackState
     ) -> None:
         await request_approval(as_dana, **ACT_TWO)
-        # Every call carried Dana's user token. There is no bot token in this
+        # Every call carried Alice's user token. There is no bot token in this
         # repo, and the DM renders under her name (spike #3).
         assert set(slack.seen_tokens) == {SLACK_TOKEN}
 
@@ -223,7 +223,7 @@ class TestTheSlackMessage:
         await request_approval(as_dana, **ACT_TWO)
 
         assert len(slack.posted) == 1
-        # The `D…` channel conversations.open returned for Riley, not a channel
+        # The `D…` channel conversations.open returned for Charlie, not a channel
         # and not anyone else's DM.
         assert slack.posted[0]["channel"] == "D_RILEY"
 
@@ -288,7 +288,7 @@ class TestTheSlackMessage:
         # tripped — a blank there is an approver who has to go and ask.
         await request_approval(as_dana, **ACT_TWO)
         rendered = json.dumps(slack.posted[0]["blocks"])
-        assert "exceeds Dana's approval authority of $50,000.00" in rendered
+        assert "exceeds Alice's approval authority of $50,000.00" in rendered
 
     async def test_the_link_is_the_approval_page_for_this_request_id_alone(
         self, as_dana, store: StoreState, slack: SlackState
@@ -376,7 +376,7 @@ class TestDecide:
     async def test_it_does_not_check_authority_itself(
         self, as_dana, store: StoreState, slack: SlackState
     ) -> None:
-        # Dana deciding her own request is exactly what separation of duties
+        # Alice deciding her own request is exactly what separation of duties
         # forbids — and this tool does not stop her, on purpose. The control is
         # a /pre decision on Approvals.Decide, outside the tool and outside the
         # model, enforced in #19. A check here as well would put the same rule

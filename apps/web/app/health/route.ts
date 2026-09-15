@@ -13,7 +13,7 @@
  * does nothing". They say `configured` or `missing` and never which value is
  * wrong, because the value is a credential in two cases out of three.
  *
- * Since #14: `agent`. A cg-web with no `ANTHROPIC_API_KEY` signs Dana in, holds
+ * Since #14: `agent`. A cg-web with no `ANTHROPIC_API_KEY` signs Alice in, holds
  * a gateway token and answers the verifier — and then `/chat` answers 503 the
  * first time somebody presses Send.
  *

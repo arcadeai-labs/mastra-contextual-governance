@@ -21,7 +21,7 @@ import { dirname, join } from "node:path";
 import type { LoanRecord } from "../src/db.ts";
 
 const RESET_TOKEN = "loan-app-reset-token-for-tests";
-const DANA = "dana@example.test";
+const DANA = "alice@example.test";
 const TOKENS: Record<string, string> = { "tok-dana": DANA };
 
 type HealthBody = { status: string; service: string; loans: number; reset: string };

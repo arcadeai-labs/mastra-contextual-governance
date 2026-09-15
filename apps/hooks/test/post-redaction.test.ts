@@ -31,10 +31,10 @@ import { loanFixture, loanFixtures } from "./loan-fixture.ts";
 const SECRET = "test-secret";
 const STORE_TOKEN = "test-store-token";
 
-const DANA = "dana.okafor@bank.example";
-const SAM = "sam.reyes@bank.example";
-const RILEY = "riley.chen@bank.example";
-const MORGAN = "morgan.ellis@bank.example";
+const DANA = "alice@bank.example";
+const SAM = "bob@bank.example";
+const RILEY = "charlie@bank.example";
+const MORGAN = "michael@bank.example";
 
 const POLL_MS = 10;
 
@@ -174,7 +174,7 @@ describe("the seeded rules, read back out of governance.db", () => {
   });
 });
 
-describe("Dana reads LN-2291", () => {
+describe("Alice reads LN-2291", () => {
   test("the identifiers are masked and the pasted block is gone, byte for byte", async () => {
     const { code, output } = await postHook(DANA, LOAN);
 
@@ -272,8 +272,8 @@ describe("Dana reads LN-2291", () => {
 
 describe("the same file, read by someone with the clearance for it", () => {
   test.each([
-    ["Riley Chen, VP Credit, 250000", RILEY],
-    ["Morgan Ellis, Chief Credit Officer, 5000000", MORGAN],
+    ["Charlie, VP Credit, 250000", RILEY],
+    ["Michael, Chief Credit Officer, 5000000", MORGAN],
   ])("%s receives the identifiers", async (_label, user) => {
     const { output } = await postHook(user, LOAN);
 
@@ -284,8 +284,8 @@ describe("the same file, read by someone with the clearance for it", () => {
   });
 
   test.each([
-    ["Dana Okafor, Loan Officer, 50000", DANA],
-    ["Sam Reyes, Credit Analyst, 0", SAM],
+    ["Alice, Loan Officer, 50000", DANA],
+    ["Bob, Credit Analyst, 0", SAM],
   ])("%s does not", async (_label, user) => {
     const { output } = await postHook(user, LOAN);
     expect(output?.bank_account_number).toBe("[REDACTED]");

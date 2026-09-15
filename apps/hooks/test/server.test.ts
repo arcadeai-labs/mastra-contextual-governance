@@ -18,8 +18,8 @@ import { createServer } from "../src/server.ts";
 const POLL_MS = 10;
 const settle = () => Bun.sleep(POLL_MS * 6);
 
-const DANA = "dana.okafor@bank.example";
-const SAM = "sam.reyes@bank.example";
+const DANA = "alice@bank.example";
+const SAM = "bob@bank.example";
 const SECRET = "test-secret";
 // A different bearer from the hook secret, as in production: this file's tests
 // only exercise the hooks, but `HooksConfig` requires both.
@@ -120,7 +120,7 @@ describe("routing", () => {
 });
 
 describe("the hooks over HTTP", () => {
-  test("/access hides ApproveLoan from Sam and audits every governed decision", async () => {
+  test("/access hides ApproveLoan from Bob and audits every governed decision", async () => {
     const before = auditCount(db);
     const res = await post("/access", { user_id: SAM, toolkits: { Loan: { tools: LOAN_TOOLS } } });
     expect(res.status).toBe(200);
@@ -129,7 +129,7 @@ describe("the hooks over HTTP", () => {
     expect(auditCount(db) - before).toBe(4);
   });
 
-  test("/pre denies Dana's $95K with CHECK_FAILED and the remediation message", async () => {
+  test("/pre denies Alice's $95K with CHECK_FAILED and the remediation message", async () => {
     const res = await post("/pre", preBody(DANA, "ApproveLoan", { loan_id: "LN-2291", amount: 95_000 }, "tc_act2"));
     expect(res.status).toBe(200);
     const body = PreHookResult.parse(await res.json());
@@ -150,11 +150,11 @@ describe("the hooks over HTTP", () => {
 
   // #58's mirror on this side of the join. Arcade preserves the
   // capitalisation an account was invited under, so `context.user_id` can
-  // arrive as `Dana.Okafor@…` while the roster and the loan book hold the
+  // arrive as `Alice@…` while the roster and the loan book hold the
   // lowercase form. Denying her as an unregistered subject would be the
   // control plane refusing a real person over capitalisation.
   describe("a capitalised context.user_id resolves the lowercase subject", () => {
-    const SHOUTED = "Dana.Okafor@Bank.Example";
+    const SHOUTED = "Alice@Bank.Example";
 
     test("a read she is entitled to is allowed, not denied as an unknown subject", async () => {
       const res = await post("/pre", preBody(SHOUTED, "GetLoan", { loan_id: "LN-2291" }, "tc_case_read"));
@@ -171,7 +171,7 @@ describe("the hooks over HTTP", () => {
 
       const body = PreHookResult.parse(await res.json());
       expect(body.code).toBe("CHECK_FAILED");
-      // Dana's own number, interpolated from the subject the lookup found —
+      // Alice's own number, interpolated from the subject the lookup found —
       // an unresolved subject denies with "no registered subject" instead.
       expect(body.error_message).toContain("50000");
       expect(body.error_message).not.toMatch(/no registered subject/);

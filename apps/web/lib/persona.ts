@@ -7,7 +7,7 @@
  * the seam a forker replaces with their own session — the rest of the page
  * only ever sees a `user_id`.
  *
- * What it deliberately is *not* is a permission. Choosing "Dana" and pressing
+ * What it deliberately is *not* is a permission. Choosing "Alice" and pressing
  * Approve is not an escalation, it is the whole point: the pre-hook refuses
  * her, visibly, and the audit row names her. If switching persona could be
  * used to grant yourself something, the demo would be arguing the opposite of
@@ -20,7 +20,7 @@ export const PERSONA_COOKIE = "cg_persona";
  * routed approver otherwise.
  *
  * Defaulting to the approver is what makes the link work the way the demo
- * needs it to — Riley opens it from Slack and presses Approve — without the
+ * needs it to — Charlie opens it from Slack and presses Approve — without the
  * default being authority. A cookie naming somebody the control plane has
  * never heard of is ignored rather than trusted; an unknown subject fails
  * closed at `/pre` anyway, but a page that offered to act as them would be

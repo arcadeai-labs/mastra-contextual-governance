@@ -13,8 +13,8 @@
  *   2. Drop everyone whose clearance is below the amount. Clearance is a
  *      ceiling, so a clearance *equal* to the amount is sufficient (this
  *      mirrors `exceeds_clearance`, which denies only when input > clearance).
- *   3. Of those left, pick the lowest clearance. A $95K request with Riley at
- *      $250K and Morgan at $5M goes to Riley; not bothering the chief credit
+ *   3. Of those left, pick the lowest clearance. A $95K request with Charlie at
+ *      $250K and Michael at $5M goes to Charlie; not bothering the chief credit
  *      officer for a mid-size decision is the point.
  *   4. Tie-break equal clearances by `user_id`, ascending, compared as plain
  *      code-unit strings (never locale-aware). Roster order is irrelevant.

@@ -81,10 +81,10 @@ function surfaceWith(overrides: Record<string, string>): IdentitySurface {
   });
 }
 
-/** The cookie a browser signed in as Dana and holding a live gateway token would send. */
+/** The cookie a browser signed in as Alice and holding a live gateway token would send. */
 async function browserCookie(config: IdentitySurface): Promise<string> {
   const session: Session = {
-    email: "dana.okafor@bank.example",
+    email: "alice@bank.example",
     signed_in_at: Date.now(),
     gateway: {
       access_token: "gateway-token-for-chat-fault-suite",

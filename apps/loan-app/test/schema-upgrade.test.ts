@@ -70,10 +70,10 @@ describe("opening a loans.db written by an earlier schema", () => {
         decision: "approved",
         amount: 9000,
         reason: null,
-        decided_by: "dana@example.test",
+        decided_by: "alice@example.test",
       });
       expect(after?.decisions).toHaveLength(2);
-      expect(after?.decisions.at(-1)?.decided_by).toBe("dana@example.test");
+      expect(after?.decisions.at(-1)?.decided_by).toBe("alice@example.test");
 
       // Not reseeded: the fixture's loans are absent, the legacy row is the only one.
       expect(getLoan(db, "LN-2291")).toBeNull();
@@ -170,7 +170,7 @@ describe("opening a loans.db written before a table existed", () => {
             decision: "approved",
             amount: 4200,
             reason: null,
-            decided_by: "dana@example.test",
+            decided_by: "alice@example.test",
           })?.decisions,
         ).toHaveLength(1);
 

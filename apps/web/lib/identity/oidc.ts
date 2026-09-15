@@ -37,8 +37,8 @@ export interface AuthorizeRequest {
    * `prompt=login` — force a fresh authentication even when the browser already
    * holds an IdP session.
    *
-   * This is what makes "Sign in as Sam" land on a login page rather than
-   * silently continue as Dana. `@better-auth/oauth-provider` implements it
+   * This is what makes "Sign in as Bob" land on a login page rather than
+   * silently continue as Alice. `@better-auth/oauth-provider` implements it
    * (`authorize`'s `promptSet?.has("login")` branch, which redirects to the
    * login page before it looks at the session) and `test/identity-flow.test.ts`
    * measures it against a real `apps/idp` rather than taking the source's word

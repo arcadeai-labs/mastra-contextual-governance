@@ -40,10 +40,10 @@ export const REPO = REPO_ROOT;
 export const HOOK_SECRET = "hook-secret-for-web-tests";
 export const STORE_TOKEN = "store-token-for-web-tests";
 
-export const DANA = "dana.okafor@bank.example";
-export const SAM = "sam.reyes@bank.example";
-export const RILEY = "riley.chen@bank.example";
-export const MORGAN = "morgan.ellis@bank.example";
+export const DANA = "alice@bank.example";
+export const SAM = "bob@bank.example";
+export const RILEY = "charlie@bank.example";
+export const MORGAN = "michael@bank.example";
 
 export interface Harness {
   config: WebConfig;
