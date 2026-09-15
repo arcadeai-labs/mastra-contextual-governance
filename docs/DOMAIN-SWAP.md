@@ -108,13 +108,17 @@ Copy the directory, rename it, and change five things:
 ### The tool descriptions are the asset
 
 They were written to be picked by a model without prompt coaching and reviewed on that
-basis. Two rules survive the swap, both measured:
+basis. One rule survives the swap, and one known exception is tracked:
 
-- **No behavioural instruction, in either direction.** Nothing about confirming,
-  refusing, escalating, retrying, caution or irreversibility. Measured on #14: one
-  "irreversible, no undo" line made the model ask permission and `/pre` never fired;
-  one "do not ask the person to confirm" line pushed it the other way. Both were
-  removed. Say what the tool does and what its arguments mean.
+- **Your replacement descriptions must carry no behavioural instruction, in either
+  direction.** Nothing about confirming, refusing, escalating, retrying, caution or
+  irreversibility. Measured on #14: one "irreversible, no undo" line made the model ask
+  permission and `/pre` never fired; one "do not ask the person to confirm" line pushed it
+  the other way. The current checked-in loan toolkit still contains those caution lines
+  (`tools/loan/loan/__init__.py:186,200`), and the local stand-in mirrors them
+  (`apps/web/scripts/gateway-stand-in.ts:236,254`); the cleanup is **#90**, still open.
+  When you copy the toolkit, say what each tool does and what its arguments mean, then
+  complete #90's equivalent cleanup before deploying.
 - **`tool.metadata` never reaches a hook payload**, for any tool. `Behavior`,
   `read_only`, `operations` are for clients, not for policy. Do not key a rule on one.
 
@@ -458,8 +462,10 @@ Without the flag, the sweep would put the governance vocabulary back inside the 
 system and the two tests would contradict each other (#33).
 
 The flag is read off the manifest rather than matched on a directory name on purpose:
-`packages/` carries no business-domain vocabulary, so a forker marking their own app
-inherits both halves automatically. There is a sibling, `"cg": { "external": true }`,
+`packages/` keeps business-domain code out of its runtime source, so a forker marking
+their own app inherits both halves automatically. The repository-wide vocabulary check
+still finds documented test/README references and one fixture edge; §9 records that
+measurement and #125 tracks the cleanup. There is a sibling, `"cg": { "external": true }`,
 which `apps/idp` carries — it means "stands in for a system outside the template", and
 it exempts the directory from the same sweep without claiming it is governed.
 
@@ -476,9 +482,9 @@ to prove that eleven different import forms — static, type-only, default, name
 re-export, side-effect, dynamic, `require`, single-quoted, and a relative path that
 climbs into `apps/` — are all recognised as dependencies on an app.
 
-It is deliberately not a real app name, because `packages/` carries no business-domain
-vocabulary and a grep for one would otherwise find it. That guard is what enforces "the
-hook framework does not depend on the business system" from the framework's side.
+It is deliberately not a real app name: this fixture exercises import recognition without
+coupling a package to a real business system. That guard is what enforces "the hook
+framework does not depend on the business system" from the framework's side.
 
 ---
 

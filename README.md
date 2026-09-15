@@ -86,7 +86,9 @@ tools/loan       Python arcade-mcp — search_loans, get_loan, approve_loan, den
 tools/approvals  Python arcade-mcp — request_approval, decide.    → arcade deploy
 
 packages/governance-core   Hook framework, policy engine, audit, event bus.
-                           Zero domain references, zero dependencies on apps/*.
+                           No executable domain references in package source; no
+                           runtime dependency on apps/* (see the measured test/docs
+                           references and one test-fixture edge in DOMAIN-SWAP §9).
 packages/policy-schema     Shared zod types for policy, events, hook payloads.
 ```
 
