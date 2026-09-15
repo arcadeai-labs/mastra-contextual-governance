@@ -55,6 +55,15 @@ export interface SubscribeOptions {
   readonly onUnusableFrame?: (data: string, problem: string) => void;
   /** Aborts the subscription and any pending reconnect. */
   readonly signal: AbortSignal;
+  /**
+   * Optional replay anchor for the first successful connection only.
+   *
+   * The control-plane panel uses `"0"` because the home page's server render
+   * makes its governed loan reads before the hydrated panel can open the
+   * browser stream. Generic subscribers omit this and start live, as before.
+   * Once connected, reconnects always resume from the last event id received.
+   */
+  readonly initialLastEventId?: string | null;
   /** First reconnect delay, doubling to {@link MAX_RETRY_MS}. */
   readonly retryMs?: number;
   /** Injected in tests. Defaults to the global `fetch`. */
@@ -92,11 +101,13 @@ export async function subscribeToGovernanceEvents(
     onStatus = () => {},
     onUnusableFrame = () => {},
     signal,
+    initialLastEventId = null,
     retryMs = DEFAULT_RETRY_MS,
     fetchImpl = fetch,
   } = options;
 
   let lastEventId: string | null = null;
+  let firstConnection = true;
   let backoff = retryMs;
   let everConnected = false;
 
@@ -110,13 +121,18 @@ export async function subscribeToGovernanceEvents(
         // the hook server replaying yesterday's acts would be hard to diagnose.
         "cache-control": "no-cache",
       };
-      if (lastEventId !== null) headers["last-event-id"] = lastEventId;
+      if (firstConnection && initialLastEventId !== null) {
+        headers["last-event-id"] = initialLastEventId;
+      } else if (lastEventId !== null) {
+        headers["last-event-id"] = lastEventId;
+      }
 
       const response = await fetchImpl(url, { headers, signal });
       if (!response.ok || response.body === null) {
         throw new Error(`stream responded ${response.status}`);
       }
 
+      firstConnection = false;
       everConnected = true;
       backoff = retryMs;
       onStatus("live");

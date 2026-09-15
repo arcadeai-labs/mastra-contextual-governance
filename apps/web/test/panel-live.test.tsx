@@ -1,0 +1,131 @@
+/**
+ * #129's live panel boundary, end to end.
+ *
+ * The page's server component reads both loans before the browser hydrates the
+ * panel. This mounts the real `ControlPlanePanel` after those reads complete,
+ * against the real hooks subprocess and its real SSE endpoint, and asserts
+ * that the panel recovers the committed rows through its initial replay.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+
+import { MORGAN, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
+import { homeSurface } from "../lib/home/surface.ts";
+import type { Session } from "../lib/identity/session.ts";
+
+// Keep the network implementation captured before happy-dom replaces browser
+// globals. The stream still crosses a real socket; this only gives relative
+// requests from the health strip a resolvable origin.
+const nativeFetch = globalThis.fetch.bind(globalThis);
+const NativeResponse = globalThis.Response;
+const NativeRequest = globalThis.Request;
+const NativeHeaders = globalThis.Headers;
+const NativeReadableStream = globalThis.ReadableStream;
+const NativeTextDecoderStream = globalThis.TextDecoderStream;
+const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+GlobalRegistrator.register({ url: "http://panel.test/" });
+
+const { act } = await import("react");
+const { createRoot } = await import("react-dom/client");
+const { ControlPlanePanel } = await import("../components/governance/ControlPlanePanel.tsx");
+
+let harness: AgentHarness;
+
+beforeAll(async () => {
+  harness = await startAgentHarness();
+  // MCPClient and the real Bun server need the runtime's fetch classes to
+  // agree. Keep happy-dom for DOM APIs, but use native network primitives for
+  // the governed page load and the SSE response body.
+  globalThis.Response = NativeResponse;
+  globalThis.Request = NativeRequest;
+  globalThis.Headers = NativeHeaders;
+  globalThis.ReadableStream = NativeReadableStream;
+  globalThis.TextDecoderStream = NativeTextDecoderStream;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const value = String(input);
+    // ControlPlaneStatus uses a relative route owned by cg-web. It is not the
+    // boundary under test here, but returning a normal response keeps its
+    // polling effect from producing an unhandled relative-URL failure.
+    if (value.startsWith("/")) {
+      return Promise.resolve(
+        NativeResponse.json({
+          reachable: false,
+          host: "panel.test",
+          problem: "health strip not under test",
+          reset: "no-token",
+        }),
+      );
+    }
+    return nativeFetch(input, init);
+  }) as typeof fetch;
+}, 60_000);
+
+afterAll(async () => {
+  globalThis.fetch = nativeFetch;
+  await harness?.stop();
+  await GlobalRegistrator.unregister();
+});
+
+function sessionFor(email: string): Session {
+  return {
+    email,
+    signed_in_at: Date.now(),
+    gateway: {
+      access_token: harness.tokenFor(email),
+      expires_at: Date.now() + 3_600_000,
+      client_id: "mcp-client-for-panel-live-test",
+    },
+  };
+}
+
+async function until(predicate: () => boolean, what: string, timeoutMs = 8_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await Bun.sleep(10);
+  }
+}
+
+describe("the hydrated live panel", () => {
+  test("shows both Loan_GetLoan reads made before hydration", async () => {
+    const before = await harness.audit();
+    const beforeIds = new Set(before.map((row) => String(row.id)));
+    const surface = await homeSurface(sessionFor(MORGAN), { config: harness.config });
+    if (surface.files.status !== "loaded") throw new Error(surface.files.refusal.error);
+
+    const after = await harness.audit();
+    const expectedIds = after
+      .filter(
+        (row) =>
+          !beforeIds.has(String(row.id)) &&
+          row.user_id === MORGAN &&
+          row.tool === "Loan.GetLoan" &&
+          (row.hook === "pre" || row.hook === "post"),
+      )
+      .map((row) => String(row.id));
+    expect(expectedIds).toHaveLength(4);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(
+          <ControlPlanePanel
+            stream={{ mode: "hooks", url: `http://${harness.hooksHost}/events`, host: harness.hooksHost }}
+          />,
+        );
+      });
+
+      await until(
+        () => expectedIds.every((id) => container.querySelector(`[data-event-id="${id}"]`) !== null),
+        "both server-rendered loan reads in the live panel",
+      );
+
+      const cards = expectedIds.map((id) => container.querySelector(`[data-event-id="${id}"]`));
+      expect(cards.every((card) => card?.querySelector(".cg-tool")?.textContent === "Loan.GetLoan")).toBe(true);
+    } finally {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
