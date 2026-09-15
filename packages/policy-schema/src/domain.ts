@@ -440,7 +440,7 @@ export const ApprovalRecord = z
     approver_display_name: z.string(),
     /** Everyone sufficient, lowest clearance first. `[0]` is the approver. */
     candidate_approver_ids: z.array(z.string()).default([]),
-    /** The refused action as a bare name, e.g. `approve_loan`. */
+    /** The refused action as a bare name, e.g. `approve_record`. */
     action: z.string().min(1),
     resource_id: z.string().min(1),
     amount: z.number(),
@@ -707,7 +707,7 @@ export const GRANT_REJECTION_KINDS = GrantRejectionReason.options.map(
  * **There is no slot for a payload at all.** `before` and `after` used to sit
  * here as `z.unknown().optional()`, and they are gone (#101, finishing what #16
  * decided). The obvious thing to put in `before` is the tool's raw output,
- * which for `Loan.GetLoan` is the borrower's bank account number and tax id —
+ * which for `Records.GetRecord` is a sensitive identifier and tax id —
  * and this row is written to `audit_log` and streamed on an unauthenticated
  * `GET /events`, so it would persist the secret and broadcast it to anyone who
  * can reach the hook host. `after` is no safer: a rule conditioned on clearance

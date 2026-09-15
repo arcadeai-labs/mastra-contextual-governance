@@ -231,7 +231,7 @@ const TOOL_FIELDS = new Set(["toolkit", "name"]);
  *
  * Both reference forms require **PascalCase on both sides of the separator**,
  * because `arcade-mcp` PascalCases every half unconditionally (measured on
- * #35). That is what keeps `loan_id`, `min_amount` and `action=approve_loan`
+ * #35). That is what keeps `record_id`, `min_value` and `action=approve_record`
  * out of the reference grammar: a reason is prose, and this domain's prose is
  * full of snake_case argument names that are not tools.
  */
@@ -405,8 +405,8 @@ function matchedArguments(
  * refused. Anything less is an apology, and the compiler refuses it.
  *
  * **The underscore is the whole of #89.** One tool has two true spellings:
- * `Loan_ApproveLoan` is what MCP advertises and therefore what the model can
- * see in its own tool list, and `Loan.ApproveLoan` is what a hook payload, an
+ * `Records_ApproveRecord` is what MCP advertises and therefore what the model can
+ * see in its own tool list, and `Records.ApproveRecord` is what a hook payload, an
  * audit row and this rule's own `match` call it. Remediation text is the one
  * place where the difference is load-bearing, because it is the one place a
  * rule *addresses the model*. Measured on #14 against live Claude Sonnet 5 at

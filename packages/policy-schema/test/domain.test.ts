@@ -316,7 +316,7 @@ describe("GovernanceEvent", () => {
   it("has nowhere to put the payload either side of a modify", () => {
     // The same argument `RedactionRecord` makes, one level up. This row is
     // persisted to `audit_log` and streamed on an unauthenticated `GET /events`,
-    // so `before` holding `Loan.GetLoan`'s raw output would write the borrower's
+    // so `before` holding `Records.GetRecord`'s raw output would write a sensitive
     // account number to disk and broadcast it — and `after` is no safer, because
     // a clearance-conditioned rule does not fire for a privileged subject and
     // *their* "after" still holds the identifiers (#16, #101). `.strict()` is

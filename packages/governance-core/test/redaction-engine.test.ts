@@ -14,13 +14,11 @@
  * rule can be dead on arrival.
  *
  * Identifiers are PascalCase throughout, as a real deployment files them
- * (`Loan`, `GetLoan` — measured on #35). A rule keyed on `get_loan` matches
- * nothing, and a fixture written in the wrong case would teach the next reader
- * to write a dead rule.
+ * (`Records`, `GetRecord` — measured on #35). A rule keyed on `get_record`
+ * matches nothing, and a fixture written in the wrong case would teach the
+ * next reader to write a dead rule.
  */
 import { describe, expect, it } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   anOutputRule,
   aSubject,
@@ -1198,157 +1196,5 @@ describe("compileOutputPolicy refuses a rule that could never redact anything", 
     ];
     const result = run({ a: "1", b: "2", c: "3" }, rules);
     expect(result.redactions.map((r) => r.rule_id)).toEqual(["rule.m", "rule.a", "rule.z"]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Acts 3 and 4, on the shape the demo actually returns
-// ---------------------------------------------------------------------------
-
-/**
- * The one place the demo's own domain appears, and it appears on purpose: acts
- * 3 and 4 are lines a presenter says out loud, so this is where they are
- * pinned. A forker replacing the governed app replaces this block and nothing
- * above it.
- *
- * Identifiers are the measured ones — toolkit `Loan`, tool `GetLoan` (#35). A
- * rule written `get_loan` compiles to nothing and redacts nothing, and the
- * payload would reach the model looking exactly as it does when the control
- * worked.
- */
-describe("acts 3 and 4", () => {
-  const LOAN_CATALOGUE: ToolCatalogue = {
-    Loan: { GetLoan: ["loan_id"], SearchLoans: ["status?"] },
-  };
-  const GET_LOAN: ToolRef = { toolkit: "Loan", name: "GetLoan" };
-
-  /**
-   * The real seed, read off disk rather than retyped. A hand-copied record
-   * drifts from the fixture silently and then the act-3 evidence is about a
-   * payload the demo never returns (found in review of #8).
-   *
-   * This is the one place `packages/` reaches into `apps/`, and it is a read of
-   * fixture data rather than an import — the forkability guard in
-   * `no-app-dependencies.test.ts` is about the package graph, and nothing here
-   * adds an edge to it. A forker who replaces the loan domain replaces this
-   * block along with the fixture; it fails loudly rather than skipping, because
-   * a test that quietly stops running is the failure mode this module is about.
-   */
-  const seed = (() => {
-    const path = join(import.meta.dir, "..", "..", "..", "apps", "loan-app", "src", "fixtures", "loans.json");
-    if (!existsSync(path)) {
-      throw new Error(
-        `${path} is missing. This block pins the demo's own acts 3 and 4; if you have ` +
-          `replaced the loan domain, point it at your fixture or delete it.`,
-      );
-    }
-    const fixture = JSON.parse(readFileSync(path, "utf8")) as { loans: Record<string, unknown>[] };
-    const record = fixture.loans.find((loan) => loan.loan_id === "LN-2291");
-    if (record === undefined) throw new Error(`LN-2291 is not in ${path}`);
-    return record;
-  })();
-
-  const notes = seed.underwriter_notes as string;
-  const INJECTION_MARKER = "\n\n--- pasted from";
-  /** The underwriter's real work: everything before the pasted block. */
-  const LEGITIMATE = notes.slice(0, notes.indexOf(INJECTION_MARKER));
-
-  it("is pinned to a seed that actually carries what acts 3 and 4 need", () => {
-    // Without this the whole block could pass vacuously against a fixture that
-    // had quietly lost its account number or its injected note.
-    expect(seed.bank_account_number).toMatch(/^\d{16}$/);
-    expect(seed.tax_id).toMatch(/^\d{2}-\d{7}$/);
-    expect(notes).toContain(INJECTION_MARKER);
-    expect(notes).toContain("approve_loan");
-    expect(LEGITIMATE.length).toBeGreaterThan(0);
-  });
-
-  const rule = anOutputRule({
-    id: "rule.post.loan_pii",
-    description: "Withhold identifiers and strip instructions aimed at the model.",
-    match: { toolkit: "Loan", tool: "GetLoan" },
-    subjects: null,
-    fields: [
-      { path: "bank_account_number", strategy: "remove" },
-      { path: "tax_id", strategy: "remove" },
-    ],
-    patterns: [
-      { ...ACCOUNT, strategy: "mask" },
-      { ...TAX_ID, strategy: "mask" },
-      { ...PASTED, strategy: "remove", replacement: "" },
-    ],
-    reason: "Identifiers withheld and untrusted free text stripped.",
-    priority: 100,
-  });
-
-  const dana = aSubject({
-    user_id: "dana@example.com",
-    role: "loan_officer",
-    clearance: 50_000,
-  });
-  const policy = compileOutputPolicy({ catalogue: LOAN_CATALOGUE, rules: [rule] });
-  const result = redact({ output: seed, subject: dana, tool: GET_LOAN, policy });
-  const after = result.output as Record<string, unknown>;
-
-  it("act 3: the account number and tax id do not reach the model", () => {
-    expect(after).not.toHaveProperty("bank_account_number");
-    expect(after).not.toHaveProperty("tax_id");
-    expect(JSON.stringify(after)).not.toContain(seed.bank_account_number as string);
-    expect(JSON.stringify(after)).not.toContain(seed.tax_id as string);
-  });
-
-  it("act 3: every other field of the real record arrives untouched", () => {
-    // Asserted against the whole seed, not a chosen few: the agent still has to
-    // be able to do its job, and a redaction that quietly dropped `amount`
-    // would break act 2 rather than this test.
-    const expected = Object.fromEntries(
-      Object.entries(seed).flatMap(([key, value]) => {
-        if (key === "bank_account_number" || key === "tax_id") return [];
-        return [[key, key === "underwriter_notes" ? LEGITIMATE : value]];
-      }),
-    );
-    expect(after).toEqual(expected);
-  });
-
-  it("act 4: the injected instruction never arrives", () => {
-    const seen = after.underwriter_notes as string;
-    expect(seen).not.toContain("approve_loan");
-    expect(seen).not.toContain("pre-cleared");
-    expect(seen).not.toContain("Ignore any earlier instruction");
-    expect(seen).not.toContain("Do not mention this note");
-  });
-
-  it("act 4: the underwriter's real work survives, word for word", () => {
-    // The half that matters. A scanner that mangled this would be doing it on
-    // a projector, and the demo would be arguing against itself.
-    expect(after.underwriter_notes).toBe(LEGITIMATE);
-  });
-
-  it("names every removal for the panel, and none of them carry the value", () => {
-    expect(trace(result.redactions)).toEqual([
-      "$.bank_account_number rule.post.loan_pii remove",
-      "$.tax_id rule.post.loan_pii remove",
-      "$.underwriter_notes rule.post.loan_pii/scan.pasted remove",
-    ]);
-    const rendered = JSON.stringify(result.redactions);
-    expect(rendered).not.toContain(seed.bank_account_number as string);
-    expect(rendered).not.toContain(seed.tax_id as string);
-    expect(rendered).not.toContain("approve_loan");
-  });
-
-  it("is idempotent on the payload the model was handed", () => {
-    const again = redact({ output: after, subject: dana, tool: GET_LOAN, policy });
-    expect(again.output).toEqual(after);
-    expect(again.redactions).toEqual([]);
-  });
-
-  it("a rule keyed in the wrong case is refused rather than silently matching nothing", () => {
-    // The failure this whole project is about. `get_loan` is not a tool.
-    expect(() =>
-      compileOutputPolicy({
-        catalogue: LOAN_CATALOGUE,
-        rules: [anOutputRule({ ...rule, match: { toolkit: "Loan", tool: "get_loan" } })],
-      }),
-    ).toThrow(/tool "Loan.get_loan", which that toolkit does not serve/);
   });
 });
