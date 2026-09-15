@@ -24,9 +24,62 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Subprocess } from "bun";
 
 import { readConfig } from "../src/config.ts";
 import { assertPublicHost, PublicHostError } from "../src/public-host.ts";
+
+/**
+ * The root suite runs many async test files at once, and several of them boot
+ * real service subprocesses. A free-port probe followed by a child spawn is a
+ * TOCTOU race under that load: another worker can claim the probed port before
+ * this child does. Let the child bind `:0` atomically, read its actual port
+ * from the boot line, and then poll the public `/health` endpoint. The bound is
+ * deliberately generous but finite so a genuinely broken boot still fails
+ * with diagnostics instead of hanging the suite.
+ */
+const BOOT_TIMEOUT_MS = 60_000;
+const BOOT_TEST_TIMEOUT_MS = BOOT_TIMEOUT_MS + 10_000;
+
+async function fileText(path: string): Promise<string> {
+  try {
+    return await Bun.file(path).text();
+  } catch {
+    return "";
+  }
+}
+
+async function waitForHealth(child: Subprocess, stdoutPath: string): Promise<number> {
+  const deadline = Date.now() + BOOT_TIMEOUT_MS;
+  let stdout = "";
+
+  for (;;) {
+    stdout = await fileText(stdoutPath);
+    const listening = /listening on :(\d+)\b/.exec(stdout);
+    if (listening !== null) {
+      const port = Number(listening[1]);
+      try {
+        if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) return port;
+      } catch {
+        // The boot line is flushed just before the socket accepts requests.
+      }
+    }
+
+    if (child.exitCode !== null) {
+      throw new Error(
+        `hooks exited ${child.exitCode} before /health became ready. ` +
+          `stdout:\n${stdout || "(empty)"}`,
+      );
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `hooks did not come up within ${BOOT_TIMEOUT_MS}ms. ` +
+          `stdout:\n${stdout || "(empty)"}`,
+      );
+    }
+    await Bun.sleep(50);
+  }
+}
 
 /** Values a consumer can actually reach, or is free to leave unset. */
 const ACCEPTED = [
@@ -154,43 +207,33 @@ test.each(["cg-loan-app.onrender.com", "localhost:8082", "127.0.0.1:1234", "[::1
   "the control plane starts on %p",
   async (host) => {
     const dir = mkdtempSync(join(tmpdir(), "cg-public-host-"));
-    const probe = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
-    const port = probe.port as number;
-    probe.stop(true);
+    const stdoutPath = join(dir, "stdout.log");
+    const stderrPath = join(dir, "stderr.log");
 
     const child = Bun.spawn(["bun", join(import.meta.dir, "..", "src", "index.ts")], {
       env: {
         ...process.env,
-        PORT: String(port),
+        PORT: "0",
         GOVERNANCE_DB_PATH: join(dir, "governance.db"),
         LOAN_APP_PUBLIC_HOST: host,
       },
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: Bun.file(stdoutPath),
+      stderr: Bun.file(stderrPath),
     });
 
     try {
-      const deadline = Date.now() + 20_000;
-      for (;;) {
-        if (child.exitCode !== null) {
-          const stderr = await new Response(child.stderr as ReadableStream).text();
-          throw new Error(`exited ${child.exitCode} instead of serving: ${stderr}`);
-        }
-        try {
-          if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break;
-        } catch {
-          // Not listening yet.
-        }
-        if (Date.now() > deadline) throw new Error("hooks did not come up");
-        await Bun.sleep(50);
-      }
+      const port = await waitForHealth(child, stdoutPath);
+      expect((await fetch(`http://127.0.0.1:${port}/health`)).ok).toBe(true);
+    } catch (cause) {
+      const stderr = await fileText(stderrPath);
+      throw new Error(`${String(cause)}\nstderr:\n${stderr || "(empty)"}`);
     } finally {
       child.kill();
       await child.exited;
       rmSync(dir, { recursive: true, force: true });
     }
   },
-  30_000,
+  BOOT_TEST_TIMEOUT_MS,
 );
 
 /**
