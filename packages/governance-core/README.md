@@ -247,7 +247,7 @@ A redaction rule that matches nothing looks exactly like a payload with nothing
 sensitive in it — the demo still runs, the panel still lights up green, and the
 account number is in the model's context. So compilation is loud, and lists
 every problem at once: a toolkit or tool the catalogue does not list (tool names
-are case-sensitive — `Loan.get_loan` is not a tool and is refused), a rule with
+are case-sensitive — `Records.get_record` is not a tool and is refused), a rule with
 neither fields nor patterns, a malformed field path, a field path repeated
 within a rule, an unparseable regex, a regex that matches the empty string (it
 would rewrite every string it was pointed at), the sticky flag (it would scan

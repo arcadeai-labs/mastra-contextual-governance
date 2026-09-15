@@ -48,7 +48,7 @@ function readJson(path: string): Record<string, unknown> {
  *
  * A directory with no `package.json` is skipped rather than thrown on. Renames
  * leave the old directory behind holding an untracked `node_modules/` — the
- * `apps/loan-mcp` → `apps/loan-app` rename in #34 did exactly that — and an
+ * `apps/records-mcp` → `apps/records-app` rename in #34 did exactly that — and an
  * ENOENT here reads as a broken build rather than as stale scratch. Two people
  * lost time to it on the same day (#41). `packages/policy-schema`'s workspace
  * sweep already guards this way.

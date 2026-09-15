@@ -1,6 +1,6 @@
 {
   "$schema_note": "Hand-written. Not generated, not vendored — see contract/README.md.",
-  "description": "Cross-language test vectors for minimum-sufficient-clearance approver routing (#9). Consumed by packages/governance-core/test/approver-router.test.ts and by tools/approvals/tests/test_routing.py, so the TypeScript router and the Python one are checked against the same rows rather than argued to agree.",
+  "description": "Cross-language test vectors for minimum-sufficient-clearance approver routing (#9). The roles below are deliberately neutral: this contract is shared by the reusable TypeScript and Python routers and must not encode one application's domain. Consumed by packages/governance-core/test/approver-router.test.ts and by tools/approvals/tests/test_routing.py, so the two implementations are checked against the same rows rather than argued to agree.",
   "rule": [
     "1. Drop the requester, always, even when their own clearance would cover the amount.",
     "2. Drop everyone whose clearance is below the amount. Clearance is a ceiling, so clearance == amount is sufficient.",
@@ -9,13 +9,13 @@
     "Having nobody eligible is an ordinary outcome, not an error. A non-finite or negative amount is a programming error and must raise."
   ],
   "subjects": {
-    "dana": { "user_id": "dana@example.com", "display_name": "Dana", "role": "loan_officer", "clearance": 50000 },
-    "sam": { "user_id": "sam@example.com", "display_name": "Sam", "role": "credit_analyst", "clearance": 0 },
-    "riley": { "user_id": "riley@example.com", "display_name": "Riley", "role": "vp_credit", "clearance": 250000 },
-    "morgan": { "user_id": "morgan@example.com", "display_name": "Morgan", "role": "chief_credit_officer", "clearance": 5000000 },
-    "upper": { "user_id": "Zed@example.com", "display_name": "Zed", "role": "vp_credit", "clearance": 100 },
-    "lower": { "user_id": "abe@example.com", "display_name": "Abe", "role": "vp_credit", "clearance": 100 },
-    "middle": { "user_id": "bea@example.com", "display_name": "Bea", "role": "vp_credit", "clearance": 100 }
+    "dana": { "user_id": "dana@example.com", "display_name": "Dana", "role": "operator", "clearance": 50000 },
+    "sam": { "user_id": "sam@example.com", "display_name": "Sam", "role": "analyst", "clearance": 0 },
+    "riley": { "user_id": "riley@example.com", "display_name": "Riley", "role": "supervisor", "clearance": 250000 },
+    "morgan": { "user_id": "morgan@example.com", "display_name": "Morgan", "role": "executive", "clearance": 5000000 },
+    "upper": { "user_id": "Zed@example.com", "display_name": "Zed", "role": "supervisor", "clearance": 100 },
+    "lower": { "user_id": "abe@example.com", "display_name": "Abe", "role": "supervisor", "clearance": 100 },
+    "middle": { "user_id": "bea@example.com", "display_name": "Bea", "role": "supervisor", "clearance": 100 }
   },
   "cast": ["morgan", "dana", "sam", "riley"],
   "cases": [

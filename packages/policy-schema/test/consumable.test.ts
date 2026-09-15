@@ -28,7 +28,7 @@ interface Manifest {
  * It is the one workspace that must *not* be able to import the governance
  * vocabulary: `DESIGN.md` promises that forking means replacing the governed
  * app and "touching nothing under `packages/`", and that only holds if the
- * dependency does not run the other way. `apps/loan-app` enforces its own half
+ * dependency does not run the other way. `apps/records-app` enforces its own half
  * in `test/knows-nothing-about-governance.test.ts`.
  *
  * Read off a flag rather than matched on a name on purpose — `packages/`
