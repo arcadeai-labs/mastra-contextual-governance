@@ -506,7 +506,7 @@ describe("a pre-#70 disk, booted the way Render boots it", () => {
  * #58 made the column `COLLATE NOCASE` and lowercased the seed, but it did so
  * in `schema.sql`, which only a fresh seed ever runs. The deployed `cg-idp`
  * disk kept the column it was born with, so a persona seeded as
- * `Dana.Okafor@…` still could not log in — and the login page still called
+ * `Alice@…` still could not log in — and the login page still called
  * that "That email and password did not match", the same sentence it gives a
  * wrong password. That is the failure #58 spent a whole sitting on, still live
  * on the one database that matters.
@@ -516,8 +516,8 @@ describe("a pre-#70 disk, booted the way Render boots it", () => {
  */
 describe("a disk written before #58 made user.email case-insensitive", () => {
   const dana = loadPeople({}).find((person) => person.persona === "dana")!;
-  /** As `PERSONA_DANA_EMAIL` was set on `cg-idp` during the #13 sitting. */
-  const CAPITALISED = "Dana.Okafor@Bank.Example";
+  /** As the loan-officer role address was set on `cg-idp` during the #13 sitting. */
+  const CAPITALISED = "Alice@Bank.Example";
 
   /**
    * SHA-256 of `git show 3d2dd9d^:apps/idp/src/schema.sql` with `--` comment
@@ -726,7 +726,7 @@ describe("a disk written before #58 made user.email case-insensitive", () => {
     const now = new Date().toISOString();
     seeded.query(
       `INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt")
-       VALUES ($id, 'Dana Okafor', $email, 1, $now, $now)`,
+       VALUES ($id, 'Alice', $email, 1, $now, $now)`,
     ).run({ $id: crypto.randomUUID(), $email: dana.email, $now: now });
     seeded.close();
 

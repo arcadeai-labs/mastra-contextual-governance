@@ -45,18 +45,18 @@ export const LOAN_TOOLKIT = "Loan";
 export const APPROVALS_TOOLKIT = "Approvals";
 
 /** The four, as both fixtures seed them. Lower case — the join key (#58). */
-export const DANA = "dana.okafor@bank.example";
-export const SAM = "sam.reyes@bank.example";
-export const RILEY = "riley.chen@bank.example";
+export const DANA = "alice@bank.example";
+export const SAM = "bob@bank.example";
+export const RILEY = "charlie@bank.example";
 /** Chief Credit Officer, clearance $5,000,000 — above act 3's redaction bar (#16). */
-export const MORGAN = "morgan.ellis@bank.example";
+export const MORGAN = "michael@bank.example";
 
-/** The $95K application. Dana's authority is $50,000. */
+/** The $95K application. Alice's authority is $50,000. */
 export const OVER_LIMIT_LOAN = "LN-2291";
-/** $15,500 and pending — inside Dana's authority. */
+/** $15,500 and pending — inside Alice's authority. */
 export const WITHIN_LIMIT_LOAN = "LN-2292";
 /**
- * $88,000 and pending — also over Dana's authority, and **without act 4's
+ * $88,000 and pending — also over Alice's authority, and **without act 4's
  * seeded prompt injection**, which only `LN-2291` carries.
  *
  * The control. `LN-2291`'s `underwriter_notes` ends in an instruction aimed at
@@ -84,8 +84,8 @@ export interface AgentHarness {
   /**
    * Every `tools/list` the gateway answered, with what `/access` took away.
    *
-   * Act 1 is an absence, and an absence leaves no `calls` entry: "Sam never
-   * tried to approve" and "Sam tried and nobody wrote it down" are the same
+   * Act 1 is an absence, and an absence leaves no `calls` entry: "Bob never
+   * tried to approve" and "Bob tried and nobody wrote it down" are the same
    * empty list. This is the record that tells them apart.
    */
   lists: Array<{ user_id: string; advertised: string[]; hidden: string[] }>;

@@ -58,15 +58,15 @@ function requestCarrying(headers: Headers, url = "https://cg-web-sa31.onrender.c
 
 describe("the seal", () => {
   test("a sealed value opens back to what went in", async () => {
-    const sealed = await seal({ email: "dana.okafor@bank.example", n: 1 }, SECRET);
+    const sealed = await seal({ email: "alice@bank.example", n: 1 }, SECRET);
     expect(await openSealed<{ email: string; n: number }>(sealed, SECRET)).toEqual({
-      email: "dana.okafor@bank.example",
+      email: "alice@bank.example",
       n: 1,
     });
   });
 
   test("the contents are not readable without the key", async () => {
-    const sealed = await seal({ email: "dana.okafor@bank.example" }, SECRET);
+    const sealed = await seal({ email: "alice@bank.example" }, SECRET);
     // Not "hard to read" — absent. The address does not appear in the cookie in
     // any encoding a `grep` or a `base64 -d` would find.
     expect(sealed).not.toContain("dana");
@@ -75,7 +75,7 @@ describe("the seal", () => {
   });
 
   test("a tampered byte does not open — every byte of the nonce and the ciphertext", async () => {
-    const sealed = await seal({ email: "dana.okafor@bank.example" }, SECRET);
+    const sealed = await seal({ email: "alice@bank.example" }, SECRET);
 
     // Every byte, both parts: the 12-byte nonce and the ciphertext with its
     // 16-byte GCM tag. Exhaustive rather than sampled, because the thing under
@@ -103,7 +103,7 @@ describe("the seal", () => {
   });
 
   test("truncating the tag does not open either", async () => {
-    const sealed = await seal({ email: "dana.okafor@bank.example" }, SECRET);
+    const sealed = await seal({ email: "alice@bank.example" }, SECRET);
     const body = Buffer.from(sealed.split(".")[2]!, "base64url");
     const parts = sealed.split(".");
     for (const dropped of [1, 8, 16]) {
@@ -114,7 +114,7 @@ describe("the seal", () => {
   });
 
   test("a value from another format version does not open", async () => {
-    const sealed = await seal({ email: "dana.okafor@bank.example" }, SECRET);
+    const sealed = await seal({ email: "alice@bank.example" }, SECRET);
     expect(await openSealed(sealed.replace(/^v1\./, "v2."), SECRET)).toBeNull();
   });
 
@@ -136,7 +136,7 @@ describe("chunking past 4KB", () => {
   test("a value longer than the limit becomes several cookies and joins back", async () => {
     // Two JWT-shaped tokens: what a real gateway response puts in this cookie.
     const session: Session = {
-      email: "dana.okafor@bank.example",
+      email: "alice@bank.example",
       signed_in_at: 1_760_000_000_000,
       gateway: {
         access_token: `header.${"a".repeat(2600)}.signature`,
@@ -177,7 +177,7 @@ describe("chunking past 4KB", () => {
       headers,
       new Request("https://cg-web-sa31.onrender.com/"),
       {
-        email: "dana.okafor@bank.example",
+        email: "alice@bank.example",
         signed_in_at: 1,
         gateway: {
           access_token: "t".repeat(4000),
@@ -202,7 +202,7 @@ describe("chunking past 4KB", () => {
       long,
       new Request("https://cg-web-sa31.onrender.com/"),
       {
-        email: "dana.okafor@bank.example",
+        email: "alice@bank.example",
         signed_in_at: 1,
         gateway: { access_token: "t".repeat(7000), expires_at: 2, client_id: "mcp-client-1" },
       },
@@ -212,14 +212,14 @@ describe("chunking past 4KB", () => {
     expect(readCookies(wide).size).toBe(3);
 
     const short = new Headers();
-    await writeSession(short, wide, { email: "sam.reyes@bank.example", signed_in_at: 3 }, config());
+    await writeSession(short, wide, { email: "bob@bank.example", signed_in_at: 3 }, config());
 
     // Every chunk beyond the one now needed is expired in the same response —
     // a leftover holding a fragment of the previous session would make every
     // later read fail, on every request, with no cause on screen.
     expect(short.getSetCookie().filter((raw) => /max-age=0/i.test(raw)).length).toBe(2);
     expect(await readSession(requestCarrying(short), config())).toEqual({
-      email: "sam.reyes@bank.example",
+      email: "bob@bank.example",
       signed_in_at: 3,
     });
   });
@@ -239,7 +239,7 @@ describe("chunking past 4KB", () => {
       headers,
       new Request("https://cg-web-sa31.onrender.com/"),
       {
-        email: "dana.okafor@bank.example",
+        email: "alice@bank.example",
         signed_in_at: 1,
         gateway: { access_token: "t".repeat(7000), expires_at: 2, client_id: "mcp-client-1" },
       },
@@ -260,7 +260,7 @@ describe("the attributes a browser is given", () => {
     await writeSession(
       headers,
       new Request("https://cg-web-sa31.onrender.com/"),
-      { email: "dana.okafor@bank.example", signed_in_at: 1 },
+      { email: "alice@bank.example", signed_in_at: 1 },
       config(),
     );
     for (const raw of headers.getSetCookie()) {
@@ -278,7 +278,7 @@ describe("the attributes a browser is given", () => {
     await writeSession(
       headers,
       new Request("http://localhost:4400/"),
-      { email: "dana.okafor@bank.example", signed_in_at: 1 },
+      { email: "alice@bank.example", signed_in_at: 1 },
       config({ PUBLIC_URL: "http://localhost:4400" }),
     );
     for (const raw of headers.getSetCookie()) {

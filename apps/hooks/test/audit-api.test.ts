@@ -29,8 +29,8 @@ import { createServer } from "../src/server.ts";
 
 const SECRET = "test-secret";
 const STORE_TOKEN = "test-store-token";
-const DANA = "dana.okafor@bank.example";
-const SAM = "sam.reyes@bank.example";
+const DANA = "alice@bank.example";
+const SAM = "bob@bank.example";
 
 const config: HooksConfig = {
   port: 0,
@@ -119,7 +119,7 @@ function seed(count: number, fields: SeedFields = {}): string[] {
   return ids;
 }
 
-/** A real `/pre` Dana is refused: one audit row, written by the hook itself. */
+/** A real `/pre` Alice is refused: one audit row, written by the hook itself. */
 const denyDana = (executionId: string) =>
   fetch(`${base}/pre`, {
     method: "POST",

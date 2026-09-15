@@ -135,7 +135,7 @@ export function planResume(
  * The injected message, built from the record and from nothing else.
  *
  * Read it as a sentence a colleague would say, because that is exactly what it
- * is: *"Riley Chen decided approval request apr_… — approve_loan on LN-2291 for
+ * is: *"Charlie decided approval request apr_… — approve_loan on LN-2291 for
  * 95000 — as approved at …"*. It names who, what, how much and when. It does
  * not say what follows from that, in either direction.
  */

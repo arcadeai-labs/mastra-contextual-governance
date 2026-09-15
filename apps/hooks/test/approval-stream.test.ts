@@ -40,9 +40,9 @@ import { openGovernance } from "../src/policy-store.ts";
 import { createServer } from "../src/server.ts";
 import { openEventStream } from "./sse-reader.ts";
 
-const DANA = "dana.okafor@bank.example";
-const RILEY = "riley.chen@bank.example";
-const MORGAN = "morgan.ellis@bank.example";
+const DANA = "alice@bank.example";
+const RILEY = "charlie@bank.example";
+const MORGAN = "michael@bank.example";
 
 const HOOK_SECRET = "hook-secret-for-tests";
 const STORE_TOKEN = "store-token-for-tests";
@@ -132,8 +132,8 @@ async function pre(
 }
 
 /**
- * The whole of act 2 up to the decision: Dana is refused, the escalation is
- * written, Riley's click passes `/pre` and mints a pending grant.
+ * The whole of act 2 up to the decision: Alice is refused, the escalation is
+ * written, Charlie's click passes `/pre` and mints a pending grant.
  *
  * Everything here is the real service answering real HTTP; nothing shortcuts
  * to the database.

@@ -1,12 +1,12 @@
 /**
  * `GET /audit` — the audit log, read over HTTP (#62).
  *
- *     GET /audit?user_id=dana.okafor@bank.example&hook=pre&decision=deny&limit=20
+ *     GET /audit?user_id=alice@bank.example&hook=pre&decision=deny&limit=20
  *     Authorization: Bearer $ARCADE_HOOK_SIGNING_SECRET
  *
  *     { "rows": [ …GovernanceEvent… ], "count": 20, "total": 8278,
  *       "limit": 20, "order": "newest_first",
- *       "filters": { "user_id": "dana.okafor@bank.example", "hook": "pre", "decision": "deny" } }
+ *       "filters": { "user_id": "alice@bank.example", "hook": "pre", "decision": "deny" } }
  *
  * `rows` are `audit_log` rows exactly as the table holds them — the same
  * `GovernanceEvent` the stream carries, not the panel's derived shape, because

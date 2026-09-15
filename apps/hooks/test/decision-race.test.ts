@@ -30,9 +30,9 @@ import { createPolicyCache, type PolicyCache } from "../src/policy-cache.ts";
 import { openGovernance } from "../src/policy-store.ts";
 import { createServer } from "../src/server.ts";
 
-const DANA = "dana.okafor@bank.example";
-const RILEY = "riley.chen@bank.example";
-const MORGAN = "morgan.ellis@bank.example";
+const DANA = "alice@bank.example";
+const RILEY = "charlie@bank.example";
+const MORGAN = "michael@bank.example";
 
 const HOOK_SECRET = "hook-secret-for-tests";
 const STORE_TOKEN = "store-token-for-tests";
@@ -123,7 +123,7 @@ async function escalate(resourceId: string): Promise<ApprovalRecord> {
   return ((await response.json()) as { request: ApprovalRecord }).request;
 }
 
-/** `/pre` for `Approvals.Decide`, as Riley. Authorizes; records nothing. */
+/** `/pre` for `Approvals.Decide`, as Charlie. Authorizes; records nothing. */
 const authorize = (id: string, decision: "approved" | "denied") =>
   pre(RILEY, "Approvals", "Decide", { request_id: id, decision });
 
@@ -131,7 +131,7 @@ const authorize = (id: string, decision: "approved" | "denied") =>
 const record = (id: string, decision: "approved" | "denied") =>
   store("POST", `/approvals/${id}/decision`, { decision, note: null, decided_by: RILEY });
 
-/** Dana's retry of the call that was blocked in the first place. */
+/** Alice's retry of the call that was blocked in the first place. */
 const retry = (resourceId: string) =>
   pre(DANA, "Loan", "ApproveLoan", { loan_id: resourceId, amount: 95_000 });
 

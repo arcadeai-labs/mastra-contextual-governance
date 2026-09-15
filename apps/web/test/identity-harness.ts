@@ -47,10 +47,10 @@ const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
 
 /** The four demo people, as `apps/idp/src/fixtures/people.json` seeds them. */
 export const PEOPLE = {
-  dana: { email: "dana.okafor@bank.example", password: "dana-demo-2026" },
-  sam: { email: "sam.reyes@bank.example", password: "sam-demo-2026" },
-  riley: { email: "riley.chen@bank.example", password: "riley-demo-2026" },
-  morgan: { email: "morgan.ellis@bank.example", password: "morgan-demo-2026" },
+  dana: { email: "alice@bank.example", password: "dana-demo-2026" },
+  sam: { email: "bob@bank.example", password: "sam-demo-2026" },
+  riley: { email: "charlie@bank.example", password: "riley-demo-2026" },
+  morgan: { email: "michael@bank.example", password: "morgan-demo-2026" },
 } as const;
 
 export type PersonaKey = keyof typeof PEOPLE;

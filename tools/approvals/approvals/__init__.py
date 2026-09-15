@@ -260,7 +260,7 @@ async def request_approval(
         )
     except SlackError as exc:
         # The record exists and the routing stands; what failed is the notice.
-        # Saying so precisely is the difference between "go and tell Riley" and
+        # Saying so precisely is the difference between "go and tell Charlie" and
         # an agent that believes it has escalated something nobody has seen.
         raise ToolExecutionError(
             f"Approval request {request_id} was recorded and routed to "

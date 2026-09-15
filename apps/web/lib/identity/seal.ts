@@ -8,7 +8,7 @@
  * something the browser carries, so what "sealed" means has to be exact:
  *
  * - **AES-256-GCM**, so the cookie is unreadable *and* unforgeable without the
- *   key. A signed-but-readable cookie would put Dana's gateway token in her own
+ *   key. A signed-but-readable cookie would put Alice's gateway token in her own
  *   DevTools, and a demo whose thesis is that controls live outside the model
  *   should not hand the browser a credential to read.
  * - **The key comes from the environment and nowhere else.** There is no

@@ -9,7 +9,7 @@
  * live here, and **a hook call touches the database only to append its audit
  * rows**. `current()` is a memory read and nothing else.
  *
- * But the database carries live edits. A presenter raises Dana's clearance in
+ * But the database carries live edits. A presenter raises Alice's clearance in
  * act 1 and expects act 3 to honour it; a rule the cache never picks up is the
  * same failure as losing the edit to a restart. So a background poller reads
  * one integer, `policy_revision` — bumped by triggers on every write to

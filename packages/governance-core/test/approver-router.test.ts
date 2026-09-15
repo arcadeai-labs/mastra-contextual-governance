@@ -9,8 +9,8 @@
  * test_routing.py` loads exactly these rows. A row added here is checked on
  * both sides; a row deleted here stops being checked on both sides.
  *
- * The roster is the demo cast from DESIGN.md, because "$95K goes to Riley, not
- * Morgan" is a line the presenter says out loud and this is where it is pinned.
+ * The roster is the demo cast from DESIGN.md, because "$95K goes to Charlie, not
+ * Michael" is a line the presenter says out loud and this is where it is pinned.
  */
 import { describe, expect, it } from "bun:test";
 import { Subject } from "@cg/policy-schema";

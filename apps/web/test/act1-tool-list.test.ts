@@ -10,7 +10,7 @@
  *
  * ## The two claims, and which half of each a keyless run can make
  *
- * The beat is: **as Sam, `Loan_ApproveLoan` is absent, and no denied tool call
+ * The beat is: **as Bob, `Loan_ApproveLoan` is absent, and no denied tool call
  * appears in the audit log because no call was attempted.** Both halves of the
  * first claim and both halves of the second are mechanical and are measured
  * here without a model: the gateway's answer, the agent's toolset built from
@@ -23,7 +23,7 @@
  * `SCRIPTED` has not measured that sentence.**
  *
  * The negative check is the one that is easy to skip and the reason the issue
- * calls it out: a denial in the audit log as Sam would mean the access hook did
+ * calls it out: a denial in the audit log as Bob would mean the access hook did
  * *not* do its job and something else produced that event.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -39,7 +39,7 @@ import { writeSession, type Session } from "../lib/identity/session.ts";
 const LIVE_KEY = liveModelKey();
 const TURN_TIMEOUT_MS = LIVE_KEY ? 240_000 : 30_000;
 
-/** The prompt the demo is built on, verbatim — the same one #14 drives as Dana. */
+/** The prompt the demo is built on, verbatim — the same one #14 drives as Alice. */
 const DEMO_PROMPT =
   "Approve the loan for $95K and double-check your work so you don't make any mistakes.";
 
@@ -142,7 +142,7 @@ function appendedSince(after: Array<Record<string, unknown>>, before: number): A
 // ---------------------------------------------------------------------------
 
 describe("the tool list comes from the gateway, per signed-in persona", () => {
-  test("as Sam, the approval tool is absent — not listed and refused, absent", async () => {
+  test("as Bob, the approval tool is absent — not listed and refused, absent", async () => {
     const result = await sessionTools(sessionFor(SAM), { config: harness.config });
 
     expect(result.ok).toBe(true);
@@ -202,7 +202,7 @@ describe("the tool list comes from the gateway, per signed-in persona", () => {
     }
   });
 
-  test("as Dana, the same call lists it", async () => {
+  test("as Alice, the same call lists it", async () => {
     const result = await sessionTools(sessionFor(DANA), { config: harness.config });
 
     expect(result.ok).toBe(true);
@@ -237,7 +237,7 @@ describe("the tool list comes from the gateway, per signed-in persona", () => {
 
   test("the list is not a catalogue the page holds: what /access hid never reached this process", () => {
     // `onList` records what the gateway answered and what it took away. The
-    // approval tool is in `hidden` for Sam, and `advertised` — the list that
+    // approval tool is in `hidden` for Bob, and `advertised` — the list that
     // crossed the wire — never carried it.
     const samLists = harness.lists.filter((list) => list.user_id === SAM);
     expect(samLists.length).toBeGreaterThan(0);
@@ -319,7 +319,7 @@ describe("who the /access frame names", () => {
 // The beat
 // ---------------------------------------------------------------------------
 
-describe("the $95K prompt, as Sam, who has no approval authority at all", () => {
+describe("the $95K prompt, as Bob, who has no approval authority at all", () => {
   let result: Turned;
   let appended: Array<Record<string, unknown>>;
   let callsBefore: number;
@@ -350,7 +350,7 @@ describe("the $95K prompt, as Sam, who has no approval authority at all", () => 
     expect(result.status).toBe(200);
     expect(lastSurface?.advertised).not.toContain(APPROVE_WIRE);
     expect(lastSurface?.governed).not.toContain(APPROVE_WIRE);
-    // Everything except the one tool act 1 hides. Sam keeps the approvals tools
+    // Everything except the one tool act 1 hides. Bob keeps the approvals tools
     // — nothing in the policy takes them from him, and act 1's claim is about
     // `ApproveLoan` specifically, not about a narrower surface in general.
     expect(lastSurface?.governed).toEqual([

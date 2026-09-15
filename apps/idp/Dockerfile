@@ -10,9 +10,13 @@ WORKDIR /app
 COPY apps/idp/package.json apps/idp/bun.lock ./
 RUN bun install --frozen-lockfile --production
 
-COPY apps/idp/src ./src
-COPY apps/idp/scripts ./scripts
+COPY apps/idp/src ./apps/idp/src
+COPY apps/idp/scripts ./apps/idp/scripts
+# The persona email contract is shared with cg-hooks and cg-web. apps/idp is
+# intentionally not a workspace member, but the public configuration contract
+# still has one source of truth.
+COPY packages/policy-schema/contract ./packages/policy-schema/contract
 
 ENV NODE_ENV=production
 EXPOSE 8080
-CMD ["bun", "src/index.ts"]
+CMD ["bun", "apps/idp/src/index.ts"]

@@ -39,7 +39,7 @@ const COMPLETE = {
   ARCADE_GATEWAY_ID: "cg-demo-us",
   ARCADE_API_KEY: "arcade-key",
   // The agent, since #14. In this list for the same reason as the rest: a
-  // cg-web without it signs Dana in, holds a gateway token, and then the chat
+  // cg-web without it signs Alice in, holds a gateway token, and then the chat
   // page fails at the point of use.
   ANTHROPIC_API_KEY: "anthropic-key",
 } as const;
@@ -107,7 +107,7 @@ describe("the banner, with sign-in itself broken", () => {
     // this demo has personas at all.
     expect(html).toContain("disabled");
     expect(html).not.toContain(`href="/api/auth/signin?persona=dana"`);
-    expect(text(html)).toContain("Dana Okafor");
+    expect(text(html)).toContain("Alice");
     expect(text(html)).toContain("IDP_CLIENT_SECRET is not set");
   });
 

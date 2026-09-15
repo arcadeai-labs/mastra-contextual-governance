@@ -35,8 +35,8 @@ import { handleAccess, type HandlerContext } from "../src/handlers.ts";
 import { createPolicyCache, type CacheState } from "../src/policy-cache.ts";
 import { openGovernance } from "../src/policy-store.ts";
 
-const DANA = "dana.okafor@bank.example";
-const SAM = "sam.reyes@bank.example";
+const DANA = "alice@bank.example";
+const SAM = "bob@bank.example";
 
 const V = [{ version: "1.0.0" }];
 const LOAN_TOOLS = { SearchLoans: V, GetLoan: V, ApproveLoan: V, DenyLoan: V };
@@ -98,7 +98,7 @@ describe("one /access call, one row per governed tool plus one summary", () => {
     expect(Object.keys(response.deny ?? {})).toHaveLength(3);
   });
 
-  test("act 1 survives: Sam's hidden tool is still a row naming that tool and the rule that hid it", () => {
+  test("act 1 survives: Bob's hidden tool is still a row naming that tool and the rule that hid it", () => {
     const { events } = handleAccess(
       { user_id: SAM, toolkits: projectCatalogue(50, 40) },
       ready(),

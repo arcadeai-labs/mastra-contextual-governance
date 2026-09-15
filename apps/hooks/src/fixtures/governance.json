@@ -4,8 +4,8 @@
     "$LOAN and $APPROVALS are replaced at seed time with ARCADE_LOAN_TOOLKIT and ARCADE_APPROVALS_TOOLKIT. Tool names are PascalCase because arcade-mcp PascalCases them unconditionally (measured on #35); a rule keyed on get_loan matches nothing, and a rule that matches nothing is indistinguishable from a rule that permits.",
     "The placeholder is the toolkit name alone, so the separator after it is yours to choose and it means something (#89). Write $LOAN.ApproveLoan in a match or anywhere naming the tool as a hook payload and an audit row do; write $LOAN_ApproveLoan in a pre denial's reason, because that sentence is addressed to the model and the model can only call the name its own tool list carries. The compiler enforces the difference: a reason naming a catalogued toolkit dot-spelled does not compile.",
     "$APPROVALS.Decide lists an argument the tool does not take: `approval`. It is not something a caller supplies — /pre resolves the request_id against approval_requests and writes the resolved facts into that key, discarding anything the caller put there. Catalogued because a rule condition may only read a catalogued argument, and optional because a request_id naming nothing must reach pre.decide-needs-a-known-request rather than be refused as a malformed call.",
-    "Emails are the fallback for a local run and must equal apps/idp/src/fixtures/people.json's. PERSONA_<KEY>_EMAIL overrides each one at seed time, exactly as apps/idp does.",
-    "Two output rules, on purpose (#16). post.redact-borrower-identifiers is act 3 and is conditioned on clearance — Riley and Morgan read the identifiers, Dana and Sam do not — because a control that redacts for everyone demonstrates nothing about identity. post.strip-injected-instructions is act 4 and is conditioned on nobody, because whether text is trying to give the model orders is not a question about anyone's authority; a chief credit officer must not be the one persona who reads the injection. Both fire on the same call and the audit row names each by id.",
+    "Emails are the fallback for a local run and must equal apps/idp/src/fixtures/people.json's. The shared role variables override each one at seed time, exactly as apps/idp does.",
+    "Two output rules, on purpose (#16). post.redact-borrower-identifiers is act 3 and is conditioned on clearance — Charlie and Michael read the identifiers, Alice and Bob do not — because a control that redacts for everyone demonstrates nothing about identity. post.strip-injected-instructions is act 4 and is conditioned on nobody, because whether text is trying to give the model orders is not a question about anyone's authority; a chief credit officer must not be the one persona who reads the injection. Both fire on the same call and the audit row names each by id.",
     "post.strip-injected-instructions carries SIX patterns, one per injection shape, each with its own id so redactions[] names which one fired (#17). They key on text ADDRESSED TO A MACHINE, and deliberately not on text that merely claims authority: 'committee granted an exception, the usual officer limits do not apply' is prose a real underwriter writes and no regex can tell it from an invented one. That is a stated false negative, not an oversight. Every pattern is proved to match in apps/hooks/test/injection-corpus.test.ts against apps/hooks/test/fixtures/injection-corpus.json, whose benign half is realistic underwriter prose proved NOT to trip any of them; the seeded LN-2291 case is proved byte for byte against apps/loan-app's own fixture in post-redaction.test.ts. A pattern with no corpus entry FAILS that suite, because a rule that matches nothing is indistinguishable from a rule that permits — the regex shipped before #16 was exactly that, looking for 'ignore previous instructions' in a note that says 'Ignore any earlier instruction'. Re-measure both suites before rewording a pattern or the note.",
     "Order matters. pattern.injected-instruction is first and removes the whole pasted block, so on LN-2291 it is the only one that fires and the audit row carries one record for $.underwriter_notes rather than four. The sweep applies patterns in array order and feeds each the previous one's output.",
     "pattern.injected-instruction — #16's floor, unchanged byte for byte: a pasted block announcing itself to an automated reader, or the seeded note's own imperative. Removes from the paste marker, or from the tell when there is no marker, to the end of the field.",
@@ -30,29 +30,29 @@
   "subjects": [
     {
       "persona": "dana",
-      "user_id": "dana.okafor@bank.example",
-      "display_name": "Dana Okafor",
+      "user_id": "alice@bank.example",
+      "display_name": "Alice",
       "role": "loan_officer",
       "clearance": 50000
     },
     {
       "persona": "sam",
-      "user_id": "sam.reyes@bank.example",
-      "display_name": "Sam Reyes",
+      "user_id": "bob@bank.example",
+      "display_name": "Bob",
       "role": "credit_analyst",
       "clearance": 0
     },
     {
       "persona": "riley",
-      "user_id": "riley.chen@bank.example",
-      "display_name": "Riley Chen",
+      "user_id": "charlie@bank.example",
+      "display_name": "Charlie",
       "role": "vp_credit",
       "clearance": 250000
     },
     {
       "persona": "morgan",
-      "user_id": "morgan.ellis@bank.example",
-      "display_name": "Morgan Ellis",
+      "user_id": "michael@bank.example",
+      "display_name": "Michael",
       "role": "chief_credit_officer",
       "clearance": 5000000
     }

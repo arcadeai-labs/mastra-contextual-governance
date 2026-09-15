@@ -36,8 +36,8 @@ const ESCALATION = "Approvals_RequestApproval";
 const ESCALATION_RESULT = {
   structuredContent: {
     request_id: "apr_demo",
-    approver: "riley.chen@bank.example",
-    approver_display_name: "Riley Chen",
+    approver: "charlie@bank.example",
+    approver_display_name: "Charlie",
   },
 };
 
@@ -155,7 +155,7 @@ describe("the model still gets its last word", () => {
     // never produce it.
     const { events } = await drive([
       { type: "tool-result", payload: { toolName: ESCALATION, result: ESCALATION_RESULT } },
-      { type: "text-delta", payload: { text: "Approval requested from Riley Chen, " } },
+      { type: "text-delta", payload: { text: "Approval requested from Charlie, " } },
       { type: "text-delta", payload: { text: "VP Credit. Waiting." } },
     ]);
 
@@ -171,7 +171,7 @@ describe("the model still gets its last word", () => {
         .filter((event): event is Extract<ChatEvent, { kind: "text" }> => event.kind === "text")
         .map((event) => event.text)
         .join(""),
-    ).toBe("Approval requested from Riley Chen, VP Credit. Waiting.");
+    ).toBe("Approval requested from Charlie, VP Credit. Waiting.");
   });
 
   test("the waiting event names the approver off the tool's result, not the reply", async () => {
@@ -183,8 +183,8 @@ describe("the model still gets its last word", () => {
       kind: "waiting",
       tool: ESCALATION,
       request_id: "apr_demo",
-      approver: "Riley Chen",
-      approver_id: "riley.chen@bank.example",
+      approver: "Charlie",
+      approver_id: "charlie@bank.example",
     });
   });
 
@@ -325,7 +325,7 @@ describe("the turn's toolset shuts when the escalation returns", () => {
 
 describe("reading the escalation's result", () => {
   test("it is found through either wrapper the transport has used", () => {
-    const flat = { request_id: "apr_1", approver: "riley.chen@bank.example" };
+    const flat = { request_id: "apr_1", approver: "charlie@bank.example" };
     expect(approvalRequested(flat)?.request_id).toBe("apr_1");
     expect(approvalRequested({ structuredContent: flat })?.request_id).toBe("apr_1");
     expect(
@@ -337,6 +337,6 @@ describe("reading the escalation's result", () => {
     expect(approvalRequested(null)).toBeNull();
     expect(approvalRequested("a string")).toBeNull();
     expect(approvalRequested({ request_id: "" })).toBeNull();
-    expect(approvalRequested({ approver: "riley.chen@bank.example" })).toBeNull();
+    expect(approvalRequested({ approver: "charlie@bank.example" })).toBeNull();
   });
 });

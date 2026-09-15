@@ -111,7 +111,7 @@ class Browser {
 }
 
 /**
- * Walks Dana to a real, unused authorization code.
+ * Walks Alice to a real, unused authorization code.
  *
  * The `authorization_code` grant consumes the code **before** it authenticates
  * the client, so a placeholder code answers `invalid_grant` without ever
@@ -305,7 +305,7 @@ describe("authorization_code: the four ways a client can present itself", () => 
     expect(token.error).toBeUndefined();
     expect(token.access_token).toBeTruthy();
 
-    // The token is worth something: the same access token identifies Dana at
+    // The token is worth something: the same access token identifies Alice at
     // userinfo. A 200 with a token nothing accepts would pass a weaker check.
     const who = await fetch(`${baseUrl}/oauth2/userinfo`, {
       headers: { authorization: `Bearer ${token.access_token}` },

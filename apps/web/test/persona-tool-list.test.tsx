@@ -22,15 +22,15 @@ import { PersonaToolList } from "../components/identity/PersonaToolList.tsx";
 import type { SessionTools } from "../lib/agent/tool-list.ts";
 import type { Session } from "../lib/identity/session.ts";
 
-const DANA = "dana.okafor@bank.example";
-const SAM = "sam.reyes@bank.example";
+const DANA = "alice@bank.example";
+const SAM = "bob@bank.example";
 
 /** The roster reads `process.env`, which is where a deployment's four addresses live. */
 const CONFIGURED = {
-  PERSONA_DANA_EMAIL: DANA,
-  PERSONA_SAM_EMAIL: SAM,
-  PERSONA_RILEY_EMAIL: "riley.chen@bank.example",
-  PERSONA_MORGAN_EMAIL: "morgan.ellis@bank.example",
+  PERSONA_LOAN_OFFICER_EMAIL: DANA,
+  PERSONA_CREDIT_ANALYST_EMAIL: SAM,
+  PERSONA_VP_CREDIT_EMAIL: "charlie@bank.example",
+  PERSONA_CHIEF_CREDIT_OFFICER_EMAIL: "michael@bank.example",
 } as const;
 
 const saved = new Map<string, string | undefined>();
@@ -79,7 +79,7 @@ describe("the persona, with role and authority", () => {
   test("all three are on screen, and the email is the identity", () => {
     const markup = render({ session: session(DANA), tools: DANA_TOOLS });
 
-    expect(markup).toContain("Dana Okafor");
+    expect(markup).toContain("Alice");
     expect(markup).toContain("Loan Officer");
     expect(markup).toContain("$50,000");
     // The address, always: it is the string Arcade sees as `user_id` and the
@@ -88,10 +88,10 @@ describe("the persona, with role and authority", () => {
     expect(markup).toContain(DANA);
   });
 
-  test("Sam's authority is zero, and zero is written out rather than left blank", () => {
+  test("Bob's authority is zero, and zero is written out rather than left blank", () => {
     const markup = render({ session: session(SAM), tools: SAM_TOOLS });
 
-    expect(markup).toContain("Sam Reyes");
+    expect(markup).toContain("Bob");
     expect(markup).toContain("Credit Analyst");
     expect(markup).toContain("$0");
   });
@@ -107,7 +107,7 @@ describe("the persona, with role and authority", () => {
     const markup = render({ session: session("stranger@elsewhere.example"), tools: SAM_TOOLS });
 
     expect(markup).toContain("stranger@elsewhere.example");
-    expect(markup).toContain("PERSONA_*_EMAIL");
+    expect(markup).toContain("role email variables");
     // No borrowed role and no borrowed figure.
     expect(markup).not.toContain("Loan Officer");
     expect(markup).not.toContain("$50,000");
@@ -120,7 +120,7 @@ describe("the persona, with role and authority", () => {
 });
 
 describe("the tool list", () => {
-  test("as Sam the approval tool is absent — not struck through, not greyed out, absent", () => {
+  test("as Bob the approval tool is absent — not struck through, not greyed out, absent", () => {
     const markup = render({ session: session(SAM), tools: SAM_TOOLS });
 
     expect(markup).toContain("Loan_SearchLoans");
@@ -132,7 +132,7 @@ describe("the tool list", () => {
     expect(markup).not.toContain("approve_loan");
   });
 
-  test("as Dana it is there", () => {
+  test("as Alice it is there", () => {
     expect(render({ session: session(DANA), tools: DANA_TOOLS })).toContain("Loan_ApproveLoan");
   });
 

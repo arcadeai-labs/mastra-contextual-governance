@@ -69,8 +69,8 @@ risk, so neither is argued to agree with the other: both load
 and are checked row for row against it. A row added there is checked on both
 sides on the next run.
 
-    $95,000 from Dana ($50K) with Riley ($250K) and Morgan ($5M) on the roster
-    → Riley. Morgan is recorded as a candidate and deliberately not bothered.
+    $95,000 from Alice ($50K) with Charlie ($250K) and Michael ($5M) on the roster
+    → Charlie. Michael is recorded as a candidate and deliberately not bothered.
 
 ## Slack
 
@@ -173,7 +173,7 @@ Every subject the control plane knows about. Routing needs the whole roster,
 because who was *not* asked is as load-bearing as who was.
 
 ```json
-200 { "subjects": [ { "user_id": "riley@…", "display_name": "Riley",
+200 { "subjects": [ { "user_id": "charlie@…", "display_name": "Charlie",
                       "role": "vp_credit", "clearance": 250000,
                       "attributes": {} } ] }
 ```
@@ -181,10 +181,10 @@ because who was *not* asked is as load-bearing as who was.
 ### `POST /approvals`
 
 ```json
-<- { "requester_id": "dana@…", "action": "approve_loan",
+<- { "requester_id": "alice@…", "action": "approve_loan",
      "resource_id": "LN-2291", "amount": 95000,
-     "justification": "…", "approver_id": "riley@…",
-     "candidate_approver_ids": ["riley@…", "morgan@…"],
+     "justification": "…", "approver_id": "charlie@…",
+     "candidate_approver_ids": ["charlie@…", "michael@…"],
      "required_clearance": 95000 }
 
 -> 201 { "request": <the record above, status "pending"> }
@@ -219,7 +219,7 @@ sent, so anyone who has the link can reach this. Whether the person looking may
 
 ```json
 <- { "decision": "approved" | "denied", "note": string | null,
-     "decided_by": "riley@…" }
+     "decided_by": "charlie@…" }
 
 -> 200 { "request": <the record above, status now the decision> }
 -> 404 { "error": "no approval request apr_…" }

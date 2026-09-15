@@ -2,7 +2,7 @@
  * #94 — a gateway that refuses the bearer, told apart from a gateway that has
  * none of our tools.
  *
- * The failure this file exists to keep out: Dana, signed in, asks for the $95K
+ * The failure this file exists to keep out: Alice, signed in, asks for the $95K
  * loan on the live Render URL and reads *"The gateway advertised 0 tools and
  * none of them belong to \"Loan\" or \"Approvals\" … Check ARCADE_LOAN_TOOLKIT
  * and ARCADE_APPROVALS_TOOLKIT"*. Both variables were correct. Her gateway
@@ -33,7 +33,7 @@ import { SignInPanel } from "../components/identity/SignInPanel.tsx";
 
 const SESSION_SECRET = "gateway-rejection-suite-session-secret-0123456789";
 const GATEWAY_ID = "cg-demo-us";
-const DANA = "dana.okafor@bank.example";
+const DANA = "alice@bank.example";
 /** A value no test may ever find in a response body, a log line or an event. */
 const TOKEN = "gw-access-token-that-must-never-be-printed";
 
@@ -132,7 +132,7 @@ function surfaceFor(arcadeApiUrl: string): IdentitySurface {
   });
 }
 
-/** The cookie a browser signed in as Dana and holding a gateway token would send. */
+/** The cookie a browser signed in as Alice and holding a gateway token would send. */
 async function browserCookie(config: IdentitySurface, session: Session): Promise<string> {
   const headers = new Headers();
   await writeSession(headers, new Request("http://localhost/"), session, config);
@@ -386,7 +386,7 @@ describe("POST /api/chat, when the gateway rejects this browser's token", () => 
     const config = surfaceFor(gateway.url);
     try {
       const jar = applyCookies(new Map(), [
-        // The browser's starting state, as a signed-in Dana holding a bearer.
+        // The browser's starting state, as a signed-in Alice holding a bearer.
         ...(await browserCookie(config, signedInWithToken())).split("; "),
       ]);
 

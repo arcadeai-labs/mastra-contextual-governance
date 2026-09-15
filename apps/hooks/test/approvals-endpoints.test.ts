@@ -19,9 +19,9 @@ import { createPolicyCache, type PolicyCache } from "../src/policy-cache.ts";
 import { openGovernance } from "../src/policy-store.ts";
 import { createServer } from "../src/server.ts";
 
-const DANA = "dana.okafor@bank.example";
-const RILEY = "riley.chen@bank.example";
-const MORGAN = "morgan.ellis@bank.example";
+const DANA = "alice@bank.example";
+const RILEY = "charlie@bank.example";
+const MORGAN = "michael@bank.example";
 
 const HOOK_SECRET = "hook-secret-for-tests";
 const STORE_TOKEN = "store-token-for-tests";
@@ -174,7 +174,7 @@ describe("GET /approvals/roster", () => {
 
     // The whole roster, because who was *not* asked is as load-bearing as who was.
     expect(subjects.map((s) => s.user_id).sort()).toEqual(
-      ["dana.okafor@bank.example", "morgan.ellis@bank.example", "riley.chen@bank.example", "sam.reyes@bank.example"],
+      ["alice@bank.example", "bob@bank.example", "charlie@bank.example", "michael@bank.example"],
     );
     for (const subject of subjects) {
       expect(Object.keys(subject).sort()).toEqual(
@@ -204,13 +204,13 @@ describe("POST /approvals", () => {
   test("resolves display names from the roster, so the page need not join", async () => {
     const { body } = await create();
     const record = ApprovalRecord.parse(body.request);
-    expect(record.requester_display_name).toBe("Dana Okafor");
-    expect(record.approver_display_name).toBe("Riley Chen");
+    expect(record.requester_display_name).toBe("Alice");
+    expect(record.approver_display_name).toBe("Charlie");
   });
 
   test("names the rule the blocked call actually tripped", async () => {
     // Not remembered and not guessed: the control plane re-evaluates the call
-    // Dana was refused and reports the rule that refused it.
+    // Alice was refused and reports the rule that refused it.
     const { body } = await create();
     const record = ApprovalRecord.parse(body.request);
     expect(record.rule).toEqual({
@@ -220,7 +220,7 @@ describe("POST /approvals", () => {
   });
 
   test("reports rule as null, not absent, when no rule refuses the call", async () => {
-    // Morgan's $5M clearance covers $95K, so nothing denies her the call. An
+    // Michael's $5M clearance covers $95K, so nothing denies her the call. An
     // absent key and a key set to null serialise differently; the contract
     // says null.
     const { body } = await create({ requester_id: MORGAN, approver_id: RILEY });
@@ -260,7 +260,7 @@ describe("GET /approvals/{id}", () => {
         .request,
     );
 
-    expect(read.requester_display_name).toBe("Dana Okafor");
+    expect(read.requester_display_name).toBe("Alice");
     expect(read.action).toBe("approve_loan");
     expect(read.resource_id).toBe("LN-2291");
     expect(read.amount).toBe(95_000);

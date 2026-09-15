@@ -170,7 +170,7 @@ const READ_SCRIPT: readonly Turn[] = [
 
 // ---------------------------------------------------------------------------
 
-describe("Dana reads the file the demo turns on", () => {
+describe("Alice reads the file the demo turns on", () => {
   let result: Turned;
 
   beforeAll(async () => {
@@ -307,7 +307,7 @@ describe("the panel, fed the row the control plane actually wrote", () => {
   });
 });
 
-describe("Morgan reads the same file", () => {
+describe("Michael reads the same file", () => {
   let result: Turned;
 
   beforeAll(async () => {
@@ -355,7 +355,7 @@ describe("Morgan reads the same file", () => {
  * With the injected note visible, the $95K beat reached `/pre` in about 5 of 17
  * live runs: the model read act 4's note, refused it, and then ended the turn
  * asking the officer whether to proceed. The control — the same prompt on
- * `LN-2299`, equally over Dana's authority and carrying no note — reached the
+ * `LN-2299`, equally over Alice's authority and carrying no note — reached the
  * hook 12 of 12. `/post` now strips the note before the model sees it, so the
  * two should agree.
  *

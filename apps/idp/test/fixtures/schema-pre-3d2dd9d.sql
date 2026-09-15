@@ -16,7 +16,7 @@
 --
 --   * `user.email` is declared `text not null unique` with no case-insensitive
 --     collation, so Better Auth's `where "user"."email" = ?` cannot find a row
---     stored as `Dana.Okafor@…` (#58);
+--     stored as `Alice@…` (#58);
 --   * there is no `jwks` table, because the JWT plugin arrived with #70.
 --
 -- If a future Better Auth changes the schema, this file does not move with it.

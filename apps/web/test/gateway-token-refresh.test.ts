@@ -2,7 +2,7 @@
  * #113 — a stale gateway session refreshes itself, and a turn after a forced
  * expiry completes with nobody clicking anything.
  *
- * The live failure: after a while, Dana's chat stops working on Render until
+ * The live failure: after a while, Alice's chat stops working on Render until
  * she re-authorizes by hand. #94 made that honest — a refused bearer became a
  * re-authorization card instead of "0 tools" — but honest is not the same as
  * fixed, and the card is still a human in the loop on a demo whose whole point
@@ -55,7 +55,7 @@ import { GATEWAY_ID, parseForm, startArcadeStandIn, type ArcadeStandIn } from ".
 import { scriptedModel, type Turn } from "./model.ts";
 
 const SESSION_SECRET = "gateway-refresh-suite-session-secret-0123456789";
-const DANA = "dana.okafor@bank.example";
+const DANA = "alice@bank.example";
 const WEB_URL = "http://localhost:1";
 const CALLBACK = `${WEB_URL}/api/arcade/callback`;
 

@@ -42,7 +42,7 @@ import rawFixture from "../src/fixtures/governance.json" with { type: "json" };
 
 const SECRET = "test-secret";
 const RESET_TOKEN = "test-reset-token";
-const DANA = "dana.okafor@bank.example";
+const DANA = "alice@bank.example";
 const POLL_MS = 10;
 
 const baseConfig: HooksConfig = {

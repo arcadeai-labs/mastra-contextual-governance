@@ -32,8 +32,8 @@ hops with two different mechanisms, and this service owns its side of both. Noth
 here is the agent; #14 puts the agent on top.
 
 ```
-Dana, in her own Chrome profile
-  → "Sign in as Dana"        GET /api/auth/signin?persona=dana
+Alice, in her own Chrome profile
+  → "Sign in as Alice"        GET /api/auth/signin?persona=dana
       OIDC code + PKCE against apps/idp as client C, prompt=login
     → cg-idp's login page, cg-idp's consent page
   → GET /api/auth/callback   code → token → /oauth2/userinfo → email
@@ -109,13 +109,13 @@ Measured against a real `apps/idp`, two sign-ins in one browser:
 
 ```
                               with prompt=login          without
-after "Sign in as Dana"   dana.okafor@bank.example   dana.okafor@bank.example
-after "Sign in as Sam"    sam.reyes@bank.example     dana.okafor@bank.example
+after "Sign in as Alice"   alice@bank.example   alice@bank.example
+after "Sign in as Bob"    bob@bank.example     alice@bank.example
 pages shown by the switch                        2                          0
 ```
 
 Without it the second authorization continues off the IdP session the first one left
-behind, renders nothing, and the browser comes back as Dana.
+behind, renders nothing, and the browser comes back as Alice.
 `test/identity-flow.test.ts` pins both halves.
 
 ### The verifier never reads identity from the request
@@ -206,7 +206,7 @@ curl -s localhost:3000/health
 Five fields rather than one flag, because they fail independently and the person reading
 this is trying to find out which step is outstanding. They arrived from three slices:
 `signin`, `gateway` and `verifier` with #82; `agent` with #14 — a cg-web with no
-`ANTHROPIC_API_KEY` signs Dana in, holds a gateway token, answers the verifier, and then
+`ANTHROPIC_API_KEY` signs Alice in, holds a gateway token, answers the verifier, and then
 `/chat` answers 503 the first time somebody presses Send; and `panel_stream` with #81.
 
 `panel_stream` is the odd one out and has three values, not two: `live`, `fixture` or
@@ -553,7 +553,7 @@ can be: a client-side list that merely hid a tool would look exactly like one th
 hook shortened, which is the failure this project keeps naming. `homeSurface`
 (`lib/home/surface.ts`) is called in this server component so the persona's bearer never
 leaves the process, and the result arrives at the widget as data — the arrangement
-`PersonaToolList`'s own docstring asks for. Act 1 survives the layout: as Sam,
+`PersonaToolList`'s own docstring asks for. Act 1 survives the layout: as Bob,
 `Loan_ApproveLoan` is absent from the list, and nothing in the shell draws it as hidden
 (`test/split-screen.test.tsx`, *"the shell hosts #15's gateway-sourced list, and act 1's
 absence survives it"*).
@@ -667,7 +667,7 @@ Collapsing a failure into a refusal would make an outage look like a control fir
 the comfortable direction to get it wrong, and it is still wrong.
 
 The refusal is styled as a deliberate screen rather than an error page, because it is a beat:
-Dana clicking her own link sees the same `CHECK_FAILED` her agent saw, and there is an audit
+Alice clicking her own link sees the same `CHECK_FAILED` her agent saw, and there is an audit
 row for it against her identity.
 
 ### Acting as
@@ -712,7 +712,7 @@ with #14, the tracer bullet: the first end-to-end path through every layer.
       →  api.arcade.dev/mcp/cg-demo-us  →  /access, /pre  →  tools/loan
         →  apps/loan-app
 
-**"Acting as Dana" means signed in as Dana in this browser.** There is no branch in
+**"Acting as Alice" means signed in as Alice in this browser.** There is no branch in
 `lib/agent/handlers.ts` that reads an identity from the body, the query string or a
 header — the persona comes from the sealed session and the gateway resolves the bearer
 that came out of it. An actor a request can name is an actor the model can forge
@@ -773,7 +773,7 @@ a clickable step and stops.
 **No hook fires and no audit row is written** — `DESIGN.md` open risk 2, which
 `tracer-bullet.test.ts` now measures rather than restates. Reported as a denial it would
 put a refusal on screen that no rule produced, and somebody would go looking for the rule.
-Dana and Sam hold live `cg-idp` grants so a rehearsal will not reach this path, which is
+Alice and Bob hold live `cg-idp` grants so a rehearsal will not reach this path, which is
 exactly why it has a test: the first person it breaks for is a forker on their first run.
 
 ### What the route refuses before a token is spent
@@ -920,7 +920,7 @@ which is enough to drive `tools/call` by hand with curl:
 
 ```sh
 ARCADE_API_URL=http://localhost:4405 HOOKS_PUBLIC_HOST=localhost:4401 \
-  LOAN_APP_PUBLIC_HOST=localhost:4402 PERSONA_DANA_EMAIL=dana.okafor@bank.example \
+  LOAN_APP_PUBLIC_HOST=localhost:4402 PERSONA_LOAN_OFFICER_EMAIL=alice@bank.example \
   bun run --cwd apps/web gateway-stand-in
 ```
 
@@ -984,7 +984,7 @@ Four things about the resume, in the order they would go wrong:
    typed, stored or streamed into the browser can change what is asserted about an
    approval — `DESIGN.md` rule 1, one layer up from the persona.
 2. **The injected message states a fact and gives no instruction.** *"Approval request
-   apr_… — approve_loan on LN-2291 for 95000 — was approved by Riley Chen at …"*. No
+   apr_… — approve_loan on LN-2291 for 95000 — was approved by Charlie at …"*. No
    "retry", no "proceed", nothing in the system prompt. The agent already holds the hook's
    own remediation sentence from the turn it was refused on; if it does not act on that,
    the policy row is what is wrong (`DESIGN.md` → Determinism). The message is rendered on
@@ -1054,7 +1054,7 @@ Whether a call to one then *runs* depends on `APPROVALS_STORE_TOKEN`:
 ```sh
 ARCADE_API_URL=http://localhost:4405 HOOKS_PUBLIC_HOST=localhost:4401 \
   LOAN_APP_PUBLIC_HOST=localhost:4402 APPROVALS_STORE_TOKEN=dev-store \
-  PERSONA_DANA_EMAIL=dana.okafor@bank.example \
+  PERSONA_LOAN_OFFICER_EMAIL=alice@bank.example \
   bun run --cwd apps/web gateway-stand-in
 ```
 
@@ -1078,7 +1078,7 @@ receives rather than on the source that produced it.
 them, and the tools the **gateway** answered `tools/list` with for that person's bearer.
 
 ```
-Sam Reyes  sam.reyes@…            Dana Okafor  dana.okafor@…
+Bob  bob@…            Alice  alice@…
 Credit Analyst · $0                Loan Officer · $50,000
 
 Loan_SearchLoans                   Loan_SearchLoans
@@ -1087,12 +1087,12 @@ Loan_DenyLoan                      Loan_ApproveLoan
                                    Loan_DenyLoan
 ```
 
-`Loan_ApproveLoan` is **absent** from Sam's list. Not greyed out, not struck through,
+`Loan_ApproveLoan` is **absent** from Bob's list. Not greyed out, not struck through,
 not rendered with a padlock — absent, because `access.analysts-cannot-see-approve`
-removed it from the deny map before the gateway answered. Ask Sam's agent to approve the
+removed it from the deny map before the gateway answered. Ask Bob's agent to approve the
 $95K loan and it explains it has no such capability, and **no denied tool call appears in
 the audit log**, because no call was attempted. That negative is the easy one to skip and
-it is the one worth checking: a `/pre` denial as Sam would mean the access hook did not
+it is the one worth checking: a `/pre` denial as Bob would mean the access hook did not
 do its job and something else produced that event.
 
 ### The list is the gateway's, and the page says so
@@ -1105,7 +1105,7 @@ proving the opposite thing, so the page prints where the list came from.
 
 `components/identity/PersonaToolList.tsx` holds no tool names at all, which is the
 structural half of the same guarantee: there is no version of that component that could
-show Sam a crossed-out approval tool.
+show Bob a crossed-out approval tool.
 
 The two gateway built-ins are dropped by the same allow-list the agent uses, and they are
 **named on screen** — "2 further entries were advertised by the gateway and are not the
@@ -1123,10 +1123,10 @@ What that cannot catch is a clearance a presenter raises live on stage, which
 `DESIGN.md` explicitly allows. So the card labels the number *as seeded in the policy*,
 and the audit row on the panel is what says what the control plane actually decided.
 
-The addresses are never in this repo: `PERSONA_DANA_EMAIL`, `PERSONA_SAM_EMAIL`,
-`PERSONA_RILEY_EMAIL`, `PERSONA_MORGAN_EMAIL`. An address none of them names renders with
-the email and no role — the card says the deployment names nobody there rather than
-borrowing a label.
+The addresses are never in this repo: `PERSONA_LOAN_OFFICER_EMAIL`,
+`PERSONA_CREDIT_ANALYST_EMAIL`, `PERSONA_VP_CREDIT_EMAIL`,
+`PERSONA_CHIEF_CREDIT_OFFICER_EMAIL`. An address none of them names renders with the email
+and no role — the card says the deployment names nobody there rather than borrowing a label.
 
 ### A list that did not come back is not an empty list
 
@@ -1190,32 +1190,32 @@ PORT=4400 HOOKS_PUBLIC_HOST=localhost:4401 \
 ```
 
 Now create the escalation act 2 produces — normally `tools/approvals` writes
-this after the pre-hook refuses Dana, and here you write it directly:
+this after the pre-hook refuses Alice, and here you write it directly:
 
 ```sh
 curl -s -X POST http://localhost:4401/approvals \
   -H "authorization: Bearer cg-approvals-store-dev-token-not-for-production" \
   -H 'content-type: application/json' \
-  -d '{"requester_id":"dana.okafor@bank.example","action":"approve_loan",
+  -d '{"requester_id":"alice@bank.example","action":"approve_loan",
        "resource_id":"LN-2291","amount":95000,
        "justification":"Eleven years in business, 742 credit score.",
-       "approver_id":"riley.chen@bank.example",
-       "candidate_approver_ids":["riley.chen@bank.example","morgan.ellis@bank.example"],
+       "approver_id":"charlie@bank.example",
+       "candidate_approver_ids":["charlie@bank.example","michael@bank.example"],
        "required_clearance":95000}'
 ```
 
 It answers with the record; take the `id` and open
 `http://localhost:4400/approvals/<id>`.
 
-**Beat one — Riley approves.** The page opens acting as Riley Chen, the routed
+**Beat one — Charlie approves.** The page opens acting as Charlie, the routed
 approver. Press **Approve**. You get *Decision recorded*, the status chip turns
 `approved`, and `governance.db` now holds a grant — `active`, single use,
 pinned to `LN-2291`, ceiling 95,000.
 
-**Beat two — Dana is refused.** Create a second request with the same curl.
-On its page, switch **Act as** to *Dana Okafor* and press **Approve**. You get
+**Beat two — Alice is refused.** Create a second request with the same curl.
+On its page, switch **Act as** to *Alice* and press **Approve**. You get
 the `CHECK_FAILED` screen carrying the pre-hook's own words —
-*"Dana Okafor raised this approval request, and separation of duties means the
+*"Alice raised this approval request, and separation of duties means the
 person who asks cannot also be the person who approves"* — plus the `[ref evt_…]`
 token that joins it to the audit row. The request stays `pending`.
 

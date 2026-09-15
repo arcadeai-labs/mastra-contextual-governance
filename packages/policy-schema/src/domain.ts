@@ -491,7 +491,7 @@ export type ApprovalRecord = z.infer<typeof ApprovalRecord>;
  * `requester_id` and `request_id` are both required for the same reason: a
  * client must resume only when the requester is the persona signed in on that
  * browser *and* the request is one it watched its own agent create. Without
- * the first, Morgan's open tab resumes Dana's turn.
+ * the first, Michael's open tab resumes Alice's turn.
  */
 export const ApprovalNotice = z
   .object({

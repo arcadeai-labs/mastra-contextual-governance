@@ -3,7 +3,7 @@
  *
  * The bug this file exists to keep out was live on the Render URL and invisible
  * to 553 passing tests: the model's reply arrived as `text` events of a few
- * characters each and the chat drew one block per event, so Dana's first turn
+ * characters each and the chat drew one block per event, so Alice's first turn
  * read "It / looks like the lo / an system / need / s you".
  *
  * **Why every other test missed it.** They all feed `{ kind: "text", text: "a
@@ -45,7 +45,7 @@ const { encodeEvent } = await import("../lib/agent/events.ts");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const DANA = "dana.okafor@bank.example";
+const DANA = "alice@bank.example";
 
 /**
  * The reply the 40 events spell: 120 characters, so every one of the 40 is

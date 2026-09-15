@@ -3,7 +3,7 @@
  *
  * #15 built the visible tool surface for the signed-in persona, sourced from the
  * gateway's own `tools/list`: the widget act 1 turns on, where
- * `Loan_ApproveLoan` is *absent* for Sam rather than present-and-refused. This
+ * `Loan_ApproveLoan` is *absent* for Bob rather than present-and-refused. This
  * file does not build a version of it and never did. A second tool list,
  * filtered in the browser, is exactly the "control that silently does nothing"
  * this project is organised against — it would render the same pixels while

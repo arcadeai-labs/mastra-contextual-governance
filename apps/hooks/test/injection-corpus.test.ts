@@ -41,7 +41,7 @@ import { createServer } from "../src/server.ts";
 import corpus from "./fixtures/injection-corpus.json" with { type: "json" };
 
 const SECRET = "test-secret";
-const DANA = "dana.okafor@bank.example";
+const DANA = "alice@bank.example";
 const RULE = "post.strip-injected-instructions";
 
 const config: HooksConfig = {

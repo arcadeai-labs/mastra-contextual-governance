@@ -27,7 +27,7 @@ import {
 import { startHooks, type Hooks } from "./harness.ts";
 
 const RESET_TOKEN = "reset-token-for-web-tests";
-const DANA = "dana.okafor@bank.example";
+const DANA = "alice@bank.example";
 
 let dir: string;
 let dbPath: string;

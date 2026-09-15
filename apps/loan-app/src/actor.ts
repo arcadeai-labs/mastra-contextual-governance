@@ -10,7 +10,7 @@
  *
  * Addresses are case-insensitive, so the one the provider returns is folded to
  * lower case before it is recorded (#58). Two systems that spell the same
- * person `Dana.Okafor@…` and `dana.okafor@…` join on neither, and the
+ * person `Alice@…` and `alice@…` join on neither, and the
  * decision history would then describe two people where there is one.
  *
  * This is validation, not decision-making: a token either names someone or it

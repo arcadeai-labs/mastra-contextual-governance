@@ -288,7 +288,7 @@ describe("act 2, end to end", () => {
         {
           say:
             "I could not approve LN-2291 myself — the control plane refused it as over my " +
-            "authority — so I have requested approval from Riley Chen, VP Credit. Waiting for " +
+            "authority — so I have requested approval from Charlie, VP Credit. Waiting for " +
             "their decision.",
         },
       ],
@@ -302,7 +302,7 @@ describe("act 2, end to end", () => {
     const watcher = watchForNotice(request.id);
     await watcher.ready;
 
-    // Riley presses Approve. The page calls `Approvals.Decide` through Arcade
+    // Charlie presses Approve. The page calls `Approvals.Decide` through Arcade
     // as the clicking user; here the gateway stand-in is that path, so the
     // call is governed at `/pre` exactly as it is in production.
     const decide = await post(
@@ -335,7 +335,7 @@ describe("act 2, end to end", () => {
       },
       [
         { call: APPROVE_LOAN, input: { loan_id: OVER_LIMIT_LOAN, amount: 95000 } },
-        { say: "Approved: LN-2291 for $95,000, on Riley Chen's approval." },
+        { say: "Approved: LN-2291 for $95,000, on Charlie's approval." },
       ],
     );
   }, TURN_TIMEOUT_MS * 3);
@@ -354,24 +354,24 @@ describe("act 2, end to end", () => {
     expect(calls.at(-1)).toBe(REQUEST_APPROVAL);
 
     // The approver the control plane routed to, carried on the event and named
-    // in the reply. Riley (clearance $250,000) is the lowest sufficient
-    // approver for $95,000; Morgan ($5,000,000) is deliberately not asked.
+    // in the reply. Charlie (clearance $250,000) is the lowest sufficient
+    // approver for $95,000; Michael ($5,000,000) is deliberately not asked.
     expect(waiting?.request_id).toMatch(/^apr_/);
-    expect(waiting?.approver).toBe("Riley Chen");
+    expect(waiting?.approver).toBe("Charlie");
     expect(request.approver_id).toBe(RILEY);
     expect(request.candidate_approver_ids[0]).toBe(RILEY);
 
     if (LIVE_KEY) {
       // The criterion as written: the agent's own words name the approver. Only
       // a real completion can be asked this.
-      expect(blocked.reply).toContain("Riley Chen");
+      expect(blocked.reply).toContain("Charlie");
     } else {
       // Not measurable without a real completion — the reply on this path was
       // written by this suite's script, and asserting on it would be asserting
       // on the fixture. What the scripted run does prove is that the routed
       // approver's name reached the model's prompt, in the tool's own result,
       // having been chosen by the real routing rule against the real roster.
-      expect(blocked.prompt).toContain("Riley Chen");
+      expect(blocked.prompt).toContain("Charlie");
       expect(blocked.prompt).toContain(request.id);
     }
 
@@ -413,7 +413,7 @@ describe("act 2, end to end", () => {
     // reason the hook's remediation text exists.
     expect(event.message).toContain(request.id);
     expect(event.message).toContain("approve_loan on LN-2291 for 95000");
-    expect(event.message).toContain("was approved by Riley Chen");
+    expect(event.message).toContain("was approved by Charlie");
     for (const imperative of ["retry", "proceed", "you may now", "go ahead", "try again"]) {
       expect(event.message.toLowerCase()).not.toContain(imperative);
     }
@@ -441,7 +441,7 @@ describe("act 2, end to end", () => {
     expect(retry?.user_id).toBe(DANA);
   });
 
-  test("the loan book records the approval, attributed to Dana", async () => {
+  test("the loan book records the approval, attributed to Alice", async () => {
     const loan = await harness.loan(OVER_LIMIT_LOAN, DANA);
     expect(loan.status).toBe("approved");
     const decisions = loan.decisions as Array<Record<string, unknown>>;
@@ -490,7 +490,7 @@ describe("act 2, end to end", () => {
  * it where it would actually matter — through the real MCP transport, against
  * the real control plane, with a real loan book behind it.
  *
- * **The loan is `LN-2292`, deliberately inside Dana's authority.** An over-limit
+ * **The loan is `LN-2292`, deliberately inside Alice's authority.** An over-limit
  * loan would be refused by `pre.approve-within-clearance` whatever this code
  * did, and a green test would prove the hook rather than the turn ending. At
  * $15,500 no rule stands in the way: if the agent loop keeps going, the call is
@@ -600,7 +600,7 @@ describe("a denied approval resumes the agent with the denial", () => {
             justification: "Refinance at a lower rate; DSCR 1.6.",
           },
         },
-        { say: "Requested approval from Riley Chen, VP Credit." },
+        { say: "Requested approval from Charlie, VP Credit." },
       ],
     );
     const waiting = of(blocked.events, "waiting")[0];
@@ -631,7 +631,7 @@ describe("a denied approval resumes the agent with the denial", () => {
     resumed = await post(
       cookie,
       { resume: { request_id: request.id, prompt: "Approve LN-2299 for $88,000.", reply: blocked.reply } },
-      [{ say: "Riley Chen denied it: concentration risk in this sector this quarter." }],
+      [{ say: "Charlie denied it: concentration risk in this sector this quarter." }],
     );
   }, TURN_TIMEOUT_MS * 3);
 
@@ -645,7 +645,7 @@ describe("a denied approval resumes the agent with the denial", () => {
     const event = resumed.events[0] as Extract<ChatEvent, { kind: "resumed" }>;
     expect(event.kind).toBe("resumed");
     expect(event.decision).toBe("denied");
-    expect(event.message).toContain("was denied by Riley Chen");
+    expect(event.message).toContain("was denied by Charlie");
     expect(event.message).toContain("Concentration risk in this sector this quarter.");
   });
 
@@ -722,8 +722,8 @@ describe("the catch-up read, for a browser whose stream was down", () => {
     });
     const request = ((await created.json()) as { request: ApprovalRecord }).request;
 
-    const mine = await status(request.id, await browserFor("morgan.ellis@bank.example"));
-    const nobodys = await status("apr_doesnotexist", await browserFor("morgan.ellis@bank.example"));
+    const mine = await status(request.id, await browserFor("michael@bank.example"));
+    const nobodys = await status("apr_doesnotexist", await browserFor("michael@bank.example"));
     expect(mine.status).toBe(404);
     expect(nobodys.status).toBe(404);
     // One answer for both — the same status and the same sentence, differing
@@ -791,17 +791,17 @@ describe("a resume asserts nothing the store does not say", () => {
       decided_by: RILEY,
     });
 
-    // Morgan's browser, with Dana's request id. The turn would otherwise run —
-    // as Morgan, on Dana's approval.
+    // Michael's browser, with Alice's request id. The turn would otherwise run —
+    // as Michael, on Alice's approval.
     const result = await post(
-      await browserFor("morgan.ellis@bank.example"),
+      await browserFor("michael@bank.example"),
       { resume: { request_id: request.id, prompt: "", reply: "" } },
       [],
     );
 
     const fault = of(result.events, "fault")[0];
     expect(fault?.message).toContain(DANA);
-    expect(fault?.message).toContain("morgan.ellis@bank.example");
+    expect(fault?.message).toContain("michael@bank.example");
     expect(of(result.events, "resumed")).toHaveLength(0);
   });
 

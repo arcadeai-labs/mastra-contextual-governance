@@ -13,6 +13,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 
+import { readPersonaEmailOverrides } from "../../../packages/policy-schema/contract/persona-email-contract.ts";
 import fixture from "./fixtures/people.json" with { type: "json" };
 // Generated from the installed Better Auth by `scripts/generate-schema.ts`;
 // `test/schema.test.ts` fails when it is stale. Checked in rather than built
@@ -44,8 +45,8 @@ export interface Person {
 }
 
 /**
- * The fixture, with each persona's email replaced by `PERSONA_<NAME>_EMAIL`
- * when that variable is set.
+ * The fixture, with each persona's email replaced by the role variable from
+ * the shared persona email contract when that variable is set.
  *
  * The email is the join key across the whole system — Arcade `user_id`, OAuth
  * subject, loan-book actor — and the Arcade accounts are created by hand on
@@ -56,7 +57,7 @@ export interface Person {
  *
  * **Every address is lowercased on the way in** (#58). Better Auth lowercases
  * the address before it looks a user up, and SQLite compares text
- * case-sensitively, so a row stored as `Dana.Okafor@…` can never be signed in
+ * case-sensitively, so a row stored as `Alice@…` can never be signed in
  * as — and the login page reports the same "did not match" it gives a wrong
  * password, so nothing on screen says why. Normalising here means
  * `insertPeople` can only ever write a lowercase row; `schema.sql`'s
@@ -64,8 +65,9 @@ export interface Person {
  * this function did not write.
  */
 export function loadPeople(env: Record<string, string | undefined> = process.env): PersonSeed[] {
+  const overrides = readPersonaEmailOverrides(env);
   return fixtureSchema.parse(fixture).people.map((person) => {
-    const override = env[`PERSONA_${person.persona.toUpperCase()}_EMAIL`]?.trim();
+    const override = overrides[person.persona];
     return { ...person, email: (override || person.email).toLowerCase() };
   });
 }
@@ -300,7 +302,7 @@ const USER_REBUILD_TABLE = "user_rebuilding_for_nocase_email";
  * #58 made `user.email` case-insensitive and lowercased the seed, but only in
  * `schema.sql` — which **only a fresh seed ever runs**. The deployed `cg-idp`
  * disk keeps the case-sensitive column it was created with, so a persona whose
- * `PERSONA_*_EMAIL` carried a capital letter still cannot log in, and the login
+ * A role email variable carrying a capital letter still cannot log in, and the login
  * page still reports that as "That email and password did not match". #58
  * survived a whole sitting on exactly that sentence.
  *

@@ -7,7 +7,7 @@
  * back is whatever `apps/idp` asserts about whoever typed a password. If this
  * list carried emails, the temptation would be to trust one, and
  * `context.user_id` would become a value the browser chose. The addresses live
- * in `PERSONA_<KEY>_EMAIL` and are read in `roster.ts`, which resolves a label
+ * in the shared role email contract and are read in `roster.ts`, which resolves a label
  * *from* an email the IdP already asserted and never the other way round.
  *
  * The cast is `DESIGN.md`'s. It is a demo fixture in the same category as the
@@ -42,12 +42,12 @@ export interface PersonaButton {
 }
 
 export const PERSONAS: readonly PersonaButton[] = [
-  { key: "dana", name: "Dana Okafor", role: "Loan Officer", roleKey: "loan_officer", clearance: 50_000 },
-  { key: "sam", name: "Sam Reyes", role: "Credit Analyst", roleKey: "credit_analyst", clearance: 0 },
-  { key: "riley", name: "Riley Chen", role: "VP Credit", roleKey: "vp_credit", clearance: 250_000 },
+  { key: "dana", name: "Alice", role: "Loan Officer", roleKey: "loan_officer", clearance: 50_000 },
+  { key: "sam", name: "Bob", role: "Credit Analyst", roleKey: "credit_analyst", clearance: 0 },
+  { key: "riley", name: "Charlie", role: "VP Credit", roleKey: "vp_credit", clearance: 250_000 },
   {
     key: "morgan",
-    name: "Morgan Ellis",
+    name: "Michael",
     role: "Chief Credit Officer",
     roleKey: "chief_credit_officer",
     clearance: 5_000_000,

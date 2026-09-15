@@ -30,8 +30,8 @@ import { openEventStream as open, type Frame, type Reader } from "./sse-reader.t
 
 const SECRET = "test-secret";
 const STORE_TOKEN = "test-store-token";
-const DANA = "dana.okafor@bank.example";
-const SAM = "sam.reyes@bank.example";
+const DANA = "alice@bank.example";
+const SAM = "bob@bank.example";
 
 const config: HooksConfig = {
   port: 0,
@@ -88,7 +88,7 @@ afterEach(() => {
 
 const V = [{ version: "1.0.0" }];
 
-/** A `/pre` that Dana is refused, which is one audit row and one event. */
+/** A `/pre` that Alice is refused, which is one audit row and one event. */
 const denyDana = (executionId: string) =>
   fetch(`${base}/pre`, {
     method: "POST",

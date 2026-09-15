@@ -31,7 +31,7 @@ const logPath = join(dirname(dbPath), "stdout.log");
 const REDIRECT_URI = "http://127.0.0.1:9/callback";
 const SECRET = "test-secret-".padEnd(48, "x");
 
-// The fixture's own addresses: any PERSONA_*_EMAIL in the developer's shell is
+// The fixture's own addresses: any persona email variable in the developer's shell is
 // deliberately not passed to the child, so the test is about the fixture.
 const people = loadPeople({});
 const dana = people.find((p) => p.persona === "dana")!;
@@ -40,7 +40,7 @@ const riley = people.find((p) => p.persona === "riley")!;
 // and outlives a cookie jar — so a test that walks the flow as someone else's
 // persona silently changes whether *their* test sees the consent page.
 const morgan = people.find((p) => p.persona === "morgan")!;
-// Only the revocation test signs in as Sam, which keeps that test's consent
+// Only the revocation test signs in as Bob, which keeps that test's consent
 // screen predictable: consent is recorded per person per client and outlives a
 // cookie jar, so sharing a persona would make one test depend on another.
 const sam = people.find((p) => p.persona === "sam")!;
@@ -695,7 +695,7 @@ describe("the OAuth client", () => {
 });
 
 describe("authorization-code flow", () => {
-  test("authorize → login → consent → code → token → userinfo, as Dana", async () => {
+  test("authorize → login → consent → code → token → userinfo, as Alice", async () => {
     const browser = new Browser();
 
     const { accessToken, refreshToken } = await authorizeAs(browser, creds, dana, { expectConsent: true });
@@ -1018,7 +1018,7 @@ describe("PKCE is required", () => {
 describe("client authentication at the token endpoint", () => {
   test("Authorization: Basic completes a whole flow", async () => {
     // `authorizeAs` exchanges the code with `Authorization: Basic` and nothing
-    // else, so a flow that reaches userinfo is the measurement. Riley consented
+    // else, so a flow that reaches userinfo is the measurement. Charlie consented
     // to this client in an earlier test and the record outlives a cookie jar,
     // so this browser logs in and goes straight back with a code.
     const { accessToken } = await authorizeAs(new Browser(), creds, riley, { expectConsent: false });
@@ -1643,7 +1643,7 @@ describe("reset does not rotate the OAuth client", () => {
     expect(await jwksKeys()).toEqual(keyBefore);
 
     // The people are back to the fixture, and every earlier session is gone:
-    // Dana has to log in and consent again, with the very same client.
+    // Alice has to log in and consent again, with the very same client.
     const health = (await (await fetch(`${baseUrl}/health`)).json()) as { people: number };
     expect(health.people).toBe(4);
 

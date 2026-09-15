@@ -152,13 +152,13 @@ services:
       # The persona emails, same values as cg-web's and cg-idp's — the join
       # key across the whole system. Read only when governance.db is first
       # seeded.
-      - key: PERSONA_DANA_EMAIL
+      - key: PERSONA_LOAN_OFFICER_EMAIL
         sync: false
-      - key: PERSONA_SAM_EMAIL
+      - key: PERSONA_CREDIT_ANALYST_EMAIL
         sync: false
-      - key: PERSONA_RILEY_EMAIL
+      - key: PERSONA_VP_CREDIT_EMAIL
         sync: false
-      - key: PERSONA_MORGAN_EMAIL
+      - key: PERSONA_CHIEF_CREDIT_OFFICER_EMAIL
         sync: false
       # Host-form, consumer adds the scheme — `fromService` emits neither a
       # scheme nor a hostname, and blueprints have no string interpolation. Read
@@ -238,13 +238,13 @@ services:
         sync: false
       # The persona emails, same values as cg-web's — they are the join key
       # across the whole system. Read only when idp.db is first seeded.
-      - key: PERSONA_DANA_EMAIL
+      - key: PERSONA_LOAN_OFFICER_EMAIL
         sync: false
-      - key: PERSONA_SAM_EMAIL
+      - key: PERSONA_CREDIT_ANALYST_EMAIL
         sync: false
-      - key: PERSONA_RILEY_EMAIL
+      - key: PERSONA_VP_CREDIT_EMAIL
         sync: false
-      - key: PERSONA_MORGAN_EMAIL
+      - key: PERSONA_CHIEF_CREDIT_OFFICER_EMAIL
         sync: false
       # The bearer POST /admin/reset requires (#23). THE SAME VALUE as
       # cg-hooks', cg-loan-app's and cg-web's. The reset clears people,
@@ -285,7 +285,7 @@ services:
         value: claude-sonnet-5
       # SECRET. console.anthropic.com → Settings → API keys. Without it `/chat`
       # answers 503 naming this variable and /health reports
-      # `"agent": "missing"`, because a deployment that signs Dana in and then
+      # `"agent": "missing"`, because a deployment that signs Alice in and then
       # cannot run a turn is not `ok`.
       - key: ANTHROPIC_API_KEY
         sync: false
@@ -409,13 +409,13 @@ services:
         sync: false
       - key: ARCADE_APPROVALS_TOOLKIT
         sync: false
-      - key: PERSONA_DANA_EMAIL
+      - key: PERSONA_LOAN_OFFICER_EMAIL
         sync: false
-      - key: PERSONA_SAM_EMAIL
+      - key: PERSONA_CREDIT_ANALYST_EMAIL
         sync: false
-      - key: PERSONA_RILEY_EMAIL
+      - key: PERSONA_VP_CREDIT_EMAIL
         sync: false
-      - key: PERSONA_MORGAN_EMAIL
+      - key: PERSONA_CHIEF_CREDIT_OFFICER_EMAIL
         sync: false
       # --- the control-plane panel's stream (#81) ---------------------------
       # Which stream /panel watches. Three states, and the panel says which one

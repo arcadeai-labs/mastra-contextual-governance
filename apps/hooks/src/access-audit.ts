@@ -9,7 +9,7 @@
  *   enumerating every toolkit in the project, ~1.6 MB
  *   (`docs/spikes/02-remote-mcp-hooks.md`).
  * - **8,278 frames per `tools/list`, on the deployed gateway.** Six `allow` —
- *   this project's six tools — and 8,272 `deny`, every one carrying Dana's
+ *   this project's six tools — and 8,272 `deny`, every one carrying Alice's
  *   lowercase email (`docs/spikes/05-custom-verifier.md` §11.3, measured
  *   against `cg-demo-us` rather than a throwaway project).
  *
@@ -33,7 +33,7 @@
  *
  * **B — one row per `/access` call.** Four rows a listing. Cheap, and it
  * throws away the thing act 1 is: `access.analysts-cannot-see-approve` hiding
- * `Loan.ApproveLoan` from Sam has to be a row that *names that tool*, and the
+ * `Loan.ApproveLoan` from Bob has to be a row that *names that tool*, and the
  * `allow` rows for the tools it did not hide have to be there too — a rule
  * that matches nothing is otherwise indistinguishable from a rule that
  * permits, which is the failure this whole repo is organised against.

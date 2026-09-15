@@ -15,8 +15,8 @@ import { openGovernance } from "../src/policy-store.ts";
 import { createServer } from "../src/server.ts";
 
 const SECRET = "bench";
-const SAM = "sam.reyes@bank.example";
-const DANA = "dana.okafor@bank.example";
+const SAM = "bob@bank.example";
+const DANA = "alice@bank.example";
 const V = [{ version: "1.0.0" }];
 const LOAN_TOOLS = { SearchLoans: V, GetLoan: V, ApproveLoan: V, DenyLoan: V };
 
@@ -165,9 +165,9 @@ empty.close();
 // instruction is several times that.
 const PRICING_ROWS = 50_000;
 const pricingCalls: Array<[string, unknown]> = [
-  // Dana: four governed tools, four allows. The demo's ordinary shape.
+  // Alice: four governed tools, four allows. The demo's ordinary shape.
   ["/access", { user_id: DANA, toolkits: { Loan: { tools: LOAN_TOOLS } } }],
-  // Sam: the same four, one of them hidden by a rule, with the rule's own reason.
+  // Bob: the same four, one of them hidden by a rule, with the rule's own reason.
   ["/access", { user_id: SAM, toolkits: { Loan: { tools: LOAN_TOOLS } } }],
   // A summary row, and the reason that goes with it.
   ["/access", { user_id: DANA, toolkits: { Stock: { tools: { A: V, B: V, C: V } } } }],

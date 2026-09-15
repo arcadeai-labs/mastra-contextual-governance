@@ -31,7 +31,7 @@
  * **Nothing here waits for an approval, and the turn really does end.** #20's
  * `waiting` event is emitted after `Approvals_RequestApproval` returns, and
  * from that point the turn is *closing*: the model's last words still stream —
- * *"Approval requested from Riley Chen, VP Credit. Waiting."* is what the issue
+ * *"Approval requested from Charlie, VP Credit. Waiting."* is what the issue
  * asks for by name — but the first tool call after it ends the reading and
  * aborts the agent loop.
  *
@@ -192,7 +192,7 @@ export async function runTurn(options: RunOptions): Promise<void> {
    * closing words are still welcome.
    *
    * Text still streams — the model's last step is where *"Approval requested
-   * from Riley Chen, VP Credit. Waiting."* comes from, and issue #20 asks for
+   * from Charlie, VP Credit. Waiting."* comes from, and issue #20 asks for
    * that sentence by name. What does not is another tool call, and the first
    * one ends the reading here. It cannot execute in any case
    * (`closeTurnOnEscalation` shut the toolset the moment the escalation
