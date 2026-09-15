@@ -49,24 +49,24 @@ describe("the fixture", () => {
   test("holds the four personas from DESIGN.md's Cast table", () => {
     expect(fixture.map((p) => p.persona).sort()).toEqual(["dana", "morgan", "riley", "sam"]);
     expect(fixture.map((p) => p.name).sort()).toEqual([
-      "Dana Okafor",
-      "Morgan Ellis",
-      "Riley Chen",
-      "Sam Reyes",
+      "Alice",
+      "Bob",
+      "Charlie",
+      "Michael",
     ]);
   });
 
-  test("PERSONA_<NAME>_EMAIL overrides one persona's address and nothing else", () => {
-    const people = loadPeople({ PERSONA_DANA_EMAIL: "  dana@example.com " });
+  test("the loan-officer role variable overrides one persona's address and nothing else", () => {
+    const people = loadPeople({ PERSONA_LOAN_OFFICER_EMAIL: "  alice@example.com " });
 
-    expect(people.find((p) => p.persona === "dana")?.email).toBe("dana@example.com");
+    expect(people.find((p) => p.persona === "dana")?.email).toBe("alice@example.com");
     expect(people.find((p) => p.persona === "sam")?.email).toBe(
       fixture.find((p) => p.persona === "sam")?.email,
     );
   });
 
   test("an empty override is ignored — .env.example ships these blank", () => {
-    const people = loadPeople({ PERSONA_RILEY_EMAIL: "" });
+    const people = loadPeople({ PERSONA_VP_CREDIT_EMAIL: "" });
     expect(people.find((p) => p.persona === "riley")?.email).toBe(
       fixture.find((p) => p.persona === "riley")?.email,
     );
@@ -77,15 +77,21 @@ describe("the fixture", () => {
   // login page calls that a wrong password. The Arcade accounts are invited by
   // hand, so the capitalisation arrives here from a human typing it.
   test("lowercases an override, whatever case the Arcade account was invited under", () => {
-    const people = loadPeople({ PERSONA_DANA_EMAIL: "  Dana.Okafor@MegaForce.Tech " });
+    const people = loadPeople({ PERSONA_LOAN_OFFICER_EMAIL: "  Alice@Example.Test " });
 
-    expect(people.find((p) => p.persona === "dana")?.email).toBe("dana.okafor@megaforce.tech");
+    expect(people.find((p) => p.persona === "dana")?.email).toBe("alice@example.test");
   });
 
   test("every address it hands back is already lower case", () => {
-    const people = loadPeople({ PERSONA_SAM_EMAIL: "SAM.REYES@BANK.EXAMPLE" });
+    const people = loadPeople({ PERSONA_CREDIT_ANALYST_EMAIL: "BOB@BANK.EXAMPLE" });
 
     expect(people.map((p) => p.email)).toEqual(people.map((p) => p.email.toLowerCase()));
+  });
+
+  test("rejects a deprecated name variable before fixture seeding can hide it", () => {
+    expect(() => loadPeople({ PERSONA_DANA_EMAIL: "dana@example.com" })).toThrow(
+      /PERSONA_DANA_EMAIL.*PERSONA_LOAN_OFFICER_EMAIL/,
+    );
   });
 });
 
@@ -100,9 +106,12 @@ describe("seeding", () => {
   // The half of #58 that `loadPeople`'s unit test cannot see: what actually
   // reached the table.
   test("writes lowercase rows even when the personas are configured capitalised", async () => {
-    const db = await openPeople(":memory:", loadPeople({ PERSONA_DANA_EMAIL: "Dana.Okafor@Bank.Example" }));
+    const db = await openPeople(
+      ":memory:",
+      loadPeople({ PERSONA_LOAN_OFFICER_EMAIL: "Alice@Bank.Example" }),
+    );
 
-    expect(listPeople(db).map((p) => p.email)).toContain("dana.okafor@bank.example");
+    expect(listPeople(db).map((p) => p.email)).toContain("alice@bank.example");
     expect(listPeople(db).some((p) => /[A-Z]/.test(p.email))).toBe(false);
   });
 

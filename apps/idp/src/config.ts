@@ -3,6 +3,8 @@
  * Every variable is documented in the repo's `.env.example`.
  */
 
+import { readPersonaEmailOverrides } from "../../../packages/policy-schema/contract/persona-email-contract.ts";
+
 /** Arcade Cloud's OAuth callback. Confirm against the "Redirect URL" the Arcade dashboard shows (#13). */
 export const DEFAULT_ARCADE_REDIRECT_URI = "https://cloud.arcade.dev/api/v1/oauth/callback";
 
@@ -119,6 +121,10 @@ function readClients(env: Record<string, string | undefined>, sharedUris: string
 }
 
 export function readConfig(env: Record<string, string | undefined> = process.env): IdpConfig {
+  // Validate before opening the database. An obsolete name-based variable
+  // must not leave this service apparently healthy while seeding fixture
+  // addresses.
+  readPersonaEmailOverrides(env);
   const port = Number(env.PORT ?? 8083);
 
   const secret = env.BETTER_AUTH_SECRET?.trim();

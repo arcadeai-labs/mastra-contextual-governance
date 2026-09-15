@@ -11,6 +11,7 @@
  */
 
 import { assertPublicHost } from "./public-host.ts";
+import { readPersonaEmailOverrides } from "@cg/policy-schema/contract/persona-email-contract.ts";
 
 /**
  * The bearer token Arcade presents on every hook call. Refused under
@@ -44,7 +45,7 @@ export interface HooksConfig {
    * Per-persona email overrides, keyed by the fixture's persona key. Read only
    * when `governance.db` is first seeded: the email is the join key across
    * Arcade `user_id`, the OAuth subject and the loan book's actor, and
-   * `apps/idp` reads the same four variables so the two databases cannot
+   * `apps/idp` reads the same role variables so the two databases cannot
    * disagree about who a persona is.
    */
   personaEmails: Record<string, string>;
@@ -154,11 +155,10 @@ export function readConfig(env: Record<string, string | undefined> = process.env
   // reads its environment, so it is the place to say so.
   assertPublicHost("LOAN_APP_PUBLIC_HOST", env.LOAN_APP_PUBLIC_HOST);
 
-  const personaEmails: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    const match = /^PERSONA_([A-Z0-9_]+)_EMAIL$/.exec(key);
-    if (match && value?.trim()) personaEmails[(match[1] as string).toLowerCase()] = value.trim();
-  }
+  // This validates the complete public contract before the service opens its
+  // database. In particular, a deprecated name-based variable cannot be
+  // ignored and leave fixture identities in a deployment.
+  const personaEmails = readPersonaEmailOverrides(env);
 
   return {
     port: Number(env.PORT ?? 8081),

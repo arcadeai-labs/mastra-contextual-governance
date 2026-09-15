@@ -149,3 +149,17 @@ describe("addresses", () => {
     );
   });
 });
+
+describe("persona email configuration", () => {
+  test("rejects a deprecated name variable before the web surface can use fixture identity", () => {
+    expect(() => readWebConfig({ PERSONA_DANA_EMAIL: "dana@example.com" })).toThrow(
+      /PERSONA_DANA_EMAIL.*PERSONA_LOAN_OFFICER_EMAIL/,
+    );
+  });
+
+  test("rejects an unknown role variable instead of ignoring a typo", () => {
+    expect(() => readWebConfig({ PERSONA_VP_CREDIT_EMAL: "charlie@example.com" })).toThrow(
+      /PERSONA_VP_CREDIT_EMAL/,
+    );
+  });
+});

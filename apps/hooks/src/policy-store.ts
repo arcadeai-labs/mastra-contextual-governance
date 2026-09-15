@@ -57,7 +57,7 @@ const TOOLKIT_PLACEHOLDERS = { $LOAN: "loanToolkit", $APPROVALS: "approvalsToolk
 export interface SeedOptions {
   loanToolkit: string;
   approvalsToolkit: string;
-  /** Persona key → email, from `PERSONA_<KEY>_EMAIL`. Missing keys keep the fixture's address. */
+  /** Persona key → email, from the shared role-variable contract. Missing keys keep the fixture's address. */
   personaEmails: Record<string, string>;
 }
 
@@ -119,9 +119,9 @@ export function loadSeed(options: SeedOptions, raw: unknown = fixture): Seed {
   const subjects = parsed.subjects.map(({ persona, ...subject }) => {
     const override = options.personaEmails[persona.toLowerCase()];
     // Lowercased on the way in (#58), by the same rule `subjectKey` applies on
-    // the way out: `PERSONA_<KEY>_EMAIL` carries whatever capitalisation the
-    // Arcade account was invited under, and a roster keyed on `Dana.Okafor@…`
-    // is a roster the lookup can never hit.
+    // the way out: the role variable carries whatever capitalisation the
+    // Arcade account was invited under, and a roster keyed on
+    // `Alice@…` is a roster the lookup can never hit.
     const user_id = (override ?? subject.user_id).trim().toLowerCase();
     const input: SubjectInput = { ...subject, user_id };
     return Subject.parse(input);
@@ -149,7 +149,7 @@ export function loadSeed(options: SeedOptions, raw: unknown = fixture): Seed {
  */
 const SCHEMA = `
   -- The cast. clearance is the unit-free ceiling exceeds_clearance compares
-  -- against; here it counts US dollars. Raise Dana's on stage and rerun.
+  -- against; here it counts US dollars. Raise Alice's on stage and rerun.
   CREATE TABLE IF NOT EXISTS subjects (
     user_id      TEXT    PRIMARY KEY,
     display_name TEXT    NOT NULL,

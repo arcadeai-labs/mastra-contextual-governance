@@ -62,10 +62,10 @@ describe("the role/limit table matches what apps/hooks seeds", () => {
     // Written out rather than derived, so an edit to both the fixture and the
     // table still has to be a deliberate edit to `DESIGN.md` → Cast as well.
     expect(PERSONAS.map((persona) => [persona.name, persona.role, persona.clearance])).toEqual([
-      ["Dana Okafor", "Loan Officer", 50_000],
-      ["Sam Reyes", "Credit Analyst", 0],
-      ["Riley Chen", "VP Credit", 250_000],
-      ["Morgan Ellis", "Chief Credit Officer", 5_000_000],
+      ["Alice", "Loan Officer", 50_000],
+      ["Bob", "Credit Analyst", 0],
+      ["Charlie", "VP Credit", 250_000],
+      ["Michael", "Chief Credit Officer", 5_000_000],
     ]);
   });
 
@@ -79,20 +79,20 @@ describe("the role/limit table matches what apps/hooks seeds", () => {
 
 describe("looking a persona up from the address the IdP asserted", () => {
   const env = {
-    PERSONA_DANA_EMAIL: "Dana.Okafor@megaforce.example",
-    PERSONA_SAM_EMAIL: "sam.reyes@megaforce.example",
+    PERSONA_LOAN_OFFICER_EMAIL: "Alice@Example.Test",
+    PERSONA_CREDIT_ANALYST_EMAIL: "bob@example.test",
   };
 
   test("the address is matched case-insensitively, as the join key is everywhere else", () => {
-    // #58: `PERSONA_<KEY>_EMAIL` carries whatever capitalisation somebody
+    // #58: a role email variable carries whatever capitalisation somebody
     // typed, and the session's email is lowercase. A roster keyed on the raw
     // value is a roster the lookup can never hit.
-    expect(personaFor("dana.okafor@megaforce.example", env)?.key).toBe("dana");
-    expect(personaFor("  DANA.OKAFOR@MEGAFORCE.EXAMPLE  ", env)?.key).toBe("dana");
+    expect(personaFor("alice@example.test", env)?.key).toBe("dana");
+    expect(personaFor("  ALICE@EXAMPLE.TEST  ", env)?.key).toBe("dana");
   });
 
   test("an address the environment does not name is null, never a guess", () => {
-    expect(personaFor("someone.else@megaforce.example", env)).toBeNull();
+    expect(personaFor("someone.else@example.test", env)).toBeNull();
     expect(personaFor("", env)).toBeNull();
     expect(personaFor(null, env)).toBeNull();
     // Not a fallback to the first persona, and not a blank authority: the card
@@ -101,13 +101,19 @@ describe("looking a persona up from the address the IdP asserted", () => {
   });
 
   test("the unset variables are reported, so 'unknown persona' is not mistaken for a bug", () => {
-    expect(unconfiguredPersonas(env)).toEqual(["PERSONA_RILEY_EMAIL", "PERSONA_MORGAN_EMAIL"]);
+    expect(unconfiguredPersonas(env)).toEqual(["PERSONA_VP_CREDIT_EMAIL", "PERSONA_CHIEF_CREDIT_OFFICER_EMAIL"]);
     expect(unconfiguredPersonas({})).toHaveLength(4);
-    expect(personaEmailVariable("morgan")).toBe("PERSONA_MORGAN_EMAIL");
+    expect(personaEmailVariable("morgan")).toBe("PERSONA_CHIEF_CREDIT_OFFICER_EMAIL");
   });
 
   test("a blank variable is unset, not an address", () => {
-    expect(personaFor("dana.okafor@megaforce.example", { PERSONA_DANA_EMAIL: "   " })).toBeNull();
+    expect(personaFor("alice@example.test", { PERSONA_LOAN_OFFICER_EMAIL: "   " })).toBeNull();
+  });
+
+  test("a deprecated name variable fails loudly instead of falling back to a fixture address", () => {
+    expect(() => roster({ PERSONA_DANA_EMAIL: "dana@example.com" })).toThrow(
+      /PERSONA_DANA_EMAIL.*PERSONA_LOAN_OFFICER_EMAIL/,
+    );
   });
 });
 
