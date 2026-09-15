@@ -465,11 +465,12 @@ system and the two tests would contradict each other (#33).
 
 The flag is read off the manifest rather than matched on a directory name on purpose:
 `packages/` keeps business-domain code out of its runtime source, so a forker marking
-their own app inherits both halves automatically. The repository-wide vocabulary check
-still finds documented test/README references and one fixture edge; §9 records that
-measurement and #125 tracks the cleanup. There is a sibling, `"cg": { "external": true }`,
-which `apps/idp` carries — it means "stands in for a system outside the template", and
-it exempts the directory from the same sweep without claiming it is governed.
+their own app inherits both halves automatically. The literal package-boundary check is
+clean now: `grep -ri loan packages/` prints no matches and exits 1, which is the expected
+result for a grep that found no domain vocabulary. There is a sibling,
+`"cg": { "external": true }`, which `apps/idp` carries — it means "stands in for a system
+outside the template", and it exempts the directory from the same sweep without claiming
+it is governed.
 
 Copy `apps/loan-app/test/knows-nothing-about-governance.test.ts` into your app and edit
 its `FORBIDDEN` list to your own vocabulary. Ship the test. It is the thing that says no
@@ -515,60 +516,24 @@ bun test packages/governance-core/test/no-app-dependencies.test.ts \
 grep -ri loan packages/
 ```
 
-**It does not come back empty.** Measured on `b4cd3e3`, 2026-09-14: **38 matching lines
-across 9 files**. Recording that rather than a tidier claim, because the check is only
-worth anything if its real output is what is written down.
+On current `origin/main` at `c9baca2`, this prints no matches and exits with status 1.
+The exit status is expected for a grep with no matches, not a failed boundary check; its
+empty stdout is the result to preserve. The `packages/` tree therefore contains no
+`loan` references in the current source of truth.
 
-| where | lines | what it is |
-|---|---|---|
-| `packages/*/src` | 5 | **doc comments only** — `packages/policy-schema/src/domain.ts` ×2, `packages/governance-core/src/policy-engine.ts` ×3. Zero executable references |
-| `packages/*/test` + `packages/governance-core/README.md` | 32 | test data (`Loan.GetLoan` as an identifier in fixtures), prose, and `"loan_officer"` as a role string in `packages/policy-schema/contract/approver-routing-cases.json` |
-| `packages/governance-core/test/redaction-engine.test.ts` | 1 read | **the one real edge from `packages/` into `apps/`** |
+The domain-specific acts 3 and 4 pin now lives beside the fixture in
+`apps/loan-app/test/acts-3-4-redaction.test.ts`. A forker replaces that test with the
+business app and seed data, leaving the reusable redaction suite and the rest of
+`packages/` domain-free.
 
-The narrower checks that *do* pass, and are the ones worth putting in CI:
+The enforced boundary and consumability checks pass in the current tree:
 
 ```sh
-# no executable reference to the domain in package source
-grep -rn loan packages/*/src | grep -vE '^\S+: *\*|^\S+: */\*\*'
-# → empty
-
-# no package-graph edge, no import, from packages/ into apps/
-bun test packages/governance-core/test/no-app-dependencies.test.ts
-# → 16 pass, 0 fail
+bun test packages/governance-core/test/no-app-dependencies.test.ts \
+         packages/policy-schema/test/consumable.test.ts \
+         apps/loan-app/test/knows-nothing-about-governance.test.ts
+# → 34 pass, 0 fail
 ```
-
-### The one seam you will actually hit
-
-`packages/governance-core/test/redaction-engine.test.ts` reads
-`apps/loan-app/src/fixtures/loans.json` off disk and pins acts 3 and 4 against the real
-seed — the account number's shape, the tax ID's shape, and the injected instruction
-byte for byte. It does this rather than retyping the record because a hand-copied
-payload drifts from the fixture silently, and then the evidence is about a payload the
-demo never returns.
-
-Its own docblock names it as your seam:
-
-> *A forker who replaces the loan domain replaces this block along with the fixture; it
-> fails loudly rather than skipping, because a test that quietly stops running is the
-> failure mode this module is about.*
-
-So when you delete `apps/loan-app`, that suite throws with a message telling you to
-point it at your fixture or delete the block. Deliberate, documented — and it is still a
-`packages/` file you have to touch, which is why the promise above is not yet literally
-true. **[#125](https://github.com/ArcadeAI-labs/mastra-contextual-governance/issues/125)**
-tracks making it so.
-
-Until #125 lands, state the promise the way it is true: **"touch nothing under
-`packages/`" holds for executable code and for both enforced boundary tests. It does
-not yet hold for a grep.**
-
-The pending package cleanup is [PR #130](https://github.com/ArcadeAI-labs/mastra-contextual-governance/pull/130),
-commit `01dacd5`; it moves the acts 3 and 4 pin beside the app fixture, neutralises the
-remaining package-source examples, and records neutral contract roles. `git grep -i loan
-01dacd5 -- packages/` returns **no matches**. PR #130 is not merged into this branch, so
-that is pending evidence rather than the result above; after it merges or this branch is
-rebased, rerun `grep -ri loan packages/` and update this paragraph from the measured
-`38` to the passing result in that merged state.
 
 ---
 

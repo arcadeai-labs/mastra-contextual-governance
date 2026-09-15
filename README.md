@@ -87,8 +87,8 @@ tools/approvals  Python arcade-mcp — request_approval, decide.    → arcade d
 
 packages/governance-core   Hook framework, policy engine, audit, event bus.
                            No executable domain references in package source; no
-                           runtime dependency on apps/* (see the measured test/docs
-                           references and one test-fixture edge in DOMAIN-SWAP §9).
+                           runtime dependency on apps/* (see the literal package
+                           boundary check in DOMAIN-SWAP §9).
 packages/policy-schema     Shared zod types for policy, events, hook payloads.
 ```
 
