@@ -61,6 +61,7 @@ import { authorizationRequired, isHookDecision, remediationText } from "./author
 import { approvalRequested } from "./escalation.ts";
 import { CORRELATION_TOKEN } from "../governance/correlation.ts";
 import type { ChatEvent } from "./events.ts";
+import { readNativeUrlElicitations, type NativeElicitationBridge, type NativeUrlElicitation } from "./native-elicitation.ts";
 
 /** The ceiling on tool calls in one turn. High enough that a spin is visible as a spin. */
 export const MAX_STEPS = 8;
@@ -154,6 +155,8 @@ export interface RunOptions {
   log?: (line: string) => void;
   /** Fires for every event, in order. The caller writes them to the wire. */
   emit: (event: ChatEvent) => void | Promise<void>;
+  /** Native MCP URL requests captured for this chat request only. */
+  nativeElicitation?: NativeElicitationBridge;
 }
 
 /** One message in a conversation handed to the agent. Mastra takes an array of these. */
@@ -199,6 +202,21 @@ export async function runTurn(options: RunOptions): Promise<void> {
    * returned); this is what keeps it off the screen and stops the loop.
    */
   let closing = false;
+
+  const emitNativeElicitations = async (tool: string): Promise<boolean> => {
+    const requests = options.nativeElicitation?.take() ?? [];
+    for (const request of requests) {
+      await emit({
+        kind: "authorization",
+        tool,
+        url: request.url,
+        instructions: request.message,
+        mode: request.mode,
+        elicitation_id: request.elicitationId,
+      });
+    }
+    return requests.length > 0;
+  };
 
   try {
     const result = await options.agent.stream(options.prompt, {
@@ -247,6 +265,9 @@ export async function runTurn(options: RunOptions): Promise<void> {
           endOfTurn.abort();
           break;
         }
+        // Some gateways return a canceled native request as a normal-shaped
+        // result. Consume the bridge before calling it a successful result.
+        if (await emitNativeElicitations(tool)) continue;
         await emit({ kind: "tool-result", tool });
 
         // The escalation landed, so **the turn is over**. Nothing waits for the
@@ -288,6 +309,16 @@ export async function runTurn(options: RunOptions): Promise<void> {
           endedOnEscalation = true;
           endOfTurn.abort();
           break;
+        }
+        // Native URL mode is distinct from Arcade layer-2 authorization: it
+        // carries a URL request (or protocol error -32042), not an
+        // authorization_url JSON instruction. Surface it through the same
+        // explicit card, then let the user start a fresh retry.
+        if (await emitNativeElicitations(tool)) continue;
+        const nativeFromError = readNativeUrlElicitations(payload.error ?? payload);
+        if (nativeFromError.length > 0) {
+          await emitNativeRequests(nativeFromError, tool, emit);
+          continue;
         }
         const text = failureText(payload.error ?? payload);
 
@@ -331,7 +362,28 @@ export async function runTurn(options: RunOptions): Promise<void> {
     }
   }
 
+  // A wrapper may expose the request only after the tool error has been
+  // emitted; still make a captured URL visible before done.
+  await emitNativeElicitations("unknown");
+
   await emit({ kind: "done", calls });
+}
+
+async function emitNativeRequests(
+  requests: NativeUrlElicitation[],
+  tool: string,
+  emit: RunOptions["emit"],
+): Promise<void> {
+  for (const request of requests) {
+    await emit({
+      kind: "authorization",
+      tool,
+      url: request.url,
+      instructions: request.message,
+      mode: request.mode,
+      elicitation_id: request.elicitationId,
+    });
+  }
 }
 
 /** `for await` over a web `ReadableStream`, which Node's typings do not make iterable. */

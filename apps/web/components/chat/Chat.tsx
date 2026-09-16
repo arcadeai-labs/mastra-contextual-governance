@@ -87,9 +87,11 @@ import { useEffect, useRef, useState } from "react";
 // `lib/agent/handlers.ts` instead pulls `@mastra/mcp` — and its stdio
 // transport's `fs` import — into the browser bundle, and `next build` fails.
 import { CHAT_PATH, replyText, type ChatEvent } from "../../lib/agent/events.ts";
+import { boundConversation, type ConversationMessage } from "../../lib/agent/conversation.ts";
 import { noticeIsFor, subscribeToApprovalNotices } from "../../lib/governance/approval-stream.ts";
 import { Markdown } from "./Markdown.tsx";
 import { transcript } from "./transcript.ts";
+import "./chat.css";
 
 const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
@@ -146,7 +148,7 @@ export interface ChatProps {
    * `correlationKey`). Optional: `/chat` passes nothing and behaves as before.
    */
   onEvent?: (event: ChatEvent) => void;
-  /** A new turn has started and the transcript has been cleared. */
+  /** A new conversation has started, so the surrounding panel can clear its correlation. */
   onTurnStart?: () => void;
   /**
    * The governance stream, resolved on the server and handed down as an
@@ -173,6 +175,21 @@ interface Waiting {
   reply: string;
 }
 
+interface ChatTurn {
+  prompt: string;
+  events: ChatEvent[];
+}
+
+interface AuthorizationChallenge {
+  prompt: string;
+  turnIndex: number;
+}
+
+interface QueuedResume {
+  request_id: string;
+  generation: number;
+}
+
 export function Chat({
   signedInAs,
   onEvent,
@@ -182,9 +199,17 @@ export function Chat({
   const [prompt, setPrompt] = useState(
     "Approve the loan for $95K and double-check your work so you don't make any mistakes.",
   );
-  const [events, setEvents] = useState<ChatEvent[]>([]);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [running, setRunning] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const turnsRef = useRef<ChatTurn[]>([]);
+  /** Completed conversational context, deliberately in memory and per persona. */
+  const conversationRef = useRef<ConversationMessage[]>([]);
+  const personaRef = useRef(signedInAs);
+  const runGenerationRef = useRef(0);
+  const runAbortRef = useRef<AbortController | null>(null);
+  const [authorizationChallenge, setAuthorizationChallenge] = useState<AuthorizationChallenge | null>(null);
+  const authorizationChallengeRef = useRef<AuthorizationChallenge | null>(null);
   /**
    * The approval this transcript is holding, or `null`.
    *
@@ -196,31 +221,65 @@ export function Chat({
    */
   const [waiting, setWaiting] = useState<Waiting | null>(null);
   const waitingRef = useRef<Waiting | null>(null);
+  /** A decision received while another turn owns the stream lock. */
+  const queuedResumeRef = useRef<QueuedResume | null>(null);
   // A turn in flight, so a second Send cannot interleave two streams into one
   // transcript — which would read as the agent contradicting itself. A resume
   // is a turn and takes the same lock.
   const inFlight = useRef(false);
 
+  /** A persona switch is a new sealed session, not a continuation of the old browser context. */
+  useEffect(() => {
+    if (personaRef.current === signedInAs) return;
+    personaRef.current = signedInAs;
+    runGenerationRef.current += 1;
+    runAbortRef.current?.abort();
+    runAbortRef.current = null;
+    inFlight.current = false;
+    turnsRef.current = [];
+    conversationRef.current = [];
+    authorizationChallengeRef.current = null;
+    setTurns([]);
+    setFailure(null);
+    setAuthorizationChallenge(null);
+    setWaiting(null);
+    waitingRef.current = null;
+    queuedResumeRef.current = null;
+    onTurnStart?.();
+  }, [onTurnStart, signedInAs]);
+
+  function addTurn(turn: ChatTurn): number {
+    const index = turnsRef.current.length;
+    turnsRef.current = [...turnsRef.current, turn];
+    setTurns(turnsRef.current);
+    return index;
+  }
+
+  function addEvent(turnIndex: number, event: ChatEvent): void {
+    turnsRef.current = turnsRef.current.map((turn, index) =>
+      index === turnIndex ? { ...turn, events: [...turn.events, event] } : turn,
+    );
+    setTurns(turnsRef.current);
+  }
+
   /**
    * One turn, streamed into the transcript.
    *
-   * `append` is the whole difference between a question and a resume: a
-   * question clears the transcript, a resume continues it. A resume that
-   * cleared would take the denial, the escalation and the agent's *"waiting for
-   * Charlie"* off the screen at the exact moment the audience is being shown that
-   * they caused what happens next.
+   * Each ordinary question appends a visible turn. A resume also appends, but
+   * its server-verified fact card has no user bubble because the browser is
+   * only carrying context, never authority.
    */
-  async function run(body: unknown, options: { append: boolean }): Promise<void> {
+  async function run(
+    body: unknown,
+    options: { turnIndex: number; prompt: string; commitConversation: boolean },
+  ): Promise<void> {
     if (inFlight.current) return;
     inFlight.current = true;
     setRunning(true);
     setFailure(null);
-    if (!options.append) {
-      setEvents([]);
-      setWaiting(null);
-      waitingRef.current = null;
-      onTurnStart?.();
-    }
+    const generation = runGenerationRef.current;
+    const abort = new AbortController();
+    runAbortRef.current = abort;
 
     // Collected alongside the transcript, because a resume has to hand back
     // what the agent said on the turn that ended waiting, and reading it out of
@@ -236,8 +295,10 @@ export function Chat({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal: abort.signal,
       });
 
+      if (generation !== runGenerationRef.current) return;
       if (!response.ok || !response.body) {
         const body = (await response.json().catch(() => null)) as { error?: string; detail?: unknown } | null;
         setFailure(
@@ -269,14 +330,22 @@ export function Chat({
             continue;
           }
           turnEvents.push(parsed);
-          setEvents((seen) => [...seen, parsed]);
+          if (generation !== runGenerationRef.current) continue;
+          addEvent(options.turnIndex, parsed);
           onEvent?.(parsed);
+          if (parsed.kind === "authorization") {
+            const challenge = { prompt: options.prompt, turnIndex: options.turnIndex };
+            authorizationChallengeRef.current = challenge;
+            setAuthorizationChallenge(challenge);
+          }
         }
       }
 
       // The turn ended holding an approval. Nothing is polled and nothing is
       // retried: this records the id so that `approval.granted`, when it
       // arrives on the stream, can be recognised as this browser's.
+      if (generation !== runGenerationRef.current) return;
+
       const ended = turnEvents.find(
         (event): event is Extract<ChatEvent, { kind: "waiting" }> => event.kind === "waiting",
       );
@@ -290,18 +359,87 @@ export function Chat({
         waitingRef.current = held;
         setWaiting(held);
       }
+
+      const challenged = turnEvents.some((event) => event.kind === "authorization");
+      if (options.commitConversation && !challenged && options.prompt.trim() !== "") {
+        const reply = replyText(turnEvents);
+        const completed: ConversationMessage[] = [
+          { role: "user", content: options.prompt },
+          ...(reply === "" ? [] : [{ role: "assistant" as const, content: reply }]),
+        ];
+        conversationRef.current = boundConversation([...conversationRef.current, ...completed]);
+      } else if (options.commitConversation && !challenged) {
+        // A resume has no browser-authored prompt. Its first event carries the
+        // server-built decision line that was injected into the model's turn;
+        // retain that line as context, followed by the completed reply, so a
+        // later follow-up can refer to the action that actually happened.
+        const resumed = turnEvents.find(
+          (event): event is Extract<ChatEvent, { kind: "resumed" }> => event.kind === "resumed",
+        );
+        if (resumed) {
+          const reply = replyText(turnEvents);
+          const completed: ConversationMessage[] = [
+            { role: "user", content: resumed.message },
+            ...(reply === "" ? [] : [{ role: "assistant" as const, content: reply }]),
+          ];
+          conversationRef.current = boundConversation([...conversationRef.current, ...completed]);
+        }
+      }
     } catch (cause) {
+      if (generation !== runGenerationRef.current) return;
+      if (abort.signal.aborted) return;
       setFailure(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      inFlight.current = false;
-      setRunning(false);
+      if (generation === runGenerationRef.current) {
+        inFlight.current = false;
+        setRunning(false);
+        if (runAbortRef.current === abort) runAbortRef.current = null;
+
+        // A grant can arrive while a follow-up is streaming. Keep the waiting
+        // card until that stream is complete, then resume exactly once. The
+        // queued request is cleared before calling resume so a reconnect or a
+        // duplicate live notice cannot create a second turn.
+        const queued = queuedResumeRef.current;
+        if (queued?.generation === generation) {
+          queuedResumeRef.current = null;
+          void resume(queued.request_id);
+        }
+      }
     }
   }
 
   function send(event: React.FormEvent) {
     event.preventDefault();
-    if (prompt.trim() === "") return;
-    void run({ prompt }, { append: false });
+    if (prompt.trim() === "" || inFlight.current) return;
+    const requested = prompt.trim();
+    // A new user turn takes precedence over an old, uncontinued challenge;
+    // its card remains in the transcript, but cannot be clicked to replay a
+    // stale prompt after the conversation has moved on.
+    authorizationChallengeRef.current = null;
+    setAuthorizationChallenge(null);
+    const turnIndex = addTurn({ prompt: requested, events: [] });
+    const history = boundConversation(conversationRef.current);
+    void run(
+      { prompt: requested, ...(history.length === 0 ? {} : { history }) },
+      { turnIndex, prompt: requested, commitConversation: true },
+    );
+  }
+
+  /**
+   * A fallback authorization card is an explicit user-intent action. It starts
+   * one new attempt with the original prompt and bounded prior context; it is
+   * never treated as proof that a credential was granted.
+   */
+  function continueAuthorization(): void {
+    const challenge = authorizationChallengeRef.current;
+    if (challenge === null || inFlight.current) return;
+    authorizationChallengeRef.current = null;
+    setAuthorizationChallenge(null);
+    const history = boundConversation(conversationRef.current);
+    void run(
+      { prompt: challenge.prompt, ...(history.length === 0 ? {} : { history }) },
+      { turnIndex: challenge.turnIndex, prompt: challenge.prompt, commitConversation: true },
+    );
   }
 
   /**
@@ -315,13 +453,27 @@ export function Chat({
   async function resume(requestId: string): Promise<void> {
     const held = waitingRef.current;
     if (held === null || held.request_id !== requestId) return;
+
+    // Do not consume the approval or add a placeholder turn while another
+    // request owns the stream lock. Live and catch-up notices may both arrive
+    // here; one request id is enough, and the waiting card remains truthful
+    // until the active turn has actually finished.
+    if (inFlight.current) {
+      queuedResumeRef.current ??= { request_id: requestId, generation: runGenerationRef.current };
+      return;
+    }
+
     // Cleared before the turn, not after: a second notice for the same request
     // — a reconnect racing the live frame — must not start a second turn.
     waitingRef.current = null;
     setWaiting(null);
+    const history = boundConversation(conversationRef.current);
     await run(
-      { resume: { request_id: requestId, prompt: held.prompt, reply: held.reply } },
-      { append: true },
+      {
+        resume: { request_id: requestId, prompt: held.prompt, reply: held.reply },
+        ...(history.length === 0 ? {} : { history }),
+      },
+      { turnIndex: addTurn({ prompt: "", events: [] }), prompt: "", commitConversation: true },
     );
   }
 
@@ -375,7 +527,7 @@ export function Chat({
   }, [approvalStreamUrl, signedInAs]);
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <section className="chat-shell" aria-label="Conversation">
       <p style={{ color: "var(--muted)", fontSize: "0.9em", margin: "0 0 0.5em" }}>
         {signedInAs ? (
           <>
@@ -387,8 +539,9 @@ export function Chat({
         )}
       </p>
 
-      <form onSubmit={send}>
+      <form className="chat-composer" onSubmit={send}>
         <textarea
+          aria-label="Message the assistant"
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           rows={3}
@@ -413,17 +566,48 @@ export function Chat({
         </div>
       )}
 
-      {/* Grouped, not one-per-event. A `text` event is a delta; the deltas
-          either side of a tool call are two messages and the deltas between
-          them are one. `transcript.ts` says why that distinction is the whole
-          bug #99 was filed for. */}
-      {transcript(events).map((block, index) =>
-        block.kind === "reply" ? (
-          <Markdown key={index} source={block.text} />
-        ) : (
-          <EventView key={index} event={block.event} />
-        ),
-      )}
+      <div className="chat-transcript" aria-live="polite">
+        {turns.map((turn, index) => {
+          const latestAuthorization = [...turn.events]
+            .reverse()
+            .find((candidate) => candidate.kind === "authorization");
+          return (
+            <article className="chat-turn" data-kind="turn" key={index}>
+            {turn.prompt === "" ? null : (
+              <div className="chat-message chat-message-user" data-role="user">
+                <span className="chat-message-label">You</span>
+                <p>{turn.prompt}</p>
+              </div>
+            )}
+            <div className="chat-message chat-message-assistant" data-role="assistant">
+              <span className="chat-message-label">Assistant</span>
+              {/* Grouped, not one-per-event. A `text` event is a delta; the
+                  deltas either side of a tool call are two messages and the
+                  deltas between them are one. `transcript.ts` says why that
+                  distinction is the whole bug #99 was filed for. */}
+              {transcript(visibleEvents(turn.events)).map((block, blockIndex) =>
+                block.kind === "reply" ? (
+                  <Markdown key={blockIndex} source={block.text} />
+                ) : (
+                  <EventView
+                    key={blockIndex}
+                    event={block.event}
+                    {...(block.event.kind === "authorization" &&
+                    authorizationChallenge?.turnIndex === index &&
+                    latestAuthorization === block.event
+                      ? {
+                          onContinueAuthorization: continueAuthorization,
+                          authorizationContinuing: running,
+                        }
+                      : {})}
+                  />
+                ),
+              )}
+            </div>
+            </article>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -440,7 +624,15 @@ function detailOf(detail: unknown): string {
  * and of nothing else, and asserting it needs neither a socket nor a DOM.
  * `test/split-screen.test.tsx` renders each of the ten kinds through it.
  */
-export function EventView({ event }: { event: ChatEvent }) {
+export function EventView({
+  event,
+  onContinueAuthorization,
+  authorizationContinuing = false,
+}: {
+  event: ChatEvent;
+  onContinueAuthorization?: () => void;
+  authorizationContinuing?: boolean;
+}) {
   switch (event.kind) {
     case "text":
       // One event on its own. `Chat` folds consecutive ones first and renders
@@ -515,6 +707,18 @@ export function EventView({ event }: { event: ChatEvent }) {
             </a>
             , then ask again.
           </p>
+          {onContinueAuthorization === undefined ? null : (
+            <button
+              type="button"
+              data-action="continue-authorization"
+              aria-label="I have authorized, continue this request"
+              onClick={onContinueAuthorization}
+              disabled={authorizationContinuing}
+              style={{ font: "inherit", marginTop: "0.55em", padding: "0.35em 0.75em" }}
+            >
+              {authorizationContinuing ? "Continuing…" : "I’ve authorized — continue"}
+            </button>
+          )}
           {/* This card's own sentence, not the event's. `instructions` are words
               written for the model — Arcade's `llm_instructions` on layer 2,
               ours on hop 1 — and on layer 2 they carry the full authorize URL,
@@ -592,4 +796,53 @@ export function EventView({ event }: { event: ChatEvent }) {
         </p>
       );
   }
+}
+
+/**
+ * Hide only model prose that repeats a structured authorization challenge.
+ * Tool failures, policy denials and prior turns stay visible; the card is the
+ * single actionable authorization surface and does not rely on parsing model
+ * prose for a URL.
+ */
+function visibleEvents(events: readonly ChatEvent[]): ChatEvent[] {
+  if (!events.some((event) => event.kind === "authorization")) return [...events];
+  const authorizationUrls = events
+    .filter((event): event is Extract<ChatEvent, { kind: "authorization" }> => event.kind === "authorization")
+    .map((event) => event.url);
+  // Streaming text arrives as many deltas. Fold each contiguous text run before
+  // filtering so a challenge sentence split across chunks is still recognized,
+  // while keeping tool events as structural boundaries.
+  const folded: ChatEvent[] = [];
+  for (const event of events) {
+    const previous = folded[folded.length - 1];
+    if (event.kind === "text" && previous?.kind === "text") {
+      folded[folded.length - 1] = { kind: "text", text: previous.text + event.text };
+    } else {
+      folded.push(event);
+    }
+  }
+  const visible: ChatEvent[] = [];
+  for (const event of folded) {
+    if (event.kind !== "text") {
+      visible.push(event);
+      continue;
+    }
+    const text = event.text
+      .split(/(?<=[.!?])(?:\s+|\n+)/)
+      .filter((sentence) => !isAuthorizationProse(sentence, authorizationUrls))
+      .join(" ");
+    if (text !== "") visible.push({ kind: "text", text });
+  }
+  return visible;
+}
+
+function isAuthorizationProse(text: string, authorizationUrls: readonly string[]): boolean {
+  const lower = text.toLowerCase();
+  const mentionsAuthorization = /authori[sz](?:e|ation|ed|ing)/.test(lower) || lower.includes("credential");
+  const carriesAction = authorizationUrls.some((url) => text.includes(url)) || lower.includes("click") || lower.includes("link");
+  // A useful prior reply can mention both authorization and a link while
+  // reporting a failure. Keep those sentences; only remove a pure duplicate
+  // of the structured challenge.
+  const reportsFailure = /\b(?:error|failed|failure|unable|cannot|can't|still|but)\b/.test(lower);
+  return mentionsAuthorization && carriesAction && !reportsFailure;
 }

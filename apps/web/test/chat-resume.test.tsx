@@ -79,18 +79,27 @@ const BLOCKED: ChatEvent[] = [
 ];
 
 /** The resumed turn, as the server would answer it. */
+const RESUME_MESSAGE =
+  `Approval request ${REQUEST_ID} — approve_loan on LN-2291 for 95000 — was approved by Charlie at ` +
+  "2026-09-14T10:00:00.000Z.";
+
 const RESUMED: ChatEvent[] = [
   {
     kind: "resumed",
     request_id: REQUEST_ID,
     decision: "approved",
     decided_by: "charlie@bank.example",
-    message: `Approval request ${REQUEST_ID} — approve_loan on LN-2291 for 95000 — was approved by Charlie at 2026-09-14T10:00:00.000Z.`,
+    message: RESUME_MESSAGE,
   },
   { kind: "tool-call", tool: "Loan_ApproveLoan", inputs: { loan_id: "LN-2291", amount: 95000 } },
   { kind: "tool-result", tool: "Loan_ApproveLoan" },
   { kind: "text", text: "Approved: LN-2291 for $95,000." },
   { kind: "done", calls: 1 },
+];
+
+const FOLLOW_UP: ChatEvent[] = [
+  { kind: "text", text: "The follow-up finished while approval was being recorded." },
+  { kind: "done", calls: 0 },
 ];
 
 function notice(overrides: Partial<ApprovalNotice> = {}): ApprovalNotice {
@@ -125,6 +134,9 @@ interface Harness {
   drop: () => void;
   /** What `/api/approvals/{id}/status` answers. */
   storedStatus: string;
+  /** Hold the second chat response to exercise a decision racing an active turn. */
+  holdSecond: () => void;
+  releaseSecond: () => void;
   stop: () => void;
 }
 
@@ -134,6 +146,8 @@ function startHarness(): Harness {
     posts: [] as Array<Record<string, unknown>>,
     connects: 0,
     storedStatus: "pending",
+    holdSecond: false,
+    releaseSecond: () => {},
   };
   const encoder = new NativeTextEncoder();
 
@@ -146,7 +160,12 @@ function startHarness(): Harness {
       if (url.pathname === "/api/chat") {
         const body = (await request.json()) as Record<string, unknown>;
         state.posts.push(body);
-        const events = "resume" in body ? RESUMED : BLOCKED;
+        if (state.holdSecond && state.posts.length === 2) {
+          await new Promise<void>((resolve) => {
+            state.releaseSecond = resolve;
+          });
+        }
+        const events = "resume" in body ? RESUMED : state.posts.length === 1 ? BLOCKED : FOLLOW_UP;
         return new NativeResponse(events.map(encodeEvent).join(""), {
           headers: { "content-type": "application/x-ndjson" },
         });
@@ -189,6 +208,14 @@ function startHarness(): Harness {
     },
     set storedStatus(value: string) {
       state.storedStatus = value;
+    },
+    holdSecond() {
+      state.holdSecond = true;
+    },
+    releaseSecond() {
+      state.releaseSecond();
+      state.releaseSecond = () => {};
+      state.holdSecond = false;
     },
     announce(value) {
       // Exactly the frame `apps/hooks` writes: a named event, no `id:` line.
@@ -294,7 +321,7 @@ describe("a turn that ends waiting", () => {
 
 describe("approval.granted starts the next turn", () => {
   test("one resume, carrying the id and the previous turn as context", async () => {
-    await mountAndAsk();
+    const container = await mountAndAsk();
 
     await act(async () => {
       harness.announce(notice());
@@ -309,6 +336,106 @@ describe("approval.granted starts the next turn", () => {
     expect(String(resume?.reply)).toContain("Approval requested from Charlie");
     // Nothing this browser could have made up about the decision itself.
     expect(Object.keys(resume ?? {}).sort()).toEqual(["prompt", "reply", "request_id"]);
+
+    // The next ordinary prompt receives both the server-built decision line
+    // and the completed resumed reply, after the waiting turn that preceded it.
+    const form = container.querySelector("form");
+    await act(async () => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await settle();
+    expect(harness.posts).toHaveLength(3);
+    expect(harness.posts[2]?.history).toEqual([
+      {
+        role: "user",
+        content: "Approve the loan for $95K and double-check your work so you don't make any mistakes.",
+      },
+      { role: "assistant", content: "Approval requested from Charlie, VP Credit. Waiting." },
+      { role: "user", content: RESUME_MESSAGE },
+      { role: "assistant", content: "Approved: LN-2291 for $95,000." },
+    ]);
+  });
+
+  test("defers a grant during an active turn and coalesces repeat plus catch-up notices", async () => {
+    const container = await mountAndAsk();
+    harness.holdSecond();
+
+    // Start a normal follow-up and leave its HTTP response in flight.
+    await act(async () => {
+      container.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await settle(12, 5);
+    expect(harness.posts).toHaveLength(2);
+
+    // The live frame, a duplicate frame, and reconnect catch-up all describe
+    // one decision. The waiting card remains truthful until the active stream
+    // releases the lock, and no blank resume turn is added.
+    await act(async () => {
+      harness.announce(notice());
+      harness.announce(notice());
+    });
+    harness.storedStatus = "approved";
+    await act(async () => {
+      harness.drop();
+    });
+    await settle(20, 60);
+    expect(harness.posts).toHaveLength(2);
+    expect(container.querySelector('[data-kind="waiting"]')).not.toBeNull();
+
+    harness.releaseSecond();
+    await settle(40, 5);
+    expect(harness.posts).toHaveLength(3);
+    expect(container.querySelectorAll('[data-kind="resumed"]')).toHaveLength(1);
+    expect(container.textContent).toContain("The follow-up finished while approval was being recorded.");
+
+    // A late duplicate after the deferred resume has started is still a no-op.
+    await act(async () => {
+      harness.announce(notice());
+    });
+    await settle();
+    expect(harness.posts).toHaveLength(3);
+  });
+
+  test("clears a queued grant when the persona changes during the active turn", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<Chat signedInAs={DANA} approvalStreamUrl={`${harness.origin}/events`} />);
+    });
+    await settle();
+    await act(async () => {
+      container.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await settle();
+
+    harness.holdSecond();
+    await act(async () => {
+      container.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await settle(12, 5);
+    expect(harness.posts).toHaveLength(2);
+    await act(async () => {
+      harness.announce(notice());
+    });
+
+    // The old stream is aborted and its queued approval must not resume as the
+    // newly signed-in persona when the old HTTP response eventually completes.
+    await act(async () => {
+      root.render(<Chat signedInAs={MORGAN} approvalStreamUrl={`${harness.origin}/events`} />);
+    });
+    await settle();
+    harness.releaseSecond();
+    await settle(30, 5);
+    expect(harness.posts).toHaveLength(2);
+    expect(container.textContent).toContain(MORGAN);
+    expect(container.querySelector('[data-kind="resumed"]')).toBeNull();
+    expect(container.querySelector('[data-kind="waiting"]')).toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   });
 
   test("the transcript continues; nothing already on screen is cleared", async () => {

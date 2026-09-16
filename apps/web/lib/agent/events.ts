@@ -102,7 +102,15 @@ export type ChatEvent =
    * ours). Both are upstream of every hook, and both end with a person clicking
    * something rather than a rule having decided anything (#94).
    */
-  | { kind: "authorization"; tool: string; url: string; instructions?: string }
+  | {
+      kind: "authorization";
+      tool: string;
+      url: string;
+      instructions?: string;
+      /** Present when this card came from native MCP URL elicitation. */
+      mode?: "url";
+      elicitation_id?: string;
+    }
   /**
    * The tool failed and **no hook decided anything**: the loan API was
    * unreachable, the gateway could not answer, the toolkit threw. Plumbing.

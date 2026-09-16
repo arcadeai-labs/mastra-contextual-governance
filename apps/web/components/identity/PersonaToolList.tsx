@@ -103,57 +103,62 @@ export function PersonaToolList({ session, tools }: PersonaToolListProps) {
         </p>
       )}
 
-      <h3 style={{ fontSize: "0.875rem", margin: "1.5rem 0 0.25rem" }}>Tools this persona can see</h3>
-      <p style={{ ...muted, fontSize: "0.8125rem", margin: "0 0 0.75rem" }}>
-        {/* Where the list came from, on the screen rather than in a comment.
-            The claim being made is that the gateway answered this, and a claim
-            worth making is worth printing. */}
-        From the Arcade gateway&rsquo;s own <code>tools/list</code>, for this session&rsquo;s token. Not
-        filtered in the browser.
-      </p>
-
       {tools.ok ? (
-        <>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {tools.tools.map((tool) => (
-              <li key={tool.name} style={{ borderTop: "1px solid var(--line)", padding: "0.5rem 0" }}>
-                <code style={{ fontSize: "0.875rem" }}>{tool.name}</code>
-                {tool.description === "" ? null : (
-                  <div style={{ ...muted, fontSize: "0.8125rem" }}>{tool.description}</div>
-                )}
-              </li>
-            ))}
-          </ul>
-
-          {tools.tools.length === 0 ? (
-            <p style={{ ...muted, fontSize: "0.8125rem", margin: "0.5rem 0 0" }}>
-              The gateway advertised nothing this persona may use.
+        <details style={{ marginTop: "1.2rem" }} open>
+          <summary style={{ cursor: "pointer", fontSize: "0.875rem", fontWeight: 700 }}>
+            <span>Tools this persona can see</span>{" "}
+            <strong aria-label={`${tools.tools.length} tools`}>({tools.tools.length} tools available)</strong>
+          </summary>
+          <div style={{ paddingTop: "0.75rem" }}>
+            <p style={{ ...muted, fontSize: "0.8125rem", margin: "0 0 0.75rem" }}>
+              {/* Where the list came from, on the screen rather than in a comment.
+                  The claim being made is that the gateway answered this, and a claim
+                  worth making is worth printing. */}
+              From the Arcade gateway&rsquo;s own <code>tools/list</code>, for this session&rsquo;s token. Not
+              filtered in the browser.
             </p>
-          ) : null}
 
-          <p style={{ ...muted, fontSize: "0.8125rem", margin: "0.75rem 0 0" }}>
-            {/* "Built-ins filtered and labelled" — the fact of the filter is
-                the point. A quiet drop from eight to six is the same shape of
-                omission this whole demo argues against. */}
-            {tools.filtered.length === 0 ? (
-              <>The gateway advertised nothing outside this project&rsquo;s toolkits.</>
-            ) : (
-              <>
-                {tools.filtered.length} further{" "}
-                {tools.filtered.length === 1 ? "entry was" : "entries were"} advertised by the gateway and
-                are not the agent&rsquo;s to call:{" "}
-                {tools.filtered.map((name, index) => (
-                  <span key={name}>
-                    {index === 0 ? null : ", "}
-                    <code>{name}</code>
-                  </span>
-                ))}
-                . Arcade&rsquo;s own built-ins, kept out of the model&rsquo;s surface by an allow-list on
-                this project&rsquo;s toolkits.
-              </>
-            )}
-          </p>
-        </>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {tools.tools.map((tool) => (
+                <li key={tool.name} style={{ borderTop: "1px solid var(--line)", padding: "0.5rem 0" }}>
+                  <code style={{ fontSize: "0.875rem" }}>{tool.name}</code>
+                  {tool.description === "" ? null : (
+                    <div style={{ ...muted, fontSize: "0.8125rem" }}>{tool.description}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
+
+            {tools.tools.length === 0 ? (
+              <p style={{ ...muted, fontSize: "0.8125rem", margin: "0.5rem 0 0" }}>
+                The gateway advertised nothing this persona may use.
+              </p>
+            ) : null}
+
+            <p style={{ ...muted, fontSize: "0.8125rem", margin: "0.75rem 0 0" }}>
+              {/* "Built-ins filtered and labelled" — the fact of the filter is
+                  the point. A quiet drop from eight to six is the same shape of
+                  omission this whole demo argues against. */}
+              {tools.filtered.length === 0 ? (
+                <>The gateway advertised nothing outside this project&rsquo;s toolkits.</>
+              ) : (
+                <>
+                  {tools.filtered.length} further{" "}
+                  {tools.filtered.length === 1 ? "entry was" : "entries were"} advertised by the gateway and
+                  are not the agent&rsquo;s to call:{" "}
+                  {tools.filtered.map((name, index) => (
+                    <span key={name}>
+                      {index === 0 ? null : ", "}
+                      <code>{name}</code>
+                    </span>
+                  ))}
+                  . Arcade&rsquo;s own built-ins, kept out of the model&rsquo;s surface by an allow-list on
+                  this project&rsquo;s toolkits.
+                </>
+              )}
+            </p>
+          </div>
+        </details>
       ) : (
         <p role="status" style={{ fontSize: "0.875rem", margin: 0 }}>
           {/* Never an empty list: "everything was hidden" and "we could not ask"
