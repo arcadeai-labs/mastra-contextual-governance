@@ -445,6 +445,15 @@ approval prompt as Alice; the grant is already on. **Safe to skip:** the Slack r
 trip can be replaced by opening the approval page directly, and almost nobody in the
 audience will notice. The escalation and the retry cannot be skipped.
 
+**If `request_approval` reports a Slack delivery failure, stop and capture it.** The
+approval request was already recorded and routed, so do **not** call
+`Approvals_RequestApproval` again or retype the approval prompt: either would create a
+duplicate request. Capture the exact Slack method and error code shown by the tool,
+the UTC time, requester profile, and whether the VP Credit persona configured by
+`PERSONA_VP_CREDIT_EMAIL` is active in the same workspace; keep that capture with the
+incident record. This is an integration incident to investigate, not a policy denial
+or a retryable request.
+
 **Acts 3 and 4 — the Post lane shows nothing, or shows an allow.**
 `counts.output_rules` must be `2` and `policy.scanners.patterns` must be `6`. One
 output rule means the disk is carrying the pre-#16 policy — exactly #106 — and

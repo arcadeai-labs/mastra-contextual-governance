@@ -225,8 +225,14 @@ class SlackState:
     posted: list[dict[str, Any]] = field(default_factory=list)
     #: Every Slack method that was called, in order.
     calls: list[str] = field(default_factory=list)
+    #: The recipient email handed to users.lookupByEmail.
+    looked_up_emails: list[str] = field(default_factory=list)
     #: Slack's own error code to answer the next call with, if any.
     fail_with: str | None = None
+    #: Restrict the injected failure to one of the three delivery calls.
+    fail_on: str | None = None
+    #: Extra response fields used to prove diagnostics do not echo raw data.
+    fail_detail: dict[str, Any] = field(default_factory=dict)
     seen_tokens: list[str] = field(default_factory=list)
     #: Filled in by the fixture once the OS has picked a port.
     host: str = ""
@@ -253,13 +259,17 @@ class _SlackHandler(BaseHTTPRequestHandler):
             (self.headers.get("Authorization") or "").removeprefix("Bearer ")
         )
 
-        if self.state.fail_with is not None:
+        if self.state.fail_with is not None and (
+            self.state.fail_on is None or self.state.fail_on == self.path.removeprefix("/api/")
+        ):
             error, self.state.fail_with = self.state.fail_with, None
-            self._send({"ok": False, "error": error})
+            self._send({"ok": False, "error": error, **self.state.fail_detail})
             return
 
         if self.path == "/api/users.lookupByEmail":
-            user_id = self.state.users.get(body.get("email", ""))
+            email = body.get("email", "")
+            self.state.looked_up_emails.append(email)
+            user_id = self.state.users.get(email)
             if user_id is None:
                 self._send({"ok": False, "error": "users_not_found"})
                 return
