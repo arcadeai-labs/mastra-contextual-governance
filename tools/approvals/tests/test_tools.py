@@ -372,6 +372,7 @@ class TestTheSlackMessage:
         slack.fail_with = "invalid_arguments"
         slack.fail_detail = {
             "needed": "chat:write",
+            "provided": "users:read,users:read.email",
             "token": SLACK_TOKEN,
             "user": "U_RILEY",
             "channel": "D_RILEY",
@@ -381,8 +382,8 @@ class TestTheSlackMessage:
         with pytest.raises(ToolExecutionError) as raised:
             await request_approval(as_dana, **ACT_TWO)
 
-        assert "detail=needed=chat:write" in raised.value.developer_message
         diagnostic = raised.value.developer_message
+        assert "detail=needed=chat:write; provided=users:read,users:read.email" in diagnostic
         for forbidden in (SLACK_TOKEN, "U_RILEY", "D_RILEY", "LN-2291", "approve_loan"):
             assert forbidden not in diagnostic
         # The user-facing text contains only the method, code, safe request

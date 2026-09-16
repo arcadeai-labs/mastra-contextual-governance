@@ -106,6 +106,7 @@ def _safe_detail_text(detail: object) -> str:
     details = []
     for part in detail.split(";"):
         key, separator, value = part.partition("=")
+        key = key.strip()
         if separator and key in {"needed", "provided"}:
             safe = _safe_detail_value(value)
             if safe:
