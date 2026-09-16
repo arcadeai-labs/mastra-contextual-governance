@@ -217,6 +217,20 @@ class TestTheSlackMessage:
         # repo, and the DM renders under her name (spike #3).
         assert set(slack.seen_tokens) == {SLACK_TOKEN}
 
+    async def test_bob_requesting_for_charlie_uses_the_routed_email_and_bobs_token(
+        self, store: StoreState, slack: SlackState
+    ) -> None:
+        # This mirrors the observed new-persona run locally: Bob is the
+        # requester, Charlie is the deterministic minimum-sufficient recipient,
+        # and Slack receives Bob's delegated user token.
+        bob_token = "xoxp-bob-token"
+        await request_approval(
+            make_context(store.host, SAM.user_id, slack_token=bob_token), **ACT_TWO
+        )
+
+        assert slack.looked_up_emails == [RILEY.user_id]
+        assert set(slack.seen_tokens) == {bob_token}
+
     async def test_direct_messages_the_routed_approver_and_nobody_else(
         self, as_dana, store: StoreState, slack: SlackState
     ) -> None:
@@ -312,19 +326,69 @@ class TestTheSlackMessage:
         await request_approval(as_dana, **ACT_TWO)
         assert smell not in json.dumps(slack.posted[0]).lower()
 
-    async def test_a_slack_refusal_says_the_request_stands_but_the_notice_did_not(
-        self, as_dana, store: StoreState, slack: SlackState
+    @pytest.mark.parametrize(
+        ("failed_method", "calls_before_failure"),
+        [
+            ("users.lookupByEmail", ["users.lookupByEmail"]),
+            (
+                "conversations.open",
+                ["users.lookupByEmail", "conversations.open"],
+            ),
+            (
+                "chat.postMessage",
+                ["users.lookupByEmail", "conversations.open", "chat.postMessage"],
+            ),
+        ],
+    )
+    async def test_each_slack_failure_names_the_method_and_preserves_the_record(
+        self,
+        as_dana,
+        store: StoreState,
+        slack: SlackState,
+        failed_method: str,
+        calls_before_failure: list[str],
     ) -> None:
-        slack.fail_with = "users_not_found"
+        slack.fail_on = failed_method
+        slack.fail_with = "invalid_arguments"
         with pytest.raises(ToolExecutionError) as raised:
             await request_approval(as_dana, **ACT_TWO)
 
         message = str(raised.value)
-        assert "users_not_found" in message
+        assert f"Slack method {failed_method} failed" in message
+        assert "error code invalid_arguments" in message
+        assert "recorded and routed" in message
+        assert "notice was not delivered" in message
+        assert "Do not retry" in message
         assert RILEY.display_name in message
         # The record exists; what failed is the delivery. An agent told only
         # "failed" would retry and create a second request.
         assert len(store.created) == 1
+        assert slack.calls == calls_before_failure
+
+    async def test_slack_diagnostic_keeps_safe_detail_but_never_echoes_secrets_or_payload(
+        self, as_dana, store: StoreState, slack: SlackState
+    ) -> None:
+        slack.fail_on = "chat.postMessage"
+        slack.fail_with = "invalid_arguments"
+        slack.fail_detail = {
+            "needed": "chat:write",
+            "token": SLACK_TOKEN,
+            "user": "U_RILEY",
+            "channel": "D_RILEY",
+            "request_body": ACT_TWO,
+        }
+
+        with pytest.raises(ToolExecutionError) as raised:
+            await request_approval(as_dana, **ACT_TWO)
+
+        assert "detail=needed=chat:write" in raised.value.developer_message
+        diagnostic = raised.value.developer_message
+        for forbidden in (SLACK_TOKEN, "U_RILEY", "D_RILEY", "LN-2291", "approve_loan"):
+            assert forbidden not in diagnostic
+        # The user-facing text contains only the method, code, safe request
+        # status, and recovery instruction; it never carries response detail.
+        for forbidden in (SLACK_TOKEN, "U_RILEY", "D_RILEY", "chat:write", "LN-2291"):
+            assert forbidden not in str(raised.value)
 
     async def test_a_slack_200_that_says_ok_false_is_a_failure_not_a_delivery(
         self, as_dana, store: StoreState, slack: SlackState

@@ -264,9 +264,14 @@ async def request_approval(
         # an agent that believes it has escalated something nobody has seen.
         raise ToolExecutionError(
             f"Approval request {request_id} was recorded and routed to "
-            f"{approver.display_name or approver.user_id}, but Slack would not deliver "
-            f"the message ({exc.error}). Tell the user to contact the approver directly.",
-            developer_message=str(exc),
+            f"{approver.display_name or 'the routed approver'}, but Slack method "
+            f"{exc.method} failed with error code {exc.error}; the notice was not "
+            "delivered. Do not retry this approval request: retrying would create a "
+            "duplicate. Stop and capture the method and error code for an administrator.",
+            developer_message=(
+                f"{exc.diagnostic_message()}; approval request {request_id} was "
+                "recorded and routed, but notice delivery failed; do not retry."
+            ),
         ) from exc
 
     return {

@@ -47,15 +47,85 @@ __all__ = [
 SLACK_SCOPES = ["chat:write", "im:write", "users:read", "users:read.email"]
 
 _DEFAULT_API_BASE_URL = "https://slack.com/api"
+_ASCII_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_ASCII_LOWERCASE = "abcdefghijklmnopqrstuvwxyz"
+_ASCII_DIGITS = "0123456789"
+
+
+def _has_safe_shape(
+    text: str, *, first: str, rest: str, max_length: int = 80
+) -> bool:
+    return bool(text) and len(text) <= max_length and text[0] in first and all(
+        char in rest for char in text[1:]
+    )
+
+
+def _safe_identifier(value: object, fallback: str) -> str:
+    """Keep machine labels useful without echoing arbitrary upstream text."""
+    text = str(value or "").strip()
+    safe = _ASCII_LETTERS + _ASCII_DIGITS + "_.-"
+    return text if _has_safe_shape(text, first=_ASCII_LETTERS, rest=safe) else fallback
+
+
+def _safe_detail_value(value: object) -> str:
+    """Return only scope-like detail that is safe to put in diagnostics.
+
+    Slack's refusal payload can grow new fields over time. Never serialise that
+    payload wholesale: it can contain request data, identifiers, or credentials
+    supplied by an intermediary. The only detail we currently need operationally
+    is the scope Slack says is needed or was provided, and those values have a
+    deliberately narrow grammar.
+    """
+    values = value if isinstance(value, list) else [value]
+    safe = []
+    scope_chars = _ASCII_LOWERCASE + _ASCII_DIGITS + "_.:-"
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        for text in item.split(","):
+            text = text.strip()
+            if _has_safe_shape(text, first=_ASCII_LOWERCASE, rest=scope_chars):
+                safe.append(text)
+    return ",".join(safe[:20])
+
+
+def _safe_response_detail(body: dict[str, Any]) -> str:
+    """Extract the useful, non-sensitive part of a Slack response."""
+    details = []
+    for key in ("needed", "provided"):
+        value = _safe_detail_value(body.get(key))
+        if value:
+            details.append(f"{key}={value}")
+    return "; ".join(details)
+
+
+def _safe_detail_text(detail: object) -> str:
+    """Re-validate formatted detail even when a caller constructs SlackError."""
+    if not isinstance(detail, str):
+        return ""
+    details = []
+    for part in detail.split(";"):
+        key, separator, value = part.partition("=")
+        if separator and key in {"needed", "provided"}:
+            safe = _safe_detail_value(value)
+            if safe:
+                details.append(f"{key}={safe}")
+    return "; ".join(details)
 
 
 class SlackError(Exception):
     """Slack answered, and said no. `error` is Slack's own machine-readable code."""
 
     def __init__(self, method: str, error: str, detail: str = "") -> None:
-        self.method = method
-        self.error = error
-        super().__init__(f"Slack {method} failed: {error}{f' ({detail})' if detail else ''}")
+        self.method = _safe_identifier(method, "unknown_method")
+        self.error = _safe_identifier(error, "unknown_error")
+        self.detail = _safe_detail_text(detail)
+        super().__init__(f"Slack {self.method} failed: {self.error}")
+
+    def diagnostic_message(self) -> str:
+        """A useful server-side summary with no raw Slack response or request data."""
+        suffix = f"; detail={self.detail}" if self.detail else ""
+        return f"Slack {self.method} failed with code {self.error}{suffix}"
 
 
 def api_base_url() -> str:
@@ -73,18 +143,28 @@ async def _call(token: str, method: str, payload: dict[str, Any]) -> dict[str, A
         response = await client.post(url, json=payload, headers=headers)
 
     if response.status_code != 200:
-        raise SlackError(method, f"http_{response.status_code}", response.text[:200])
+        # Do not include response.text in an exception. A proxy or an upstream
+        # failure page is not controlled by this toolkit and may echo headers,
+        # credentials, or the request body. The status is enough to diagnose a
+        # transport-level refusal; application-level detail is handled below.
+        raise SlackError(method, f"http_{response.status_code}")
 
     try:
-        body: dict[str, Any] = response.json()
+        decoded = response.json()
     except ValueError as exc:  # pragma: no cover - Slack always answers JSON
-        raise SlackError(method, "unparseable_response", str(exc)) from exc
+        raise SlackError(method, "unparseable_response") from exc
+
+    body = decoded if isinstance(decoded, dict) else {}
 
     # A 200 with ok:false is Slack's normal shape for a refusal. Reading only
     # the status code would treat "not_in_channel" or "missing_scope" as a
     # delivered message.
     if not body.get("ok"):
-        raise SlackError(method, str(body.get("error", "unknown")), str(body.get("needed", "")))
+        raise SlackError(
+            method,
+            body.get("error", "unknown"),
+            _safe_response_detail(body),
+        )
     return body
 
 
