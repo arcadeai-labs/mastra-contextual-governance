@@ -73,6 +73,8 @@ export interface BankPaneProps {
   onTurnStart?: () => void;
   /** Where the chat watches for an approval decision (#20). Passed through, not read. */
   approvalStreamUrl?: string | null;
+  /** Explicit home authorization continuation; the App Router supplies this at the shell boundary. */
+  onContinueAuthorization?: () => void | Promise<void>;
 }
 
 export function BankPane({
@@ -83,6 +85,7 @@ export function BankPane({
   onChatEvent,
   onTurnStart,
   approvalStreamUrl = null,
+  onContinueAuthorization,
 }: BankPaneProps) {
   return (
     <div className="bank">
@@ -121,7 +124,10 @@ export function BankPane({
           not guessed: with the tool list second the Send button landed 31px
           under the fold. */}
       <div className="bank-body">
-        <LoanFilesView state={loanFiles} />
+        <LoanFilesView
+          state={loanFiles}
+          {...(onContinueAuthorization === undefined ? {} : { onContinueAuthorization })}
+        />
 
         <section className="bank-panel bank-chat" aria-label="Assistant">
           <h2 className="bank-panel-title">Assistant</h2>

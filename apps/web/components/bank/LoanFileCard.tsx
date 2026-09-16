@@ -16,8 +16,8 @@
  * - **denied** — the control plane refused this person this read. The rule's own
  *   sentence, verbatim, `[ref evt_…]` and all, because the panel on the right
  *   joins on that token.
- * - **authorization** — a credential is missing. No hook fired, no audit row
- *   exists, and the card offers the link rather than claiming a refusal.
+ * - **authorization** — a credential is missing. The card offers the link and
+ *   explicit continuation rather than calling it a policy refusal.
  * - **fault** — the plumbing. Nothing decided anything, and the card says so.
  *
  * ## What it does not show
@@ -30,7 +30,15 @@
 import type { LoanRead } from "../../lib/loan-context/loans.ts";
 import { count, dollars, statusKey, text } from "./format.ts";
 
-export function LoanFileCard({ read }: { read: LoanRead }) {
+export function LoanFileCard({
+  read,
+  onContinueAuthorization,
+  refreshing = false,
+}: {
+  read: LoanRead;
+  onContinueAuthorization?: () => void;
+  refreshing?: boolean;
+}) {
   if (read.outcome === "read") {
     const loan = read.loan;
     return (
@@ -91,21 +99,33 @@ export function LoanFileCard({ read }: { read: LoanRead }) {
       {read.outcome === "authorization" ? (
         <>
           <p className="bank-file-note">
-            {read.url === undefined ? (
-              <>Authorize access to the loan book, then reload.</>
+            {safeHttpUrl(read.url) === undefined ? (
+              <>Complete provider authorization, then use Continue.</>
             ) : (
               <>
-                <a href={read.url} target="_blank" rel="noreferrer">
+                <a href={safeHttpUrl(read.url)} target="_blank" rel="noreferrer">
                   Authorize access to the loan book
                 </a>
-                , then reload.
+                , then use Continue.
               </>
             )}
           </p>
           <p className="bank-quiet">
-            Nothing was refused: this browser holds no credential for the loan book yet, so no policy
-            decision was made and nothing was recorded.
+            This read is paused pending provider authorization. Continue starts one fresh governed
+            attempt and does not assume authorization succeeded.
           </p>
+          {onContinueAuthorization === undefined ? null : (
+            <button
+              type="button"
+              data-action="continue-loan-authorization"
+              aria-label="I have authorized, refresh loan files"
+              onClick={onContinueAuthorization}
+              disabled={refreshing}
+              style={{ font: "inherit", marginTop: "0.55em", padding: "0.35em 0.75em" }}
+            >
+              {refreshing ? "Refreshing…" : "Continue"}
+            </button>
+          )}
         </>
       ) : null}
 
@@ -142,4 +162,14 @@ function Field({ label, value }: { label: string; value: string }) {
       <span className="bank-field-value">{value}</span>
     </div>
   );
+}
+
+function safeHttpUrl(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }

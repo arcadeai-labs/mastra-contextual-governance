@@ -69,9 +69,18 @@ export interface SplitScreenProps {
   loanFiles: LoanFilesState;
   /** #15's tool list, when it lands. */
   toolList?: ReactNode;
+  /** Supplied by the App Router boundary; kept optional for isolated surface tests. */
+  onContinueAuthorization?: () => void | Promise<void>;
 }
 
-export function SplitScreen({ stream, signedInAs, identity, loanFiles, toolList }: SplitScreenProps) {
+export function SplitScreen({
+  stream,
+  signedInAs,
+  identity,
+  loanFiles,
+  toolList,
+  onContinueAuthorization,
+}: SplitScreenProps) {
   const [correlationKey, setCorrelationKey] = useState<CorrelationKey | undefined>(undefined);
 
   const onChatEvent = useCallback((event: ChatEvent) => {
@@ -92,6 +101,7 @@ export function SplitScreen({ stream, signedInAs, identity, loanFiles, toolList 
           signedInAs={signedInAs}
           identity={identity}
           loanFiles={loanFiles}
+          {...(onContinueAuthorization === undefined ? {} : { onContinueAuthorization })}
           {...(toolList === undefined ? {} : { toolList })}
           onChatEvent={onChatEvent}
           onTurnStart={onTurnStart}

@@ -20,8 +20,8 @@
  * is the general one. A page load needs the persona's tool list *and* the two
  * governed `Loan_GetLoan` reads the left half puts on screen, and until #109
  * those were two `tools/list` calls in two MCP sessions — the second one
- * because the browser fetched `/api/loan-context`, which could not share a
- * connection with a server render it was not part of. `sessionSurface` takes a
+ * because a browser-side request could not share a connection with a server
+ * render it was not part of. `sessionSurface` takes a
  * continuation and runs it **on this session, against this listing**, before
  * the connection is dropped. One page load, one `tools/list`.
  *
@@ -56,6 +56,7 @@ import { readIdentitySurface, type IdentitySurface } from "../config.ts";
 import { GATEWAY_START_PATH, liveGatewayToken, refreshedGatewayToken } from "../identity/handlers.ts";
 import { mcpUrl, probeGatewayToken } from "../identity/gateway.ts";
 import type { Session } from "../identity/session.ts";
+import type { NativeElicitationBridge } from "./native-elicitation.ts";
 import { gatewayClient, selectGoverned, SERVER_KEY, GATEWAY_BUILTINS } from "./tools.ts";
 
 export { GATEWAY_BUILTINS };
@@ -93,6 +94,8 @@ const LIST_TIMEOUT_MS = 15_000;
 export interface SessionToolsOptions {
   config?: IdentitySurface;
   timeoutMs?: number;
+  /** A request-scoped bridge for native MCP URL elicitation. */
+  nativeElicitation?: NativeElicitationBridge;
 }
 
 /**
@@ -263,8 +266,10 @@ async function listWith<T>(
     token,
     timeoutMs: options.timeoutMs ?? LIST_TIMEOUT_MS,
   });
-
   try {
+    if (options.nativeElicitation !== undefined) {
+      await client.elicitation.onRequest(SERVER_KEY, options.nativeElicitation.handle);
+    }
     const advertised = await advertise(client, config, token);
     if (advertised.kind === "rejected") {
       return { outcome: "rejected", status: advertised.status, surface: { tools: advertised.answer, inside: null } };

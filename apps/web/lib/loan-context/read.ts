@@ -4,11 +4,11 @@
  *
  * A pure function of one gateway listing: it is handed the governed tools that
  * a `tools/list` already produced (`lib/agent/tool-list.ts`) and runs two
- * `Loan_GetLoan` calls on that same MCP session. Until #109 this was a route —
- * `GET /api/loan-context`, fetched from the browser — and being a route was
- * what made it cost a second `tools/list`: a separate HTTP request cannot share
- * a connection with the server render that preceded it. The route is gone and
- * nothing fetches it; `lib/home/surface.ts` is the one caller.
+ * `Loan_GetLoan` calls on that same MCP session. Until #109 this was a
+ * browser-side request, and being a separate request was what made it cost a
+ * second `tools/list`: a separate HTTP request cannot share a connection with
+ * the server render that preceded it. That path is gone and
+ * `lib/home/surface.ts` is the one caller.
  *
  * ## Why this is not a database read
  *
@@ -37,6 +37,10 @@
  * the server component that owns the cookie and passed in.
  */
 import { authorizationRequired, isHookDecision, remediationText } from "../agent/authorization.ts";
+import {
+  type NativeElicitationBridge,
+  readNativeUrlElicitations,
+} from "../agent/native-elicitation.ts";
 import { correlationRef, failureText } from "../agent/run.ts";
 import type { GovernedListing } from "../agent/tool-list.ts";
 import {
@@ -64,6 +68,8 @@ const GET_LOAN_SUFFIX = "_GetLoan";
 export interface ReadLoanFilesOptions {
   /** Only for tests, which need to see which tool was picked out of the surface. */
   onTool?: (name: string) => void;
+  /** The request-scoped native MCP callback installed on this listing's client. */
+  nativeElicitation?: NativeElicitationBridge;
 }
 
 /**
@@ -113,7 +119,13 @@ export async function readLoanFiles(
   // page load is two reads.
   const reads: LoanRead[] = [];
   for (const loanId of DEMO_LOAN_IDS) {
-    reads.push(await readOne(tool, loanId));
+    const read = await readOne(tool, loanId, options.nativeElicitation);
+    reads.push(read);
+    // Authorization is a human step, not a partial page load. The first
+    // challenged file pauses the attempt before another loan read can reach
+    // the gateway, while ordinary faults and policy decisions retain the
+    // existing behavior of trying the next file.
+    if (read.outcome === "authorization") break;
   }
 
   return { status: "loaded", body: { reads, actor, tool: toolName } };
@@ -132,11 +144,40 @@ export async function readLoanFiles(
 async function readOne(
   tool: { execute: (input: unknown) => Promise<unknown> },
   loanId: string,
+  nativeElicitation?: NativeElicitationBridge,
 ): Promise<LoanRead> {
   let value: unknown;
   try {
     value = await tool.execute({ loan_id: loanId });
   } catch (cause) {
+    // A native callback can cancel the in-flight request before the MCP client
+    // surfaces its final error. Prefer the request the bridge actually saw;
+    // it is stronger evidence than a wrapper's error wording.
+    const nativeFromBridge = takeNativeAuthorization(nativeElicitation, loanId);
+    if (nativeFromBridge !== null) return nativeFromBridge;
+    const nativeRequests = readNativeUrlElicitations(cause);
+    const nativeRequest = nativeRequests[0];
+    if (nativeRequest !== undefined) {
+      return {
+        loan_id: loanId,
+        outcome: "authorization",
+        url: nativeRequest.url,
+        instructions: nativeRequest.message,
+      };
+    }
+
+    // Preserve the structured value until after auth classification. Calling
+    // failureText first discards -32042 and nested native data, which makes a
+    // genuine challenge look like an unavailable loan book.
+    const authorizationFromCause = authorizationRequired(cause);
+    if (authorizationFromCause) {
+      return {
+        loan_id: loanId,
+        outcome: "authorization",
+        ...(authorizationFromCause.url === undefined ? {} : { url: authorizationFromCause.url }),
+        ...(authorizationFromCause.instructions ? { instructions: authorizationFromCause.instructions } : {}),
+      };
+    }
     const text = failureText(cause);
 
     const authorization = authorizationRequired(text);
@@ -155,6 +196,12 @@ async function readOne(
     return { loan_id: loanId, outcome: "denied", reason, ref: correlationRef(reason) };
   }
 
+  // Streamable HTTP URL elicitation is answered with `cancel` by the bridge so
+  // the in-flight call can settle. The captured native request is the actual
+  // authorization signal; an empty result must never be rendered as a loan.
+  const nativeRequest = takeNativeAuthorization(nativeElicitation, loanId);
+  if (nativeRequest !== null) return nativeRequest;
+
   const loan = loanFromToolResult(value);
   if (loan === null) {
     return {
@@ -164,4 +211,18 @@ async function readOne(
     };
   }
   return { loan_id: loanId, outcome: "read", loan };
+}
+
+function takeNativeAuthorization(
+  bridge: NativeElicitationBridge | undefined,
+  loanId: string,
+): Extract<LoanRead, { outcome: "authorization" }> | null {
+  const request = bridge?.take()[0];
+  const signaled = bridge?.takeSignal() ?? false;
+  if (request === undefined && !signaled) return null;
+  return {
+    loan_id: loanId,
+    outcome: "authorization",
+    ...(request === undefined ? {} : { url: request.url, instructions: request.message }),
+  };
 }

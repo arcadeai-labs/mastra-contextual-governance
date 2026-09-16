@@ -10,13 +10,13 @@
  * ## Why this file exists at all
  *
  * It is #109. Loading `/` used to cost **two** `tools/list` calls: one here,
- * server-side, and one from the browser, which fetched `GET /api/loan-context`
- * to find `Loan_GetLoan` before reading the two files. They could not share a
- * session, because the second was a separate HTTP request that opened its own
- * `MCPClient`. Against the real gateway each listing is also four `/access`
- * calls, so the tidy-up is worth about five audit rows and a round trip per
- * page load. `test/home-surface.test.ts` asserts the count rather than
- * describing it.
+ * server-side, and one from the browser, which had to list the gateway's tools
+ * again to find `Loan_GetLoan` before reading the two files. They could not
+ * share a session, because the second was a separate HTTP request that opened
+ * its own `MCPClient`. Against the real gateway each listing is also four
+ * `/access` calls, so the tidy-up is worth about five audit rows and a round
+ * trip per page load. `test/home-surface.test.ts` asserts the count rather
+ * than describing it.
  *
  * ## What it does not do
  *
@@ -27,6 +27,7 @@
  * page load and buys the page back a whole round trip.
  */
 import { sessionSurface, type SessionTools, type SessionToolsOptions } from "../agent/tool-list.ts";
+import { createNativeElicitationBridge } from "../agent/native-elicitation.ts";
 import type { Session } from "../identity/session.ts";
 import type { LoanFilesState } from "../loan-context/loans.ts";
 import { readLoanFiles, type ReadLoanFilesOptions } from "../loan-context/read.ts";
@@ -44,10 +45,14 @@ export async function homeSurface(
   session: Session | null,
   options: HomeSurfaceOptions = {},
 ): Promise<HomeSurface> {
+  // One bridge belongs to this one page attempt. It is installed on the same
+  // MCP client that lists the tools and reads the files; it never crosses a
+  // request or a browser persona.
+  const nativeElicitation = createNativeElicitationBridge();
   const { tools, inside } = await sessionSurface(
     session,
-    (listing) => readLoanFiles(listing, session?.email ?? "", options),
-    options,
+    (listing) => readLoanFiles(listing, session?.email ?? "", { ...options, nativeElicitation }),
+    { ...options, nativeElicitation },
   );
   if (inside !== null) return { tools, files: inside };
 

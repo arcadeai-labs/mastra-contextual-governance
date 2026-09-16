@@ -24,8 +24,8 @@
  * and a cg-web with no `ANTHROPIC_API_KEY` must still show the loan the
  * audience is being asked to think about.
  *
- * This suite was `test/loan-context.test.ts` until #109, when the route it
- * drove — `GET /api/loan-context` — was deleted and its work moved into
+ * This suite was `test/loan-context.test.ts` until #109, when the browser
+ * request it drove was deleted and its work moved into
  * `app/page.tsx`'s server component. The assertions are the same ones; what
  * changed is that they are made against `homeSurface`, which is the function
  * the page calls.
@@ -181,11 +181,10 @@ describe("the files on the left half", () => {
 /**
  * #109, as a number.
  *
- * The issue's measurement: a page load cost two `tools/list` calls, one for
- * #15's widget in the server component and one inside `GET /api/loan-context`,
- * which the browser fetched afterwards and which could not share the first
- * one's MCP session. The fix is not "the reads moved" — it is that there is now
- * one gateway session per page load, and the only way to say that is to count.
+ * The issue's measurement: a page load uses one gateway session for both the
+ * tool list and loan reads. A Continue action is a new page attempt, so it gets
+ * one new listing and the same governed read path; the only way to say that is
+ * to count.
  *
  * `harness.lists` is the gateway stand-in's own record, one entry per
  * `tools/list` JSON-RPC message it answered. Nothing in the assertion is
@@ -277,12 +276,14 @@ describe("when the read does not produce a file", () => {
   /**
    * Layer 2, which is not a refusal.
    *
-   * `requireAuthorizationFor` is one-shot, exactly as the real gateway is: a
-   * persona who authorizes once is not challenged again. So the first file
-   * comes back as a link to follow and the second as a file — which is also the
-   * assertion that one unauthorized read does not blank the whole panel.
+   * `requireAuthorizationFor` is one-shot, exactly as the real gateway is, but
+   * a page attempt must stop at its first challenge. The explicit browser
+   * Continue action starts the next attempt after the person authorizes; it is
+   * not allowed to read the sibling file in the background.
    */
-  test("a missing credential is a link to follow, never a denial", async () => {
+  test("a missing credential is one actionable link, and stops before the second read", async () => {
+    const callsBefore = harness.calls.length;
+    const listsBefore = harness.lists.length;
     harness.gateway.requireAuthorizationFor(
       "Loan_GetLoan",
       "https://cloud.arcade.dev/api/v1/oauth/flow/for-loan-context",
@@ -293,7 +294,74 @@ describe("when the read does not produce a file", () => {
     expect(first?.outcome).toBe("authorization");
     if (first?.outcome !== "authorization") throw new Error("unreachable");
     expect(first.url).toBe("https://cloud.arcade.dev/api/v1/oauth/flow/for-loan-context");
-    expect(second?.outcome).toBe("read");
+    expect(first.instructions).toContain("try again once they confirm");
+    expect(second).toBeUndefined();
+    expect(harness.lists.length - listsBefore).toBe(1);
+    expect(harness.calls.slice(callsBefore).map((call) => call.outcome)).toEqual(["authorization_required"]);
+  });
+
+  test("a native URL elicitation is captured through the actual MCP callback and stops the page attempt", async () => {
+    const callsBefore = harness.calls.length;
+    const listsBefore = harness.lists.length;
+    harness.gateway.requireNativeElicitationFor("Loan_GetLoan", "https://provider.example/native-loan-auth");
+
+    const body = loaded(await load(sessionFor(DANA)));
+    const [first, second] = body.reads;
+    expect(first?.outcome).toBe("authorization");
+    if (first?.outcome !== "authorization") throw new Error("unreachable");
+    expect(first.url).toBe("https://provider.example/native-loan-auth");
+    expect(first.instructions).toBe("Authorize the provider, then continue.");
+    expect(second).toBeUndefined();
+    expect(harness.lists.length - listsBefore).toBe(1);
+    expect(harness.calls.slice(callsBefore).map((call) => call.outcome)).toEqual(["authorization_required"]);
+  });
+
+  test("an unsafe native URL still pauses the first read without rendering the link", async () => {
+    const callsBefore = harness.calls.length;
+    harness.gateway.requireNativeElicitationFor("Loan_GetLoan", "javascript:alert(1)");
+
+    const body = loaded(await load(sessionFor(DANA)));
+    const [first, second] = body.reads;
+    expect(first).toEqual({ loan_id: "LN-2291", outcome: "authorization" });
+    expect(second).toBeUndefined();
+    expect(harness.calls.slice(callsBefore).map((call) => call.outcome)).toEqual(["authorization_required"]);
+  });
+
+  test("a structured -32042 result with a URL is an actionable authorization, not a fault", async () => {
+    harness.gateway.requireProtocolAuthorizationFor("Loan_GetLoan", "https://provider.example/protocol-loan-auth");
+
+    const body = loaded(await load(sessionFor(DANA)));
+    const [first, second] = body.reads;
+    expect(first?.outcome).toBe("authorization");
+    if (first?.outcome !== "authorization") throw new Error("unreachable");
+    expect(first.url).toBe("https://provider.example/protocol-loan-auth");
+    expect(first.instructions).toBe("Authorize the provider, then continue.");
+    expect(second).toBeUndefined();
+  });
+
+  test("a structured -32042 result without a URL still pauses for explicit Continue", async () => {
+    harness.gateway.requireProtocolAuthorizationFor("Loan_GetLoan");
+
+    const body = loaded(await load(sessionFor(DANA)));
+    const [first, second] = body.reads;
+    expect(first).toEqual({ loan_id: "LN-2291", outcome: "authorization", instructions: "URL elicitation required" });
+    expect(second).toBeUndefined();
+  });
+
+  test("Continue is a fresh home attempt, succeeds once the one-shot challenge is consumed, and preserves one listing per attempt", async () => {
+    // Consume a one-shot challenge on the initial page attempt.
+    harness.gateway.requireAuthorizationFor("Loan_GetLoan", "https://provider.example/continue-loan-auth");
+    const initial = loaded(await load(sessionFor(DANA)));
+    expect(initial.reads).toHaveLength(1);
+    expect(initial.reads[0]?.outcome).toBe("authorization");
+
+    const callsBefore = harness.calls.length;
+    const listsBefore = harness.lists.length;
+    const refreshed = loaded(await load(sessionFor(DANA)));
+    expect(refreshed.reads.map((read) => read.outcome)).toEqual(["read", "read"]);
+    expect(harness.lists.length - listsBefore).toBe(1);
+    expect(harness.calls.length - callsBefore).toBe(2);
+    expect(harness.calls.slice(callsBefore).every((call) => call.user_id === DANA)).toBe(true);
   });
 
   /**

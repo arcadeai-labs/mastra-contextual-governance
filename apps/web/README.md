@@ -579,7 +579,7 @@ with `/post` redaction live (#16) the chat would show a masked account number be
 file that never had one masked.
 
 **One gateway session per page load (#109).** Until #109 the files were fetched from the
-browser, from a `GET /api/loan-context` route that had to run its own `tools/list` to
+browser-side request that had to run its own `tools/list` to
 find `Loan_GetLoan` — so loading `/` cost two listings, in two MCP sessions, because a
 separate HTTP request cannot share a connection with the server render before it. That
 route is gone and nothing fetches it. `sessionSurface` takes a continuation and runs it
@@ -602,6 +602,26 @@ human has to go and fix.
 A read that does not produce a file is classified exactly as a failed tool call in the
 chat is, by importing that judgement rather than repeating it: a denial needs positive
 evidence that a hook decided, and everything else is a fault.
+
+### Loan-file authorization pauses and refreshes
+
+The first `Loan_GetLoan` authorization challenge is a terminal outcome for that page
+attempt. The sequential reader stops before the next loan call, and the left card keeps
+the validated HTTP(S) authorization URL and provider instructions instead of flattening
+the structured MCP error into an unavailable-file message. Legacy `authorization_url`
+errors, native URL elicitation callbacks, and structured MCP `-32042` results all use
+this path; arbitrary prose is still a fault.
+
+The card's `Continue` button invokes the App Router's `router.refresh()`, which starts
+one new server-side home attempt: one fresh gateway session, one `tools/list`, and reads
+through that listing. It never assumes the person's click succeeded. A repeated
+challenge pauses again, while a successful refresh replaces the server-provided
+loan-file state; the stable client shell keeps the Chat component and its in-memory
+conversation history mounted. `test/home-surface.test.ts` covers the real local MCP
+transport, `test/home-loan-browser.test.tsx` covers the isolated rendered component,
+and `test/home-loan-next-browser.test.ts` drives a real Next page in local headless
+Chrome: a delayed synthetic gateway response, rapid clicks, a re-challenge, and a
+successful Continue are measured through the production refresh/context path.
 
 ### A denial is a decision, not an error state
 

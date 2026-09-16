@@ -7,7 +7,7 @@
  * stream, and returns `cancel` immediately. The browser cannot answer an
  * in-flight MCP request from a separate HTTP POST without process-global
  * state; the auth card therefore opens the URL and explicitly starts a fresh
- * turn when the person continues. Nothing in that retry is treated as proof
+ * turn/read when the person continues. Nothing in that retry is treated as proof
  * that authorization was granted.
  */
 
@@ -71,6 +71,38 @@ export function readNativeUrlElicitations(value: unknown, depth = 0): NativeUrlE
   return [...unique.values()];
 }
 
+/**
+ * Whether a response carried a URL-mode request, even when its URL failed the
+ * safe HTTP(S) check. The browser must not render an unsafe link, but it must
+ * still pause the page instead of treating the canceled authorization as a
+ * normal empty tool result and continuing to another read.
+ */
+export function hasNativeUrlElicitation(value: unknown, depth = 0): boolean {
+  if (depth > 6 || value === null || value === undefined) return false;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed === value ? false : hasNativeUrlElicitation(parsed, depth + 1);
+    } catch {
+      return false;
+    }
+  }
+  if (Array.isArray(value)) return value.some((entry) => hasNativeUrlElicitation(entry, depth + 1));
+  if (typeof value !== "object") return false;
+  const body = value as Record<string, unknown>;
+  if (
+    body.mode === "url" &&
+    typeof body.message === "string" &&
+    typeof body.url === "string" &&
+    typeof body.elicitationId === "string"
+  ) {
+    return true;
+  }
+  return ["elicitations", "data", "error", "cause", "details", "inputRequests", "params"].some((key) =>
+    hasNativeUrlElicitation(body[key], depth + 1),
+  );
+}
+
 function isHttpUrl(value: string): boolean {
   try {
     const protocol = new URL(value).protocol;
@@ -81,18 +113,20 @@ function isHttpUrl(value: string): boolean {
 }
 
 /**
- * One bridge per chat request. A native request is never accepted implicitly;
+ * One bridge per request. A native request is never accepted implicitly;
  * cancellation lets the current MCP call finish while the UI offers the
  * explicit fallback continuation action.
  */
 export function createNativeElicitationBridge(options: { onRequest?: () => void } = {}) {
   let pending: NativeUrlElicitation[] = [];
+  let pendingSignals = 0;
 
   return {
     handle: async (params: unknown): Promise<NativeElicitationResult> => {
       const requests = readNativeUrlElicitations(params);
-      if (requests.length > 0) {
+      if (hasNativeUrlElicitation(params)) {
         pending.push(...requests);
+        pendingSignals += 1;
         // The callback is deliberately synchronous with the protocol request.
         // A model can have queued tool dispatches by the time `runTurn` sees
         // the resulting error; closing the turn here prevents those dispatches
@@ -105,6 +139,11 @@ export function createNativeElicitationBridge(options: { onRequest?: () => void 
     take: (): NativeUrlElicitation[] => {
       const current = pending;
       pending = [];
+      return current;
+    },
+    takeSignal: (): boolean => {
+      const current = pendingSignals > 0;
+      pendingSignals = 0;
       return current;
     },
   };

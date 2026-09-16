@@ -19,10 +19,10 @@
  *    never leaves this process.
  *
  *    They are one session because of #109. The loan files used to be fetched
- *    from the browser, from `GET /api/loan-context`, which had to list the
- *    gateway's tools again to find `Loan_GetLoan` — so a page load cost two
- *    `tools/list` calls and, against the real gateway, twice the `/access`
- *    fan-out. That route is gone. `test/home-surface.test.ts` asserts the count.
+ *    from the browser, which had to list the gateway's tools again to find
+ *    `Loan_GetLoan` — so a page load cost two `tools/list` calls and, against
+ *    the real gateway, twice the `/access` fan-out. That second path is gone.
+ *    `test/home-surface.test.ts` asserts the count.
  * 3. It resolves the panel's stream from the environment at request time.
  *    `next build` inlines `NEXT_PUBLIC_*` into the client bundle while Render
  *    supplies service variables at runtime, so a public variable would be
@@ -47,6 +47,7 @@ import { homeSurface } from "../lib/home/surface.ts";
 import { PersonaToolList } from "../components/identity/PersonaToolList.tsx";
 import { SignInPanel } from "../components/identity/SignInPanel.tsx";
 import { SplitScreen } from "../components/shell/SplitScreen.tsx";
+import { HomeRefreshBoundary } from "../components/shell/HomeRefreshBoundary.tsx";
 
 /**
  * Dynamic, because it reads a session cookie and the environment. Saying so
@@ -77,12 +78,14 @@ export default async function Home({
   const stream = resolvePanelStream(process.env, await searchParams);
 
   return (
-    <SplitScreen
-      stream={stream}
-      signedInAs={session?.email ?? null}
-      identity={<SignInPanel session={session} problems={configurationProblems(config)} />}
-      loanFiles={files}
-      toolList={<PersonaToolList session={session} tools={tools} />}
-    />
+    <HomeRefreshBoundary>
+      <SplitScreen
+        stream={stream}
+        signedInAs={session?.email ?? null}
+        identity={<SignInPanel session={session} problems={configurationProblems(config)} />}
+        loanFiles={files}
+        toolList={<PersonaToolList session={session} tools={tools} />}
+      />
+    </HomeRefreshBoundary>
   );
 }
