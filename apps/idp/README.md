@@ -65,8 +65,11 @@ anything holding the old key set.
 Four personas, seeded from [`src/fixtures/people.json`](./src/fixtures/people.json) the
 first time `idp.db` is opened, in one transaction, following the loan book's pattern
 (#29): a seed that fails leaves no schema, so the next boot retries instead of coming up
-green and empty. Passwords are in the fixture. This is a demo IdP and pretending otherwise
-helps nobody.
+green and empty. All four personas use the same checked-in password,
+`megaforce-demo-2026`. It is a demo-only fixture credential, not a production secret;
+never reuse it outside this demo. A merged fixture change reaches a persistent deployment
+only after the new code is deployed **and** `bun run reset` (or the reset control) is run —
+a redeploy alone does not reseed `idp.db`.
 
 The emails are the join key for the whole system — Arcade `user_id`, OAuth subject, loan
 book actor. The fixture ships placeholder addresses; set

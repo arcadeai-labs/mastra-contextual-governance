@@ -28,6 +28,13 @@ const ROOT = join(import.meta.dir, "..");
 const RESET_TOKEN = "idp-reset-token-for-tests";
 const SECRET = "test-secret-".padEnd(48, "x");
 const REDIRECT_URI = "http://127.0.0.1:9/callback";
+const COMMON_PASSWORD = "megaforce-demo-2026";
+const LEGACY_PASSWORDS = {
+  dana: "dana-demo-2026",
+  sam: "sam-demo-2026",
+  riley: "riley-demo-2026",
+  morgan: "morgan-demo-2026",
+} as const;
 
 const people = loadPeople({});
 const dana = people.find((person) => person.persona === "dana")!;
@@ -174,6 +181,30 @@ describe("the reset the root command calls", () => {
       body: JSON.stringify({ email: dana.email, password: dana.password }),
     });
     expect(signIn.status).toBe(200);
+  });
+
+  test("all four personas use the common password and reject legacy passwords after reset", async () => {
+    const response = await reset(live.baseUrl);
+    expect(response.status).toBe(200);
+
+    for (const person of people) {
+      const signIn = await fetch(`${live.baseUrl}/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: live.baseUrl },
+        body: JSON.stringify({ email: person.email, password: COMMON_PASSWORD }),
+      });
+      expect(signIn.status).toBe(200);
+    }
+
+    for (const person of people) {
+      const legacyPassword = LEGACY_PASSWORDS[person.persona];
+      const signIn = await fetch(`${live.baseUrl}/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: live.baseUrl },
+        body: JSON.stringify({ email: person.email, password: legacyPassword }),
+      });
+      expect(signIn.status).toBe(401);
+    }
   });
 
   test("running it twice leaves the same state", async () => {
