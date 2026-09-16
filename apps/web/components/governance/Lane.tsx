@@ -24,10 +24,66 @@
  * exactly when it became true.
  */
 import type { Effect, GovernanceEvent, HookPoint } from "@cg/policy-schema";
+import type { KeyboardEvent } from "react";
 
 import { rowCount, rowsFor } from "../../lib/governance/grouping.ts";
 import { EventCard } from "./EventCard.tsx";
 import { DECISION_ORDER, DECISIONS, LANES } from "./decisions.ts";
+
+/**
+ * Make the named scroll region usable without a pointer. Native scrolling is
+ * inconsistent for a focusable generic div (notably PageDown and End in
+ * Chromium), so the panel handles the same small set of keys explicitly.
+ * Events from a disclosure inside a card are left alone so its summary keeps
+ * native details keyboard behaviour.
+ */
+function scrollWithKeyboard(event: KeyboardEvent<HTMLDivElement>): void {
+  if (event.target !== event.currentTarget) return;
+
+  const region = event.currentTarget;
+  const page = Math.max(region.clientHeight * 0.85, 1);
+  const step = Math.max(region.clientHeight * 0.2, 24);
+  let top: number | null = null;
+  let left: number | null = null;
+
+  switch (event.key) {
+    case "ArrowDown":
+      top = region.scrollTop + step;
+      break;
+    case "ArrowUp":
+      top = region.scrollTop - step;
+      break;
+    case "PageDown":
+      top = region.scrollTop + page;
+      break;
+    case "PageUp":
+      top = region.scrollTop - page;
+      break;
+    case "ArrowRight":
+      left = region.scrollLeft + step;
+      break;
+    case "ArrowLeft":
+      left = region.scrollLeft - step;
+      break;
+    case "Home":
+      if (event.shiftKey) left = 0;
+      else top = 0;
+      break;
+    case "End":
+      if (event.shiftKey) left = region.scrollWidth;
+      else top = region.scrollHeight;
+      break;
+    case " ":
+      top = region.scrollTop + (event.shiftKey ? -page : page);
+      break;
+    default:
+      return;
+  }
+
+  event.preventDefault();
+  if (top !== null) region.scrollTop = top;
+  if (left !== null) region.scrollLeft = left;
+}
 
 export function Lane({
   hook,
@@ -103,7 +159,14 @@ export function Lane({
         )}
       </header>
 
-      <div className="cg-lane-events">
+      <div
+        className="cg-lane-events"
+        role="region"
+        aria-label={`${lane.name} decisions`}
+        aria-keyshortcuts="ArrowDown ArrowUp PageDown PageUp ArrowLeft ArrowRight Home End Space"
+        tabIndex={0}
+        onKeyDown={scrollWithKeyboard}
+      >
         {drawn.length === 0 ? (
           <p className="cg-lane-empty">{lane.empty}</p>
         ) : (

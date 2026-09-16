@@ -295,6 +295,8 @@ body {
   font-size: 0.85em;
   line-height: 1.5;
   color: var(--white);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .cg-control-plane-detail,
@@ -312,6 +314,7 @@ body {
   padding-left: 1.2em;
   font-size: 0.82em;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .cg-control-plane-actions {
@@ -478,7 +481,15 @@ body {
 .cg-lane-events {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /* Each lane owns its history and can be inspected without browser zoom or
+     devtools. Both axes are intentional: identifiers and stack-like values can
+     be wider than a lane, while ordinary prose still wraps below. The region
+     is keyboard-focusable in Lane.tsx so arrow/page keys reach the same rows a
+     mouse wheel can reach. */
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   padding: 0.7em 0.9em 1em;
   display: flex;
   flex-direction: column;
@@ -486,6 +497,11 @@ body {
   /* A card clipped by the bottom of the lane should read as "there is more",
      not as a rendering fault. The lane's header already says how many more. */
   mask-image: linear-gradient(to bottom, #000 calc(100% - 3em), transparent 100%);
+}
+
+.cg-lane-events:focus-visible {
+  outline: 2px solid var(--chartreuse);
+  outline-offset: -3px;
 }
 
 .cg-lane-empty {
@@ -589,9 +605,8 @@ body {
 
 .cg-event-user {
   text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
   min-width: 0;
 }
 
@@ -641,6 +656,7 @@ body {
   font-weight: 700;
   line-height: 1.15;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Question two: what happened. Display face, so it is a different kind of
@@ -692,7 +708,7 @@ body {
      too close in hue to the green of an allow. */
   background: rgba(0, 0, 0, 0.62);
   box-shadow: inset 0 0 0 1px rgba(195, 255, 0, 0.62);
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .cg-reason {
@@ -700,7 +716,12 @@ body {
   font-size: 0.94em;
   line-height: 1.4;
   color: var(--white);
-  max-width: 46ch;
+  /* Reasons are rule-authored evidence. Preserve every character, including
+     newlines from a runtime-shaped message, while allowing a narrow lane to
+     wrap it into a readable block. */
+  max-width: none;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 /* --- the diff ------------------------------------------------------------- */
@@ -740,6 +761,8 @@ body {
   font-family: var(--font-mono);
   font-size: 0.85em;
   word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   min-width: 0;
 }
 
@@ -787,7 +810,8 @@ body {
   font-family: var(--font-mono);
   font-size: 0.78em;
   color: var(--chartreuse);
-  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .cg-diff-empty {

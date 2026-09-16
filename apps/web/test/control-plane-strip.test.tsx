@@ -64,12 +64,25 @@ const FAILED: ControlPlaneReport = {
   },
 };
 
+const LONG_POLICY_ERROR =
+  "policy compilation failed while validating the approval-notice delivery matcher: " +
+  "input request_id=" +
+  "apr_" +
+  "x".repeat(160) +
+  ". Every access, pre and post call remains refused until this complete diagnostic is fixed.";
+
 const UNREACHABLE: ControlPlaneReport = {
   reachable: false,
   host: "cg-hooks.onrender.com",
   reset: "enabled",
   problem: "cg-hooks.onrender.com did not answer GET /health (ConnectionRefused).",
 };
+
+const LONG_STATUS_PROBLEM =
+  "the governance service returned a runtime diagnostic while delivering the approval notice: " +
+  "request_id=apr_" +
+  "x".repeat(160) +
+  ". Preserve this complete failure detail so the presenter can distinguish a service fault from a hook denial.";
 
 interface Posted {
   readonly mode: unknown;
@@ -185,6 +198,25 @@ describe("what it says", () => {
 
     expect(host.textContent).toContain("being refused");
     expect(host.textContent).toContain("Approvals.RequestApproval");
+  });
+
+  test("a long policy diagnostic remains readable in full", async () => {
+    report = {
+      ...FAILED,
+      policy: { ...FAILED.policy, error: LONG_POLICY_ERROR },
+    };
+    const host = await mount();
+
+    expect(host.textContent).toContain(LONG_POLICY_ERROR);
+    expect(host.textContent).toContain("Every access, pre and post call remains refused");
+  });
+
+  test("a long status problem remains readable in full", async () => {
+    report = { ...UNREACHABLE, problem: LONG_STATUS_PROBLEM };
+    const host = await mount();
+
+    expect(host.textContent).toContain(LONG_STATUS_PROBLEM);
+    expect(host.textContent).toContain("distinguish a service fault from a hook denial");
   });
 
   /**

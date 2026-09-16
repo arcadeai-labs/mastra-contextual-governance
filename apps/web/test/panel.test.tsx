@@ -167,6 +167,40 @@ describe("a denial shows the specific rule that fired", () => {
   });
 });
 
+describe("long audit values remain reachable", () => {
+  test("a long reason and input-shaped detail stay intact in the decision card", () => {
+    const inputValue = "apr_" + "x".repeat(160);
+    const reason =
+      "DENIED: the approval notice could not be delivered for input request_id=" +
+      inputValue +
+      ". Preserve this complete operational detail while the caller investigates the delivery path.";
+    const markup = render([
+      aGovernanceEvent({
+        id: "evt_long_reason",
+        hook: "pre",
+        decision: "deny",
+        tool: "Approvals.RequestApproval",
+        reason,
+        rule_id: "pre.approval-notice-delivery",
+      }),
+    ]);
+
+    expect(markup).toContain(reason);
+    expect(markup).toContain(inputValue);
+    expect(markup).toContain('class="cg-reason"');
+  });
+
+  test("each lane exposes its event history as a keyboard-reachable region", () => {
+    const markup = render([]);
+
+    for (const hook of ["Access", "Pre", "Post"]) {
+      expect(markup).toContain(
+        `<div class="cg-lane-events" role="region" aria-label="${hook} decisions" aria-keyshortcuts="ArrowDown ArrowUp PageDown PageUp ArrowLeft ArrowRight Home End Space" tabindex="0">`,
+      );
+    }
+  });
+});
+
 /**
  * What a `modify` shows, and what it must never show.
  *
