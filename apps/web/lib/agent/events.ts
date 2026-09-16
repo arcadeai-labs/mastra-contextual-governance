@@ -113,14 +113,14 @@ export type ChatEvent =
       elicitation_id?: string;
     }
   /**
-   * The tool failed and **no hook decided anything**: the loan API was
+   * The tool failed and did not return a usable result: the loan API was
    * unreachable, the gateway could not answer, the toolkit threw. Plumbing.
    *
    * Its own kind because round 1 of #88's review found all of this arriving as
    * `denied` — a connection error rendered as *"denied by the control plane"*,
-   * with the socket error standing in for a rule's remediation text. There is
-   * no rule, no decision and no audit row behind a `fault`, and a demo that
-   * claims one is claiming the thing it exists to prove.
+   * with the socket error standing in for a rule's remediation text. The failure
+   * itself does not establish whether an earlier hook ran or whether a partial
+   * side effect occurred, so the UI must not claim either way.
    */
   | { kind: "fault"; tool: string; message: string }
   /** Anything that stopped the run. The message is shown; it is not a tool outcome. */

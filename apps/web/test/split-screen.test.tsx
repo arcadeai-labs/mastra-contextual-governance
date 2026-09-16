@@ -404,10 +404,38 @@ describe("a denial is a decision, not an error", () => {
     expect(background(fault)).toBe(background(failed));
   });
 
-  test("a failure says no decision was made, and a denial does not", () => {
-    expect(fault).toContain("No policy decision was made");
-    expect(failed).toContain("No policy decision was made");
+  test("a failure describes incomplete outcome and unknown side effects", () => {
+    expect(fault).toContain("The tool outcome is incomplete");
+    expect(fault).toContain("Any side effects are unknown");
+    expect(failed).toContain("The turn is incomplete");
+    expect(failed).toContain("Any side effects from attempted tools are unknown");
+    expect(fault).not.toContain("No policy decision was made");
+    expect(fault).not.toContain("nothing was recorded");
+    expect(failed).not.toContain("No policy decision was made");
+    expect(failed).not.toContain("nothing was recorded");
     expect(denied).toContain("Recorded in the audit log");
+  });
+
+  test("a persisted approval delivery failure keeps its detail without claiming nothing was recorded", () => {
+    const deliveryFault = renderToStaticMarkup(
+      <EventView
+        event={{
+          kind: "fault",
+          tool: "Approvals_RequestApproval",
+          message:
+            "Approval request apr_j0ffxn5c05tg was recorded and routed to Charlie, but Slack method " +
+            "users.lookupByEmail failed with error code invalid_arguments; the notice was not delivered. " +
+            "Do not retry this approval request: retrying would create a duplicate.",
+        }}
+      />,
+    );
+
+    expect(deliveryFault).toContain("apr_j0ffxn5c05tg");
+    expect(deliveryFault).toContain("users.lookupByEmail failed with error code invalid_arguments");
+    expect(deliveryFault).toContain("The tool outcome is incomplete");
+    expect(deliveryFault).toContain("Any side effects are unknown");
+    expect(deliveryFault).not.toContain("nothing was recorded");
+    expect(deliveryFault).not.toContain("No policy decision was made");
   });
 
   test("layer 2 is neither: a link, and no claim that anything was refused", () => {

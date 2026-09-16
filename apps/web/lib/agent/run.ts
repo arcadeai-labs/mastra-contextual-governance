@@ -315,10 +315,10 @@ export async function runTurn(options: RunOptions): Promise<void> {
         continue;
       }
 
-      // The branch the demo is about. A hook denial, a layer-2 challenge and an
-      // unreachable loan book all arrive here — one chunk type, three very
-      // different claims about the world — so they are told apart by reading
-      // the text, and nothing is assumed from the fact that a tool failed.
+      // The branch the demo is about. A hook denial, a layer-2 challenge and a
+      // tool failure all arrive here — one chunk type, three very different
+      // claims about the world — so they are told apart by reading the text,
+      // and nothing is assumed from the fact that a tool failed.
       if (chunk.type === "tool-error") {
         const tool = String(payload.toolName ?? "unknown");
         if (closing) {

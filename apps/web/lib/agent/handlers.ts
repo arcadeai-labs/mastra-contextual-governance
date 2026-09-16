@@ -590,9 +590,9 @@ async function resolveResume(
  *
  * The same shape `reauthorize` uses and for the same reason: `Chat.tsx` renders
  * a non-2xx as flat red text, and this has to land in the transcript as the
- * grey plumbing card that says *no decision was made and nothing was recorded*.
- * Saying it any other way would have the control surface assert a control-plane
- * action that never happened (#14 review, and `events.ts` is explicit).
+ * grey plumbing card that says the outcome is incomplete and side effects are
+ * unknown. It must not assert a control-plane action either way: a failure here
+ * does not establish whether an earlier hook ran or a partial write occurred.
  *
  * A refreshed session is still resealed on the way out — the turn did not
  * happen, but the token refresh did.
