@@ -762,12 +762,43 @@ export function EventView({
  */
 function visibleEvents(events: readonly ChatEvent[]): ChatEvent[] {
   if (!events.some((event) => event.kind === "authorization")) return [...events];
-  return events.filter((event) => event.kind !== "text" || !isAuthorizationProse(event.text));
+  const authorizationUrls = events
+    .filter((event): event is Extract<ChatEvent, { kind: "authorization" }> => event.kind === "authorization")
+    .map((event) => event.url);
+  // Streaming text arrives as many deltas. Fold each contiguous text run before
+  // filtering so a challenge sentence split across chunks is still recognized,
+  // while keeping tool events as structural boundaries.
+  const folded: ChatEvent[] = [];
+  for (const event of events) {
+    const previous = folded[folded.length - 1];
+    if (event.kind === "text" && previous?.kind === "text") {
+      folded[folded.length - 1] = { kind: "text", text: previous.text + event.text };
+    } else {
+      folded.push(event);
+    }
+  }
+  const visible: ChatEvent[] = [];
+  for (const event of folded) {
+    if (event.kind !== "text") {
+      visible.push(event);
+      continue;
+    }
+    const text = event.text
+      .split(/(?<=[.!?])(?:\s+|\n+)/)
+      .filter((sentence) => !isAuthorizationProse(sentence, authorizationUrls))
+      .join(" ");
+    if (text !== "") visible.push({ kind: "text", text });
+  }
+  return visible;
 }
 
-function isAuthorizationProse(text: string): boolean {
+function isAuthorizationProse(text: string, authorizationUrls: readonly string[]): boolean {
   const lower = text.toLowerCase();
   const mentionsAuthorization = /authori[sz](?:e|ation|ed|ing)/.test(lower) || lower.includes("credential");
-  const carriesAction = lower.includes("http://") || lower.includes("https://") || lower.includes("click") || lower.includes("link");
-  return mentionsAuthorization && carriesAction;
+  const carriesAction = authorizationUrls.some((url) => text.includes(url)) || lower.includes("click") || lower.includes("link");
+  // A useful prior reply can mention both authorization and a link while
+  // reporting a failure. Keep those sentences; only remove a pure duplicate
+  // of the structured challenge.
+  const reportsFailure = /\b(?:error|failed|failure|unable|cannot|can't|still|but)\b/.test(lower);
+  return mentionsAuthorization && carriesAction && !reportsFailure;
 }

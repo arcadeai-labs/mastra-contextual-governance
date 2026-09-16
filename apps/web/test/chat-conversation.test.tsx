@@ -160,13 +160,18 @@ describe("authorization continuation", () => {
   test("hides redundant authorization prose and double-clicking continues exactly once", async () => {
     start(() => [
       challenge,
-      { kind: "text", text: "Please authorize at https://provider.example/authorize/request-1 and click the link." },
+      {
+        kind: "text",
+        text:
+          "I found the matching loan. Please authorize at https://provider.example/authorize/request-1 and click the link.",
+      },
       { kind: "done", calls: 1 },
     ]);
     const { container, root } = await mount(ALICE);
     try {
       await submit(container);
       await settle(() => container.querySelector('[data-action="continue-authorization"]') !== null);
+      expect(container.textContent).toContain("I found the matching loan.");
       expect(container.textContent).not.toContain("Please authorize at");
       expect(container.querySelectorAll('[data-kind="authorization"]')).toHaveLength(1);
 
