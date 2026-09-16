@@ -37,6 +37,7 @@
  */
 import type { ApprovalRecord } from "@cg/policy-schema";
 
+import { boundConversation, type ConversationMessage } from "./conversation.ts";
 import type { TurnMessage } from "./run.ts";
 
 /** What a browser sends to resume a turn. Context and an id; no authority. */
@@ -99,6 +100,7 @@ export function planResume(
   resume: ResumeRequest,
   record: ApprovalRecord,
   signedInAs: string,
+  priorHistory: readonly ConversationMessage[] = [],
 ): ResumePlan {
   if (!sameSubject(record.requester_id, signedInAs)) {
     return {
@@ -119,9 +121,15 @@ export function planResume(
   }
 
   const message = resumeMessage(record);
-  const context: TurnMessage[] = [];
-  if (resume.prompt.trim() !== "") context.push({ role: "user", content: resume.prompt });
-  if (resume.reply.trim() !== "") context.push({ role: "assistant", content: resume.reply });
+  // The browser sends the complete bounded conversation as context. The
+  // nested prompt/reply fields are retained for compatibility with the
+  // approval resume contract and for a tab that only retained the waiting
+  // turn. Avoid duplicating that turn when both forms contain it.
+  const context: TurnMessage[] = [...boundConversation(priorHistory)];
+  const waitingContext: TurnMessage[] = [];
+  if (resume.prompt.trim() !== "") waitingContext.push({ role: "user", content: resume.prompt });
+  if (resume.reply.trim() !== "") waitingContext.push({ role: "assistant", content: resume.reply });
+  if (!endsWithMessages(context, waitingContext)) context.push(...waitingContext);
 
   return {
     ok: true,
@@ -129,6 +137,16 @@ export function planResume(
     message,
     messages: [...context, { role: "user", content: message }],
   };
+}
+
+function endsWithMessages(messages: readonly TurnMessage[], suffix: readonly TurnMessage[]): boolean {
+  if (suffix.length === 0) return true;
+  if (suffix.length > messages.length) return false;
+  const start = messages.length - suffix.length;
+  return suffix.every(
+    (message, index) =>
+      messages[start + index]?.role === message.role && messages[start + index]?.content === message.content,
+  );
 }
 
 /**

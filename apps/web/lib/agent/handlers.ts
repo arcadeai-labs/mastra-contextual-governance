@@ -85,6 +85,7 @@
  */
 import { agentProblems, readIdentitySurface, readWebConfig, type IdentitySurface } from "../config.ts";
 import { fetchApproval } from "../approvals-store.ts";
+import { readConversationHistory, withPrompt, type ConversationMessage } from "./conversation.ts";
 import { closeTurnOnEscalation } from "./escalation.ts";
 import { planResume, readResumeRequest, type ResumeRequest } from "./resume.ts";
 import { anthropicModel, buildAgent } from "./agent.ts";
@@ -93,7 +94,8 @@ import { serverFault } from "./fault.ts";
 import { CHAT_PAGE, liveGatewayToken, refreshedGatewayToken, GATEWAY_START_PATH,
   SIGNIN_PATH } from "../identity/handlers.ts";
 import { mcpUrl, probeGatewayToken } from "../identity/gateway.ts";
-import { gatewayClient, governedToolset } from "./tools.ts";
+import { gatewayClient, governedToolset, SERVER_KEY } from "./tools.ts";
+import { createNativeElicitationBridge } from "./native-elicitation.ts";
 import { gatewayTokenRejected, readSession, writeSession, type Session } from "../identity/session.ts";
 import { runTurn, type Streamable } from "./run.ts";
 
@@ -189,15 +191,24 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
   // back this persona's bearer.
   let step: string = PRE_STREAM.body;
   let client: ReturnType<typeof gatewayClient> | null = null;
+  const nativeElicitation = createNativeElicitationBridge();
 
   try {
-    const body = (await request.json().catch(() => null)) as { prompt?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as {
+      prompt?: unknown;
+      history?: unknown;
+      messages?: unknown;
+    } | null;
     // Two shapes, one route. `{ prompt }` opens a turn; `{ resume: { … } }` is
     // the UI starting the next one because an approval was decided (#20). The
     // resume is read here and acted on further down, once there is a session
     // to check its requester against.
     const resume = readResumeRequest(body);
     const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
+    // `history` is the browser's bounded, in-memory conversation. `messages`
+    // is accepted as an equivalent spelling for callers already using
+    // Mastra's vocabulary; neither field carries identity or authority.
+    const history = readConversationHistory(body?.history ?? body?.messages);
     if (resume === null && prompt === "") {
       return refuse(400, "Send a non-empty `prompt`, or a `resume` naming an approval request.");
     }
@@ -247,6 +258,7 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       token: bearer,
       timeoutMs: MCP_TIMEOUT_MS,
     });
+    await client.elicitation.onRequest(SERVER_KEY, nativeElicitation.handle);
 
     // One round trip, before the toolset, to find out whether the gateway still
     // takes this bearer — because `listToolsets()` will not say (#94, and
@@ -298,6 +310,7 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
         token: bearer,
         timeoutMs: MCP_TIMEOUT_MS,
       });
+      await client.elicitation.onRequest(SERVER_KEY, nativeElicitation.handle);
       probe = await probeGatewayToken(gatewayUrl, bearer);
       if (probe.outcome === "rejected") {
         await client.disconnect().catch(() => undefined);
@@ -384,11 +397,11 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
     // `prompt` and `reply` are context and nothing more (`resume.ts`).
     step = PRE_STREAM.approval;
     let turn: { messages: Parameters<Streamable["stream"]>[0]; opening: ChatEvent[] } = {
-      messages: prompt,
+      messages: history.length > 0 ? withPrompt(history, prompt) : prompt,
       opening: [],
     };
     if (resume !== null) {
-      const planned = await resolveResume(resume, current.email, options, config);
+      const planned = await resolveResume(resume, current.email, options, config, history);
       if (!planned.ok) {
         await client.disconnect().catch(() => undefined);
         // A `fault`, not a `denied` and not a 500: nothing decided anything
@@ -456,6 +469,7 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       client,
       headers,
       requestApprovalTool: escalationTool,
+      nativeElicitation,
     });
   } catch (cause) {
     // The connection belongs to a turn that will never happen. Same reason the
@@ -526,6 +540,7 @@ async function resolveResume(
   signedInAs: string,
   options: ChatOptions,
   config: IdentitySurface,
+  priorHistory: readonly ConversationMessage[] = [],
 ): Promise<
   | { ok: true; decision: "approved" | "denied"; decided_by: string; message: string; messages: Parameters<Streamable["stream"]>[0] }
   | { ok: false; problem: string }
@@ -551,7 +566,7 @@ async function resolveResume(
     };
   }
 
-  const planned = planResume(resume, lookup.request, signedInAs);
+  const planned = planResume(resume, lookup.request, signedInAs, priorHistory);
   if (!planned.ok) return planned;
   return {
     ok: true,
@@ -603,8 +618,9 @@ function streamTurn(turn: {
   client: ReturnType<typeof gatewayClient>;
   headers: Headers;
   requestApprovalTool: string;
+  nativeElicitation: ReturnType<typeof createNativeElicitationBridge>;
 }): Response {
-  const { agent, prompt, opening, client, headers, requestApprovalTool } = turn;
+  const { agent, prompt, opening, client, headers, requestApprovalTool, nativeElicitation } = turn;
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -613,7 +629,7 @@ function streamTurn(turn: {
       };
       try {
         for (const event of opening) emit(event);
-        await runTurn({ agent, prompt, emit, requestApprovalTool });
+        await runTurn({ agent, prompt, emit, requestApprovalTool, nativeElicitation });
       } finally {
         // The MCP connection belongs to this turn and this persona. Leaving it
         // open would leave a bearer token alive in a process that serves every

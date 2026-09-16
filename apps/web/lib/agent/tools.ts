@@ -116,6 +116,9 @@ export function gatewayClient(options: GatewayToolsOptions): MCPClient {
         // The static auth provider. `token()` is called before every request
         // and returns what this browser's session holds.
         authProvider: { token: async () => options.token },
+        // MCP URL elicitation is client-advertised. The request-scoped handler
+        // is registered by the chat route before this client connects.
+        capabilities: { elicitation: { url: {} } },
         // Default, stated: a spec-compliant `isError: true` result is raised on
         // Mastra's failed-tool-call path carrying the server's text, which is
         // how the hook's remediation instruction reaches the model at all.

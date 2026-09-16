@@ -17,7 +17,8 @@ import {
   remediationText,
 } from "../lib/agent/authorization.ts";
 import { decodeEvents, encodeEvent, replyText, type ChatEvent } from "../lib/agent/events.ts";
-import { correlationRef, failureText } from "../lib/agent/run.ts";
+import { correlationRef, failureText, runTurn, type Streamable } from "../lib/agent/run.ts";
+import { createNativeElicitationBridge, readNativeUrlElicitations } from "../lib/agent/native-elicitation.ts";
 import { GATEWAY_BUILTINS, selectGoverned, wirePrefixes } from "../lib/agent/tools.ts";
 import { readIdentitySurface } from "../lib/config.ts";
 import { resolveStandInPort } from "../scripts/gateway-stand-in.ts";
@@ -196,6 +197,132 @@ describe("layer 2, which is not a denial", () => {
   test("instructions are optional and an empty one is dropped rather than rendered", () => {
     expect(authorizationRequired(JSON.stringify({ authorization_url: "https://x.test/a", llm_instructions: "  " })))
       .toEqual({ url: "https://x.test/a" });
+  });
+});
+
+describe("native MCP URL elicitation", () => {
+  const request = {
+    mode: "url",
+    message: "Authorize the connected provider, then continue.",
+    url: "https://provider.example/consent/req-1",
+    elicitationId: "elicitation-1",
+  } as const;
+
+  test("reads URL requests from the -32042 error shape", () => {
+    expect(
+      readNativeUrlElicitations({ code: -32042, data: { elicitations: [request] } }),
+    ).toEqual([request]);
+  });
+
+  test("rejects non-http links and deduplicates nested wrappers", () => {
+    const unsafe = { ...request, url: "javascript:alert(1)" };
+    expect(readNativeUrlElicitations({ cause: { data: { elicitations: [unsafe] } } })).toEqual([]);
+    expect(readNativeUrlElicitations({ error: { data: { elicitations: [request] } }, data: { elicitations: [request] } }))
+      .toEqual([request]);
+  });
+
+  test("the request-scoped bridge captures a request and always cancels it", async () => {
+    const bridge = createNativeElicitationBridge();
+    await expect(bridge.handle(request)).resolves.toEqual({ action: "cancel" });
+    expect(bridge.take()).toEqual([request]);
+    expect(bridge.take()).toEqual([]);
+  });
+
+  test("the MCP initialize advertises URL elicitation capability", async () => {
+    let initializeParams: Record<string, unknown> | null = null;
+    const gateway = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        if (request.method !== "POST") return new Response(null, { status: 405 });
+        const message = (await request.json()) as { id?: unknown; method?: string; params?: Record<string, unknown> };
+        if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
+        if (message.method === "initialize") {
+          initializeParams = message.params ?? null;
+          return Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: { tools: { listChanged: false } },
+              serverInfo: { name: "native-elicitation-test", version: "0.1.0" },
+            },
+          });
+        }
+        if (message.method === "tools/list") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              tools: [
+                {
+                  name: "Loan_GetLoan",
+                  description: "Read one loan.",
+                  inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+                },
+              ],
+            },
+          });
+        }
+        return Response.json({ jsonrpc: "2.0", id: message.id ?? null, result: {} });
+      },
+    });
+    const client = (await import("../lib/agent/tools.ts")).gatewayClient({
+      arcadeApiUrl: `http://localhost:${gateway.port}`,
+      gatewayId: "native-elicitation-test",
+      token: "synthetic-token",
+    });
+    try {
+      await client.listToolsetsWithErrors();
+      const capabilities = (initializeParams as Record<string, unknown> | null)?.capabilities as
+        | Record<string, unknown>
+        | undefined;
+      expect(capabilities?.elicitation).toEqual({ url: {} });
+    } finally {
+      await client.disconnect().catch(() => undefined);
+      gateway.stop(true);
+    }
+  });
+
+  test("a structured -32042 failure becomes an authorization card, not a fault", async () => {
+    const events: ChatEvent[] = [];
+    const agent: Streamable = {
+      stream() {
+        return Promise.resolve({
+          fullStream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({
+                type: "tool-error",
+                payload: {
+                  toolName: "Loan_GetLoan",
+                  error: { code: -32042, data: { elicitations: [request] } },
+                },
+              });
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
+    await runTurn({
+      agent,
+      prompt: "look up the loan",
+      emit: (event) => {
+        events.push(event);
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        kind: "authorization",
+        tool: "Loan_GetLoan",
+        url: request.url,
+        instructions: request.message,
+        mode: "url",
+        elicitation_id: request.elicitationId,
+      },
+      { kind: "done", calls: 0 },
+    ]);
   });
 });
 
