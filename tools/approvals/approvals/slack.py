@@ -136,12 +136,20 @@ def api_base_url() -> str:
 
 async def _call(token: str, method: str, payload: dict[str, Any]) -> dict[str, Any]:
     url = f"{api_base_url()}/{method}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json; charset=utf-8",
-    }
+    # Slack documents users.lookupByEmail as a GET with query parameters, and
+    # the Python SDK uses that transport too. Keep the lookup separate from the
+    # two write methods: a JSON body on GET is not part of the lookup contract,
+    # and putting the bearer in params would expose it in the URL.
+    headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.post(url, json=payload, headers=headers)
+        if method == "users.lookupByEmail":
+            response = await client.get(url, params={"email": payload["email"]}, headers=headers)
+        else:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+            )
 
     if response.status_code != 200:
         # Do not include response.text in an exception. A proxy or an upstream
