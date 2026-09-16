@@ -134,6 +134,9 @@ interface Harness {
   drop: () => void;
   /** What `/api/approvals/{id}/status` answers. */
   storedStatus: string;
+  /** Hold the first chat response to exercise a decision racing waiting delivery. */
+  holdFirst: () => void;
+  releaseFirst: () => void;
   /** Hold the second chat response to exercise a decision racing an active turn. */
   holdSecond: () => void;
   releaseSecond: () => void;
@@ -146,6 +149,8 @@ function startHarness(): Harness {
     posts: [] as Array<Record<string, unknown>>,
     connects: 0,
     storedStatus: "pending",
+    holdFirst: false,
+    releaseFirst: () => {},
     holdSecond: false,
     releaseSecond: () => {},
   };
@@ -160,6 +165,11 @@ function startHarness(): Harness {
       if (url.pathname === "/api/chat") {
         const body = (await request.json()) as Record<string, unknown>;
         state.posts.push(body);
+        if (state.holdFirst && state.posts.length === 1) {
+          await new Promise<void>((resolve) => {
+            state.releaseFirst = resolve;
+          });
+        }
         if (state.holdSecond && state.posts.length === 2) {
           await new Promise<void>((resolve) => {
             state.releaseSecond = resolve;
@@ -208,6 +218,14 @@ function startHarness(): Harness {
     },
     set storedStatus(value: string) {
       state.storedStatus = value;
+    },
+    holdFirst() {
+      state.holdFirst = true;
+    },
+    releaseFirst() {
+      state.releaseFirst();
+      state.releaseFirst = () => {};
+      state.holdFirst = false;
     },
     holdSecond() {
       state.holdSecond = true;
@@ -330,6 +348,29 @@ describe("a turn that ends waiting", () => {
 });
 
 describe("approval.granted starts the next turn", () => {
+  test("queues a decision delivered before the waiting event is committed", async () => {
+    harness.holdFirst();
+    const container = await mountAndAsk();
+
+    // The approval tool has returned the request id to the real chat route,
+    // but the first response is still streaming and has not committed its
+    // waiting card yet.
+    expect(harness.posts).toHaveLength(1);
+    await act(async () => {
+      harness.announce(notice());
+    });
+    await settle();
+    expect(harness.posts).toHaveLength(1);
+    expect(container.querySelector('[data-kind="waiting"]')).toBeNull();
+
+    // Once the waiting event arrives, the queued notice starts one resume.
+    harness.releaseFirst();
+    await settle(30, 5);
+    expect(harness.posts).toHaveLength(2);
+    expect((harness.posts[1]?.resume as Record<string, unknown>)?.request_id).toBe(REQUEST_ID);
+    expect(container.querySelectorAll('[data-kind="resumed"]')).toHaveLength(1);
+  });
+
   test("one resume, carrying the id and the previous turn as context", async () => {
     const container = await mountAndAsk();
 
@@ -509,6 +550,32 @@ describe("a notice that is not this browser's starts nothing", () => {
 });
 
 describe("a decision made while the socket was down", () => {
+  test("catches up when reconnect happens before the waiting event is committed", async () => {
+    harness.holdFirst();
+    const container = await mountAndAsk();
+    expect(harness.posts).toHaveLength(1);
+
+    // Charlie's decision is recorded while the browser is disconnected, and
+    // the reconnect lands before the first chat response has committed its
+    // waiting event. There is still no request to resume while that turn is
+    // active.
+    harness.storedStatus = "approved";
+    await act(async () => {
+      harness.drop();
+    });
+    await settle(12, 60);
+    expect(harness.connects).toBeGreaterThan(1);
+    expect(harness.posts).toHaveLength(1);
+    expect(container.querySelector('[data-kind="waiting"]')).toBeNull();
+
+    // The catch-up read is deferred until the waiting event supplies the
+    // request id, then starts one resume.
+    harness.releaseFirst();
+    await settle(30, 5);
+    expect(harness.posts).toHaveLength(2);
+    expect((harness.posts[1]?.resume as Record<string, unknown>)?.request_id).toBe(REQUEST_ID);
+  });
+
   test("is picked up when the stream comes back", async () => {
     await mountAndAsk();
     expect(harness.posts).toHaveLength(1);

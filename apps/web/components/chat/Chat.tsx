@@ -190,6 +190,13 @@ interface QueuedResume {
   generation: number;
 }
 
+function samePersona(requesterId: string, signedInAs: string | null): boolean {
+  return (
+    signedInAs !== null &&
+    requesterId.trim().toLowerCase() === signedInAs.trim().toLowerCase()
+  );
+}
+
 export function Chat({
   signedInAs,
   onEvent,
@@ -223,6 +230,15 @@ export function Chat({
   const waitingRef = useRef<Waiting | null>(null);
   /** A decision received while another turn owns the stream lock. */
   const queuedResumeRef = useRef<QueuedResume | null>(null);
+  /**
+   * A decision can arrive after the approval tool has returned but before the
+   * NDJSON waiting event has finished committing its card. Keep only matching
+   * request ids for the active persona; the set is consumed when that card is
+   * committed and is cleared if the turn does not end waiting.
+   */
+  const pendingDecisionRef = useRef<Set<string>>(new Set());
+  /** A reconnect can happen during the same small window before waitingRef is set. */
+  const pendingReconnectGenerationRef = useRef<number | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const followTranscriptRef = useRef(true);
   // A turn in flight, so a second Send cannot interleave two streams into one
@@ -247,6 +263,8 @@ export function Chat({
     setWaiting(null);
     waitingRef.current = null;
     queuedResumeRef.current = null;
+    pendingDecisionRef.current.clear();
+    pendingReconnectGenerationRef.current = null;
     followTranscriptRef.current = true;
     onTurnStart?.();
   }, [onTurnStart, signedInAs]);
@@ -370,6 +388,23 @@ export function Chat({
         };
         waitingRef.current = held;
         setWaiting(held);
+
+        const decisionArrived = pendingDecisionRef.current.delete(held.request_id);
+        const reconnectHappened = pendingReconnectGenerationRef.current === generation;
+        pendingDecisionRef.current.clear();
+        pendingReconnectGenerationRef.current = null;
+        if (decisionArrived) {
+          // `run` still owns the stream lock here, so resume queues and the
+          // finally block starts exactly one follow-up after this turn closes.
+          void resume(held.request_id);
+        } else if (reconnectHappened) {
+          // A reconnect while the waiting event was still streaming could not
+          // inspect waitingRef. Catch up once the request id is available.
+          void checkApprovalStatus(held.request_id);
+        }
+      } else {
+        pendingDecisionRef.current.clear();
+        pendingReconnectGenerationRef.current = null;
       }
 
       const challenged = turnEvents.some((event) => event.kind === "authorization");
@@ -493,6 +528,18 @@ export function Chat({
     );
   }
 
+  async function checkApprovalStatus(requestId: string): Promise<void> {
+    const response = await fetch(
+      `/api/approvals/${encodeURIComponent(requestId)}/status`,
+      { headers: { accept: "application/json" } },
+    ).catch(() => null);
+    if (response === null || !response.ok) return;
+    const body = (await response.json().catch(() => null)) as { status?: string } | null;
+    if (body?.status === "approved" || body?.status === "denied") {
+      void resume(requestId);
+    }
+  }
+
   /**
    * The stream, for as long as this component is mounted.
    *
@@ -514,25 +561,28 @@ export function Chat({
     void subscribeToApprovalNotices(approvalStreamUrl, {
       signal: controller.signal,
       onNotice: (notice) => {
+        if (!samePersona(notice.requester_id, signedInAs)) return;
         const held = waitingRef.current;
-        if (held === null) return;
+        if (held === null) {
+          // The approval tool may have finished while the response is still
+          // streaming its final waiting event. Do not lose a same-persona
+          // decision in that active-turn window.
+          if (inFlight.current) pendingDecisionRef.current.add(notice.request_id);
+          return;
+        }
         if (!noticeIsFor(notice, { request_id: held.request_id, signedInAs })) return;
         void resume(notice.request_id);
       },
       onConnected: () => {
         const held = waitingRef.current;
-        if (held === null) return;
-        void (async () => {
-          const response = await fetch(
-            `/api/approvals/${encodeURIComponent(held.request_id)}/status`,
-            { headers: { accept: "application/json" } },
-          ).catch(() => null);
-          if (response === null || !response.ok) return;
-          const body = (await response.json().catch(() => null)) as { status?: string } | null;
-          if (body?.status === "approved" || body?.status === "denied") {
-            void resume(held.request_id);
-          }
-        })();
+        if (held === null) {
+          // Keep the reconnect signal until the waiting event identifies the
+          // request. The status endpoint is scoped to that id, so no broad
+          // scan or cross-persona resume is possible.
+          if (inFlight.current) pendingReconnectGenerationRef.current = runGenerationRef.current;
+          return;
+        }
+        void checkApprovalStatus(held.request_id);
       },
     });
 
