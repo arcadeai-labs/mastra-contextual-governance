@@ -104,7 +104,7 @@ export function PersonaToolList({ session, tools }: PersonaToolListProps) {
       )}
 
       {tools.ok ? (
-        <details style={{ marginTop: "1.2rem" }} open>
+        <details style={{ marginTop: "1.2rem" }}>
           <summary style={{ cursor: "pointer", fontSize: "0.875rem", fontWeight: 700 }}>
             <span>Tools this persona can see</span>{" "}
             <strong aria-label={`${tools.tools.length} tools`}>({tools.tools.length} tools available)</strong>

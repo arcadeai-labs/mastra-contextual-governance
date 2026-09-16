@@ -115,6 +115,8 @@ interface Turned {
   /** Everything the model was handed, flattened. Where a hook's message lands. */
   prompt: string;
   body: string;
+  /** Number of actual model requests consumed by this HTTP turn. */
+  modelSteps: number;
 }
 
 /**
@@ -123,9 +125,14 @@ interface Turned {
  * `script` is used only when there is no key; with one, the real model gets the
  * same prompt and decides for itself, which is the whole point of running both.
  */
-async function turn(options: { cookie: string; prompt: string; script: readonly Turn[] }): Promise<Turned> {
+async function turn(options: {
+  cookie: string;
+  prompt: string;
+  script: readonly Turn[];
+  forceScripted?: boolean;
+}): Promise<Turned> {
   const scripted = scriptedModel(options.script);
-  currentModel = LIVE_KEY
+  currentModel = !options.forceScripted && LIVE_KEY
     ? () => anthropicModel({ modelId: harness.config.agent.modelId, apiKey: LIVE_KEY })
     : () => scripted.model;
 
@@ -142,6 +149,7 @@ async function turn(options: { cookie: string; prompt: string; script: readonly 
     reply: replyText(events),
     prompt: LIVE_KEY ? "" : promptText(scripted.prompts),
     body,
+    modelSteps: scripted.used,
   };
 }
 
@@ -573,6 +581,75 @@ describe("layer 2, which fires no hook at all", () => {
     const appended = after.slice(0, after.length - auditBefore);
     expect(appended.length).toBeGreaterThan(0);
     expect(appended.filter((row) => row.hook !== "access")).toEqual([]);
+  }, TURN_TIMEOUT_MS);
+
+  test("a native elicitation/create request ends the real Mastra turn while preserving the in-flight boundary", async () => {
+    const callsBefore = harness.calls.length;
+    harness.gateway.requireNativeElicitationFor("Loan_GetLoan", "https://provider.example/consent/native");
+
+    const result = await turn({
+      cookie: await browserFor(DANA),
+      prompt: `Read loan ${OVER_LIMIT_LOAN}.`,
+      forceScripted: true,
+      script: [
+        {
+          calls: [
+            { call: "Loan_GetLoan", input: { loan_id: OVER_LIMIT_LOAN } },
+            { call: "Loan_GetLoan", input: { loan_id: OVER_LIMIT_LOAN } },
+          ],
+          before: "I found the loan and need authorization before I can read the protected file.",
+        },
+        { say: "This narration must never arrive after the authorization pause." },
+      ],
+    });
+
+    expect(result.reply).toContain("I found the loan");
+    expect(result.reply).not.toContain("This narration must never arrive");
+    expect(of(result.events, "authorization")).toEqual([
+      expect.objectContaining({
+        kind: "authorization",
+        tool: "Loan_GetLoan",
+        mode: "url",
+        url: "https://provider.example/consent/native",
+      }),
+    ]);
+    expect(of(result.events, "denied")).toHaveLength(0);
+    expect(result.modelSteps).toBe(1);
+    // Both calls were emitted in one model response, so the second was already
+    // in flight when the server-to-client request arrived. It is honest for it
+    // to settle; the model gets no second step and no later narration.
+    expect(harness.calls.slice(callsBefore).map((call) => call.outcome)).toEqual(["authorization_required", "ran"]);
+  }, TURN_TIMEOUT_MS);
+
+  test("a real MCP -32042 response without a URL pauses once and leaves queued model steps unused", async () => {
+    const callsBefore = harness.calls.length;
+    harness.gateway.requireProtocolAuthorizationFor("Loan_GetLoan");
+
+    const result = await turn({
+      cookie: await browserFor(DANA),
+      prompt: `Read loan ${OVER_LIMIT_LOAN}.`,
+      forceScripted: true,
+      script: [
+        {
+          calls: [{ call: "Loan_GetLoan", input: { loan_id: OVER_LIMIT_LOAN } }],
+          before: "The loan is selected; I need the provider authorization step now.",
+        },
+        {
+          calls: [{ call: "Loan_GetLoan", input: { loan_id: OVER_LIMIT_LOAN } }],
+          before: "This queued call must never be dispatched.",
+        },
+      ],
+    });
+
+    expect(result.reply).toContain("The loan is selected");
+    expect(result.reply).not.toContain("This retry narration must never be emitted");
+    expect(of(result.events, "authorization")).toEqual([
+      expect.objectContaining({ kind: "authorization", tool: "Loan_GetLoan" }),
+    ]);
+    expect(of(result.events, "authorization")[0]).not.toHaveProperty("url");
+    expect(of(result.events, "denied")).toHaveLength(0);
+    expect(result.modelSteps).toBe(1);
+    expect(harness.calls.slice(callsBefore).map((call) => call.outcome)).toEqual(["authorization_required"]);
   }, TURN_TIMEOUT_MS);
 });
 

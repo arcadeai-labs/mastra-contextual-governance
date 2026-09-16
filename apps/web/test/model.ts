@@ -37,9 +37,16 @@
  * caller that needs it finds out immediately.
  */
 
-/** One scripted turn: either a tool call or a final answer. */
+/** One scripted tool call in a model response. */
+export interface ScriptedCall {
+  call: string;
+  input: Record<string, unknown>;
+}
+
+/** One scripted turn: one or more tool calls, or a final answer. */
 export type Turn =
-  | { call: string; input: Record<string, unknown> }
+  | ({ call: string; input: Record<string, unknown>; before?: string } & { calls?: never })
+  | { calls: readonly ScriptedCall[]; before?: string }
   | { say: string };
 
 export interface ScriptedModel {
@@ -86,24 +93,40 @@ export function scriptedModel(turns: readonly Turn[], modelId = "scripted"): Scr
       }
 
       const id = `scripted-${state.used}`;
-      const parts: Array<Record<string, unknown>> =
-        "call" in turn
+      const prefix: Array<Record<string, unknown>> =
+        "before" in turn && turn.before !== undefined
           ? [
-              { type: "tool-input-start", id, toolName: turn.call },
-              // The deltas are not decoration. Mastra builds the streaming
-              // `tool-call` chunk's `args` by accumulating them, so a scripted
-              // model that jumped straight to `tool-call` produced a chunk with
-              // `args: {}` — and a test asserting on what the page shows would
-              // have been asserting on the fixture's silence. Measured while
-              // building this suite.
-              { type: "tool-input-delta", id, delta: JSON.stringify(turn.input) },
-              { type: "tool-input-end", id },
-              { type: "tool-call", toolCallId: id, toolName: turn.call, input: JSON.stringify(turn.input) },
+              { type: "text-start", id: `${id}-before` },
+              { type: "text-delta", id: `${id}-before`, delta: turn.before },
+              { type: "text-end", id: `${id}-before` },
+            ]
+          : [];
+      const calls: readonly ScriptedCall[] =
+        "calls" in turn ? turn.calls : "call" in turn ? [{ call: turn.call, input: turn.input }] : [];
+      const say = "say" in turn ? turn.say : "";
+      const parts: Array<Record<string, unknown>> =
+        calls.length > 0
+          ? [
+              ...calls.flatMap((call, index) => {
+                const callId = `${id}-${index + 1}`;
+                return [
+                  { type: "tool-input-start", id: callId, toolName: call.call },
+                  // The deltas are not decoration. Mastra builds the streaming
+                  // `tool-call` chunk's `args` by accumulating them, so a scripted
+                  // model that jumped straight to `tool-call` produced a chunk with
+                  // `args: {}` — and a test asserting on what the page shows would
+                  // have been asserting on the fixture's silence. Measured while
+                  // building this suite.
+                  { type: "tool-input-delta", id: callId, delta: JSON.stringify(call.input) },
+                  { type: "tool-input-end", id: callId },
+                  { type: "tool-call", toolCallId: callId, toolName: call.call, input: JSON.stringify(call.input) },
+                ];
+              }),
               { type: "finish", finishReason: "tool-calls", usage: USAGE },
             ]
           : [
               { type: "text-start", id },
-              { type: "text-delta", id, delta: turn.say },
+              { type: "text-delta", id, delta: say },
               { type: "text-end", id },
               { type: "finish", finishReason: "stop", usage: USAGE },
             ];
@@ -113,7 +136,7 @@ export function scriptedModel(turns: readonly Turn[], modelId = "scripted"): Scr
           start(controller) {
             controller.enqueue({ type: "stream-start", warnings: [] });
             controller.enqueue({ type: "response-metadata", id, modelId, timestamp: new Date() });
-            for (const part of parts) controller.enqueue(part);
+            for (const part of [...prefix, ...parts]) controller.enqueue(part);
             controller.close();
           },
         }),
