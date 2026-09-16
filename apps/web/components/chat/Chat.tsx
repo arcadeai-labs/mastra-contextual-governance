@@ -185,6 +185,11 @@ interface AuthorizationChallenge {
   turnIndex: number;
 }
 
+interface QueuedResume {
+  request_id: string;
+  generation: number;
+}
+
 export function Chat({
   signedInAs,
   onEvent,
@@ -216,6 +221,8 @@ export function Chat({
    */
   const [waiting, setWaiting] = useState<Waiting | null>(null);
   const waitingRef = useRef<Waiting | null>(null);
+  /** A decision received while another turn owns the stream lock. */
+  const queuedResumeRef = useRef<QueuedResume | null>(null);
   // A turn in flight, so a second Send cannot interleave two streams into one
   // transcript — which would read as the agent contradicting itself. A resume
   // is a turn and takes the same lock.
@@ -237,6 +244,7 @@ export function Chat({
     setAuthorizationChallenge(null);
     setWaiting(null);
     waitingRef.current = null;
+    queuedResumeRef.current = null;
     onTurnStart?.();
   }, [onTurnStart, signedInAs]);
 
@@ -360,6 +368,22 @@ export function Chat({
           ...(reply === "" ? [] : [{ role: "assistant" as const, content: reply }]),
         ];
         conversationRef.current = boundConversation([...conversationRef.current, ...completed]);
+      } else if (options.commitConversation && !challenged) {
+        // A resume has no browser-authored prompt. Its first event carries the
+        // server-built decision line that was injected into the model's turn;
+        // retain that line as context, followed by the completed reply, so a
+        // later follow-up can refer to the action that actually happened.
+        const resumed = turnEvents.find(
+          (event): event is Extract<ChatEvent, { kind: "resumed" }> => event.kind === "resumed",
+        );
+        if (resumed) {
+          const reply = replyText(turnEvents);
+          const completed: ConversationMessage[] = [
+            { role: "user", content: resumed.message },
+            ...(reply === "" ? [] : [{ role: "assistant" as const, content: reply }]),
+          ];
+          conversationRef.current = boundConversation([...conversationRef.current, ...completed]);
+        }
       }
     } catch (cause) {
       if (generation !== runGenerationRef.current) return;
@@ -370,13 +394,23 @@ export function Chat({
         inFlight.current = false;
         setRunning(false);
         if (runAbortRef.current === abort) runAbortRef.current = null;
+
+        // A grant can arrive while a follow-up is streaming. Keep the waiting
+        // card until that stream is complete, then resume exactly once. The
+        // queued request is cleared before calling resume so a reconnect or a
+        // duplicate live notice cannot create a second turn.
+        const queued = queuedResumeRef.current;
+        if (queued?.generation === generation) {
+          queuedResumeRef.current = null;
+          void resume(queued.request_id);
+        }
       }
     }
   }
 
   function send(event: React.FormEvent) {
     event.preventDefault();
-    if (prompt.trim() === "") return;
+    if (prompt.trim() === "" || inFlight.current) return;
     const requested = prompt.trim();
     // A new user turn takes precedence over an old, uncontinued challenge;
     // its card remains in the transcript, but cannot be clicked to replay a
@@ -419,6 +453,16 @@ export function Chat({
   async function resume(requestId: string): Promise<void> {
     const held = waitingRef.current;
     if (held === null || held.request_id !== requestId) return;
+
+    // Do not consume the approval or add a placeholder turn while another
+    // request owns the stream lock. Live and catch-up notices may both arrive
+    // here; one request id is enough, and the waiting card remains truthful
+    // until the active turn has actually finished.
+    if (inFlight.current) {
+      queuedResumeRef.current ??= { request_id: requestId, generation: runGenerationRef.current };
+      return;
+    }
+
     // Cleared before the turn, not after: a second notice for the same request
     // — a reconnect racing the live frame — must not start a second turn.
     waitingRef.current = null;
@@ -429,7 +473,7 @@ export function Chat({
         resume: { request_id: requestId, prompt: held.prompt, reply: held.reply },
         ...(history.length === 0 ? {} : { history }),
       },
-      { turnIndex: addTurn({ prompt: "", events: [] }), prompt: "", commitConversation: false },
+      { turnIndex: addTurn({ prompt: "", events: [] }), prompt: "", commitConversation: true },
     );
   }
 
