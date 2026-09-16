@@ -19,7 +19,7 @@
  * full argument. A normal page load remains one `tools/list`; a Continue action
  * starts one separate, fresh page attempt.
  */
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 
 import { HomeRefreshContext } from "../shell/HomeRefreshBoundary.tsx";
 import type { LoanContextRefusal, LoanFilesState } from "../../lib/loan-context/loans.ts";
@@ -51,15 +51,23 @@ export function LoanFilesView({
 }) {
   const [current, setCurrent] = useState(state);
   const [refreshing, setRefreshing] = useState(false);
-  const routerRefresh = useContext(HomeRefreshContext);
-  const refreshAction = onContinueAuthorization ?? routerRefresh;
+  const refreshController = useContext(HomeRefreshContext);
+  const refreshAction = onContinueAuthorization ?? refreshController?.refresh;
+  const refreshingRef = useRef(false);
 
   // A server navigation can deliver a newer initial state. Keep the explicit
-  // client refresh local so Chat and its bounded history are not remounted.
-  useEffect(() => setCurrent(state), [state]);
+  // client refresh local so Chat and its bounded history are not remounted. A
+  // refresh action resolves here: this is the first point at which the new
+  // server result has actually reached the browser, including a repeated
+  // authorization challenge.
+  useEffect(() => {
+    setCurrent(state);
+    refreshController?.settle();
+  }, [state, refreshController]);
 
   async function continueAuthorization(): Promise<void> {
-    if (refreshing || refreshAction === null || refreshAction === undefined) return;
+    if (refreshingRef.current || refreshAction === null || refreshAction === undefined) return;
+    refreshingRef.current = true;
     setRefreshing(true);
     try {
       await refreshAction();
@@ -71,11 +79,14 @@ export function LoanFilesView({
         },
       });
     } finally {
+      refreshingRef.current = false;
       setRefreshing(false);
     }
   }
 
-  const cardContinue = refreshing || refreshAction === null || refreshAction === undefined
+  // Keep the button mounted while the server refresh is in flight. It is the
+  // visible, disabled feedback that makes the single-attempt guard legible.
+  const cardContinue = refreshAction === null || refreshAction === undefined
     ? undefined
     : () => { void continueAuthorization(); };
 

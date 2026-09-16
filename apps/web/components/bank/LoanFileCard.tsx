@@ -100,7 +100,7 @@ export function LoanFileCard({
         <>
           <p className="bank-file-note">
             {safeHttpUrl(read.url) === undefined ? (
-              <>Authorize access to the loan book, then reload.</>
+              <>Complete provider authorization, then use Continue.</>
             ) : (
               <>
                 <a href={safeHttpUrl(read.url)} target="_blank" rel="noreferrer">

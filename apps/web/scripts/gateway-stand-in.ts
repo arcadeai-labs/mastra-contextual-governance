@@ -573,6 +573,8 @@ export interface GatewayStandIn {
   requireNativeElicitationFor(wireName: string, authorizationUrl: string): void;
   /** Make the next call return the MCP URL-elicitation-required protocol error. */
   requireProtocolAuthorizationFor(wireName: string, authorizationUrl?: string): void;
+  /** Delay gateway tool responses in a local fixture, so browser tests can hold a refresh in flight. */
+  setToolResponseDelay(delayMs: number): void;
   stop(): void;
 }
 
@@ -594,6 +596,7 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
   const actors = new Map<string, string>();
   const challenges = new Map<string, AuthorizationChallenge>();
   const pendingElicitations = new Map<string, (result: unknown) => void>();
+  let toolResponseDelayMs = 0;
   const tokenForActor = options.tokenForActor ?? ((email: string) => `dev:${email}`);
 
   const base = (host: string) =>
@@ -791,6 +794,13 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
 
       const wire = String(message.params?.name ?? "");
       const inputs = (message.params?.arguments ?? {}) as Record<string, unknown>;
+
+      // The real gateway can leave a server refresh pending while its tool
+      // response is in flight. The local browser regression uses this seam to
+      // prove the Continue button remains disabled until that response settles.
+      if (toolResponseDelayMs > 0 && wire === `${toolkit}_GetLoan`) {
+        await Bun.sleep(toolResponseDelayMs);
+      }
 
       // Layer 2, before anything else — because Arcade evaluates auth
       // requirements before /pre, and a refusal there fires no hook
@@ -1044,6 +1054,12 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
               },
             }),
       });
+    },
+    setToolResponseDelay(delayMs) {
+      if (!Number.isFinite(delayMs) || delayMs < 0) {
+        throw new Error(`tool response delay must be a non-negative finite number, got ${delayMs}`);
+      }
+      toolResponseDelayMs = delayMs;
     },
     stop: () => server.stop(true),
   };

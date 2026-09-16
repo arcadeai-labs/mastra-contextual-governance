@@ -618,8 +618,10 @@ through that listing. It never assumes the person's click succeeded. A repeated
 challenge pauses again, while a successful refresh replaces the server-provided
 loan-file state; the stable client shell keeps the Chat component and its in-memory
 conversation history mounted. `test/home-surface.test.ts` covers the real local MCP
-transport and `test/home-loan-browser.test.tsx` covers the rendered laptop-width flow
-with a synthetic local refresh callback.
+transport, `test/home-loan-browser.test.tsx` covers the isolated rendered component,
+and `test/home-loan-next-browser.test.ts` drives a real Next page in local headless
+Chrome: a delayed synthetic gateway response, rapid clicks, a re-challenge, and a
+successful Continue are measured through the production refresh/context path.
 
 ### A denial is a decision, not an error state
 

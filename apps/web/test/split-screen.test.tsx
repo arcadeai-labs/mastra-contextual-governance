@@ -294,7 +294,7 @@ describe("the loan context", () => {
     expect(markup).toContain("evt_kbfcdksrpk");
     expect(markup).toContain("audit log");
     // Not plumbing. The sentence the fault card uses must not appear here.
-    expect(markup).not.toContain("No policy decision was made");
+    expect(markup).not.toMatch(/no policy decision was made/i);
   });
 
   test("a broken loan book says nothing was decided, and never says refused", () => {
@@ -321,7 +321,7 @@ describe("the loan context", () => {
 
     expect(markup).toContain(`href="https://cloud.arcade.dev/api/v1/oauth/flow/abc"`);
     expect(markup).toContain("This read is paused pending provider authorization");
-    expect(markup).not.toContain("No policy decision was made");
+    expect(markup).not.toMatch(/no policy decision was made/i);
   });
 
   test("a loan authorization card offers Continue and never renders an unsafe URL", () => {
@@ -338,7 +338,8 @@ describe("the loan context", () => {
     );
 
     expect(markup).not.toContain("javascript:");
-    expect(markup).toContain("Authorize access to the loan book, then reload.");
+    expect(markup).toContain("Complete provider authorization, then use Continue.");
+    expect(markup).not.toContain("then reload");
     expect(markup).toContain('data-action="continue-loan-authorization"');
     expect(markup).toContain("Continue");
   });
@@ -429,9 +430,9 @@ describe("a denial is a decision, not an error", () => {
     expect(fault).toContain("Any side effects are unknown");
     expect(failed).toContain("The turn is incomplete");
     expect(failed).toContain("Any side effects from attempted tools are unknown");
-    expect(fault).not.toContain("No policy decision was made");
+    expect(fault).not.toMatch(/no policy decision was made/i);
     expect(fault).not.toContain("nothing was recorded");
-    expect(failed).not.toContain("No policy decision was made");
+    expect(failed).not.toMatch(/no policy decision was made/i);
     expect(failed).not.toContain("nothing was recorded");
     expect(denied).toContain("Recorded in the audit log");
   });
@@ -455,7 +456,7 @@ describe("a denial is a decision, not an error", () => {
     expect(deliveryFault).toContain("The tool outcome is incomplete");
     expect(deliveryFault).toContain("Any side effects are unknown");
     expect(deliveryFault).not.toContain("nothing was recorded");
-    expect(deliveryFault).not.toContain("No policy decision was made");
+    expect(deliveryFault).not.toMatch(/no policy decision was made/i);
   });
 
   test("layer 2 is neither: a link, and no claim that anything was refused", () => {
