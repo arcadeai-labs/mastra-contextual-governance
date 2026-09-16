@@ -146,6 +146,14 @@ describe("the tool list", () => {
     expect(markup).toContain("Not filtered in the browser");
   });
 
+  test("the roster is a native keyboard-collapsible disclosure with its count in the label", () => {
+    const markup = render({ session: session(DANA), tools: DANA_TOOLS });
+
+    expect(markup).toContain("<details");
+    expect(markup).toContain("<summary");
+    expect(markup).toContain("4 tools available");
+  });
+
   test("the filtered built-ins are named, not quietly dropped", () => {
     const markup = render({ session: session(DANA), tools: DANA_TOOLS });
 
