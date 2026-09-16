@@ -29,13 +29,13 @@ import { CORRELATION_TOKEN } from "../governance/correlation.ts";
 
 export interface AuthorizationRequired {
   /** Where the persona has to go. Rendered as a link; never followed server-side. */
-  url: string;
+  url?: string;
   /** Arcade's own words for the model. Shown as-is; this service does not rewrite them. */
   instructions?: string;
 }
 
 /**
- * The authorization challenge inside a failed tool call's text, or `null`.
+ * The authorization challenge inside a tool result/error, or `null`.
  *
  * Fails soft in every direction. Text that is not JSON, JSON that is not an
  * object, an object without `authorization_url`, a `url` that is not a string,
@@ -44,34 +44,102 @@ export interface AuthorizationRequired {
  * link out of an error message, and a link the model can put on screen is a
  * link a prompt injection can put on screen (act 4 is about exactly that).
  */
-export function authorizationRequired(text: string): AuthorizationRequired | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return null;
+export function authorizationRequired(value: unknown): AuthorizationRequired | null {
+  const candidates = objectCandidates(value);
+
+  // Legacy layer-2 auth is a JSON string carrying an authorization URL. Check
+  // it first because the same MCP error wrapper may contain a code or nested
+  // data object as well.
+  for (const candidate of candidates) {
+    const url = validUrl(candidate.authorization_url);
+    if (url === null) continue;
+    const instructions = candidate.llm_instructions;
+    return {
+      url,
+      ...(typeof instructions === "string" && instructions.trim() !== "" ? { instructions } : {}),
+    };
   }
-  if (typeof parsed !== "object" || parsed === null) return null;
 
-  const body = parsed as Record<string, unknown>;
-  const url = body.authorization_url;
-  if (typeof url !== "string" || url.trim() === "") return null;
+  // Modern MCP URL elicitation can arrive as a successful input-required
+  // result, while some gateways flatten it to JSON-RPC -32042. Neither
+  // necessarily contains a URL, so the UI can still offer an explicit
+  // Continue attempt when only the protocol signal survives.
+  const native = candidates.some(
+    (candidate) =>
+      candidate.resultType === "input_required" ||
+      candidate.type === "input_required" ||
+      candidate.input_required === true ||
+      candidate.method === "elicitation/create" ||
+      candidate.code === -32042 ||
+      candidate.code === "-32042",
+  );
+  if (!native) return null;
 
-  let scheme: string;
-  try {
-    scheme = new URL(url).protocol;
-  } catch {
-    return null;
-  }
-  // An `authorization_url` is a page a person is asked to open. A
-  // `javascript:` or `data:` one is not that, whoever put it there.
-  if (scheme !== "https:" && scheme !== "http:") return null;
-
-  const instructions = body.llm_instructions;
+  const url = firstValidUrl(candidates, ["authorization_url", "authorizationUrl", "authorization_endpoint", "url"]);
+  const instructions = firstString(candidates, "llm_instructions") ?? firstString(candidates, "message");
   return {
-    url,
-    ...(typeof instructions === "string" && instructions.trim() !== "" ? { instructions } : {}),
+    ...(url === null ? {} : { url }),
+    ...(instructions === null ? {} : { instructions }),
   };
+}
+
+/** Parse structured values commonly nested in MCP/Mastra wrappers. */
+function objectCandidates(value: unknown): Array<Record<string, unknown>> {
+  const found: Array<Record<string, unknown>> = [];
+  const seen = new Set<object>();
+
+  const visit = (candidate: unknown, depth: number) => {
+    if (depth > 8 || candidate === null || candidate === undefined) return;
+    if (typeof candidate === "string") {
+      try {
+        const parsed = JSON.parse(candidate) as unknown;
+        if (parsed !== candidate) visit(parsed, depth + 1);
+      } catch {
+        // A plain error message is not a structured auth challenge.
+      }
+      return;
+    }
+    if (typeof candidate !== "object" || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) visit(item, depth + 1);
+      return;
+    }
+    const record = candidate as Record<string, unknown>;
+    found.push(record);
+    for (const child of Object.values(record)) visit(child, depth + 1);
+  };
+
+  visit(value, 0);
+  return found;
+}
+
+function firstValidUrl(candidates: Array<Record<string, unknown>>, keys: string[]): string | null {
+  for (const candidate of candidates) {
+    for (const key of keys) {
+      const url = validUrl(candidate[key]);
+      if (url !== null) return url;
+    }
+  }
+  return null;
+}
+
+function firstString(candidates: Array<Record<string, unknown>>, key: string): string | null {
+  for (const candidate of candidates) {
+    const value = candidate[key];
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return null;
+}
+
+function validUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    const scheme = new URL(value).protocol;
+    return scheme === "https:" || scheme === "http:" ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

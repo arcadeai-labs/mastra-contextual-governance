@@ -569,14 +569,31 @@ export interface GatewayStandIn {
    * make the "and then it works" half of the path untestable.
    */
   requireAuthorizationFor(wireName: string, authorizationUrl: string): void;
+  /** Make the next call ask through the MCP server-to-client URL elicitation request. */
+  requireNativeElicitationFor(wireName: string, authorizationUrl: string): void;
+  /** Make the next call return the MCP URL-elicitation-required protocol error. */
+  requireProtocolAuthorizationFor(wireName: string, authorizationUrl?: string): void;
   stop(): void;
 }
+
+interface NativeAuthorizationRequest {
+  mode: "url";
+  message: string;
+  url: string;
+  elicitationId: string;
+}
+
+type AuthorizationChallenge =
+  | { kind: "legacy"; authorizationUrl: string }
+  | { kind: "native"; request: NativeAuthorizationRequest }
+  | { kind: "protocol"; request?: NativeAuthorizationRequest };
 
 export function createGatewayStandIn(options: GatewayStandInOptions): GatewayStandIn {
   const toolkit = options.loanToolkit ?? "Loan";
   const approvalsToolkit = options.approvalsToolkit?.trim() || "Approvals";
   const actors = new Map<string, string>();
-  const challenges = new Map<string, string>();
+  const challenges = new Map<string, AuthorizationChallenge>();
+  const pendingElicitations = new Map<string, (result: unknown) => void>();
   const tokenForActor = options.tokenForActor ?? ((email: string) => `dev:${email}`);
 
   const base = (host: string) =>
@@ -667,8 +684,10 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
 
   /** A JSON-RPC result. The MCP client reads `result`; a tool failure is in-band. */
   const rpc = (id: unknown, result: unknown) => Response.json({ jsonrpc: "2.0", id, result });
-  const rpcError = (id: unknown, code: number, message: string) =>
-    Response.json({ jsonrpc: "2.0", id, error: { code, message } });
+  const rpcError = (id: unknown, code: number, message: string, data?: unknown) =>
+    Response.json({ jsonrpc: "2.0", id, error: { code, message, ...(data === undefined ? {} : { data }) } });
+
+  const sse = (message: unknown) => `event: message\ndata: ${JSON.stringify(message)}\n\n`;
 
   /** A tool result the MCP spec calls a failure: `isError` plus text content. */
   const toolError = (text: string) => ({ isError: true, content: [{ type: "text", text }] });
@@ -709,8 +728,16 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
       if (request.method !== "POST") return new Response(null, { status: 405 });
 
       const message = (await request.json().catch(() => null)) as
-        | { id?: unknown; method?: string; params?: Record<string, unknown> }
+        | { id?: unknown; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown }
         | null;
+      if (message?.method === undefined && message?.id !== undefined) {
+        const deliver = pendingElicitations.get(String(message.id));
+        if (deliver !== undefined) {
+          pendingElicitations.delete(String(message.id));
+          deliver(message.result ?? message.error);
+          return new Response(null, { status: 202 });
+        }
+      }
       if (!message?.method) return rpcError(message?.id ?? null, -32600, "not a JSON-RPC request");
 
       if (message.method === "initialize") {
@@ -772,7 +799,55 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
       if (challenge !== undefined) {
         challenges.delete(wire);
         options.onCall?.({ user_id: actor, tool: wire, inputs, outcome: "authorization_required" });
-        return rpc(message.id, toolError(authorizationChallenge(challenge)));
+        if (challenge.kind === "legacy") {
+          return rpc(message.id, toolError(authorizationChallenge(challenge.authorizationUrl)));
+        }
+        if (challenge.kind === "protocol") {
+          return rpcError(
+            message.id,
+            -32042,
+            "URL elicitation required",
+            challenge.request === undefined ? {} : { elicitations: [challenge.request] },
+          );
+        }
+
+        // Legacy Streamable HTTP carries server-to-client requests in the same
+        // SSE response as the tools/call result. The client answers the
+        // elicitation with a separate POST; only then can this original call
+        // settle. The chat bridge turns that response into a terminal auth
+        // event and closes the wrapped tools before another dispatch starts.
+        const requestId = `elicit_${crypto.randomUUID()}`;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              const encoder = new TextEncoder();
+              pendingElicitations.set(requestId, (_result) => {
+                controller.enqueue(encoder.encode(sse({ jsonrpc: "2.0", id: message.id, result: toolOk({}) })));
+                controller.close();
+              });
+              controller.enqueue(
+                encoder.encode(
+                  sse({
+                    jsonrpc: "2.0",
+                    id: requestId,
+                    method: "elicitation/create",
+                    params: challenge.request,
+                  }),
+                ),
+              );
+            },
+            cancel() {
+              pendingElicitations.delete(requestId);
+            },
+          }),
+          {
+            headers: {
+              "content-type": "text/event-stream",
+              "cache-control": "no-cache",
+              connection: "keep-alive",
+            },
+          },
+        );
       }
 
       const { toolkit: calledToolkit, name } = qualifiedToolName(wire);
@@ -942,7 +1017,33 @@ export function createGatewayStandIn(options: GatewayStandInOptions): GatewaySta
       return token;
     },
     requireAuthorizationFor(wireName, authorizationUrl) {
-      challenges.set(wireName, authorizationUrl);
+      challenges.set(wireName, { kind: "legacy", authorizationUrl });
+    },
+    requireNativeElicitationFor(wireName, authorizationUrl) {
+      challenges.set(wireName, {
+        kind: "native",
+        request: {
+          mode: "url",
+          message: "Authorize the provider, then continue.",
+          url: authorizationUrl,
+          elicitationId: `elicitation-${crypto.randomUUID()}`,
+        },
+      });
+    },
+    requireProtocolAuthorizationFor(wireName, authorizationUrl) {
+      challenges.set(wireName, {
+        kind: "protocol",
+        ...(authorizationUrl === undefined
+          ? {}
+          : {
+              request: {
+                mode: "url",
+                message: "Authorize the provider, then continue.",
+                url: authorizationUrl,
+                elicitationId: `elicitation-${crypto.randomUUID()}`,
+              },
+            }),
+      });
     },
     stop: () => server.stop(true),
   };

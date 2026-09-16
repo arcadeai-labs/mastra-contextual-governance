@@ -91,10 +91,16 @@ export function LoanFileCard({ read }: { read: LoanRead }) {
       {read.outcome === "authorization" ? (
         <>
           <p className="bank-file-note">
-            <a href={read.url} target="_blank" rel="noreferrer">
-              Authorize access to the loan book
-            </a>
-            , then reload.
+            {read.url === undefined ? (
+              <>Authorize access to the loan book, then reload.</>
+            ) : (
+              <>
+                <a href={read.url} target="_blank" rel="noreferrer">
+                  Authorize access to the loan book
+                </a>
+                , then reload.
+              </>
+            )}
           </p>
           <p className="bank-quiet">
             Nothing was refused: this browser holds no credential for the loan book yet, so no policy

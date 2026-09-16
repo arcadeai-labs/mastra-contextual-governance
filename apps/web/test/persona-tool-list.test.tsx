@@ -152,6 +152,7 @@ describe("the tool list", () => {
     expect(markup).toContain("<details");
     expect(markup).toContain("<summary");
     expect(markup).toContain("4 tools available");
+    expect(markup).not.toContain("<details open");
   });
 
   test("the filtered built-ins are named, not quietly dropped", () => {

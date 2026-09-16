@@ -157,6 +157,8 @@ export interface RunOptions {
   emit: (event: ChatEvent) => void | Promise<void>;
   /** Native MCP URL requests captured for this chat request only. */
   nativeElicitation?: NativeElicitationBridge;
+  /** Close the turn's tool boundary before any queued dispatch can start. */
+  onAuthorization?: () => void;
 }
 
 /** One message in a conversation handed to the agent. Mastra takes an array of these. */
@@ -190,6 +192,8 @@ export async function runTurn(options: RunOptions): Promise<void> {
   const endOfTurn = new AbortController();
   /** Set when the escalation ended the turn, so an abort is not reported as a failure. */
   let endedOnEscalation = false;
+  /** Set on the first authorization challenge; auth is a terminal turn outcome. */
+  let endedOnAuthorization = false;
   /**
    * True from the escalation's result onwards: the turn is over and only its
    * closing words are still welcome.
@@ -203,19 +207,24 @@ export async function runTurn(options: RunOptions): Promise<void> {
    */
   let closing = false;
 
-  const emitNativeElicitations = async (tool: string): Promise<boolean> => {
-    const requests = options.nativeElicitation?.take() ?? [];
-    for (const request of requests) {
-      await emit({
-        kind: "authorization",
-        tool,
-        url: request.url,
-        instructions: request.message,
-        mode: request.mode,
-        elicitation_id: request.elicitationId,
-      });
-    }
-    return requests.length > 0;
+  const endOnAuthorization = async (
+    tool: string,
+    authorization: { url?: string; instructions?: string; mode?: "url"; elicitation_id?: string },
+  ): Promise<void> => {
+    if (endedOnAuthorization) return;
+    endedOnAuthorization = true;
+    // Close the wrapped tools before publishing the card. The callback is also
+    // fired by the native MCP handler itself, which covers queued dispatches
+    // that begin before this stream consumer sees the protocol error.
+    options.onAuthorization?.();
+    endOfTurn.abort();
+    await emit({ kind: "authorization", tool, ...authorization });
+  };
+
+  const takeNativeAuthorization = (tool: string): NativeUrlElicitation | null => {
+    const request = options.nativeElicitation?.take()?.[0] ?? null;
+    if (request === null) return null;
+    return request;
   };
 
   try {
@@ -267,7 +276,21 @@ export async function runTurn(options: RunOptions): Promise<void> {
         }
         // Some gateways return a canceled native request as a normal-shaped
         // result. Consume the bridge before calling it a successful result.
-        if (await emitNativeElicitations(tool)) continue;
+        const nativeResult = takeNativeAuthorization(tool);
+        if (nativeResult !== null) {
+          await endOnAuthorization(tool, {
+            url: nativeResult.url,
+            instructions: nativeResult.message,
+            mode: nativeResult.mode,
+            elicitation_id: nativeResult.elicitationId,
+          });
+          break;
+        }
+        const authorizationResult = authorizationRequired(payload.result);
+        if (authorizationResult !== null) {
+          await endOnAuthorization(tool, authorizationResult);
+          break;
+        }
         await emit({ kind: "tool-result", tool });
 
         // The escalation landed, so **the turn is over**. Nothing waits for the
@@ -314,25 +337,38 @@ export async function runTurn(options: RunOptions): Promise<void> {
         // carries a URL request (or protocol error -32042), not an
         // authorization_url JSON instruction. Surface it through the same
         // explicit card, then let the user start a fresh retry.
-        if (await emitNativeElicitations(tool)) continue;
+        const nativeRequest = takeNativeAuthorization(tool);
+        if (nativeRequest !== null) {
+          await endOnAuthorization(tool, {
+            url: nativeRequest.url,
+            instructions: nativeRequest.message,
+            mode: nativeRequest.mode,
+            elicitation_id: nativeRequest.elicitationId,
+          });
+          break;
+        }
         const nativeFromError = readNativeUrlElicitations(payload.error ?? payload);
         if (nativeFromError.length > 0) {
-          await emitNativeRequests(nativeFromError, tool, emit);
-          continue;
+          const [request] = nativeFromError;
+          if (request !== undefined) {
+            await endOnAuthorization(tool, {
+              url: request.url,
+              instructions: request.message,
+              mode: request.mode,
+              elicitation_id: request.elicitationId,
+            });
+          }
+          break;
         }
-        const text = failureText(payload.error ?? payload);
+        const rawFailure = payload.error ?? payload;
+        const text = failureText(rawFailure);
 
         // Layer 2 first: it arrives in the same `isError` envelope as a hook
         // denial and is not one. See `authorization.ts`.
-        const authorization = authorizationRequired(text);
+        const authorization = authorizationRequired(rawFailure) ?? authorizationRequired(text);
         if (authorization) {
-          await emit({
-            kind: "authorization",
-            tool,
-            url: authorization.url,
-            ...(authorization.instructions ? { instructions: authorization.instructions } : {}),
-          });
-          continue;
+          await endOnAuthorization(tool, authorization);
+          break;
         }
 
         // Then a denial, but only on positive evidence that a hook made a
@@ -357,33 +393,25 @@ export async function runTurn(options: RunOptions): Promise<void> {
     }
   } catch (cause) {
     // An abort we asked for is not a failure. Anything else is, and says so.
-    if (!endedOnEscalation) {
+    if (!endedOnEscalation && !endedOnAuthorization) {
       await emit({ kind: "error", message: cause instanceof Error ? cause.message : String(cause) });
     }
   }
 
   // A wrapper may expose the request only after the tool error has been
-  // emitted; still make a captured URL visible before done.
-  await emitNativeElicitations("unknown");
-
-  await emit({ kind: "done", calls });
-}
-
-async function emitNativeRequests(
-  requests: NativeUrlElicitation[],
-  tool: string,
-  emit: RunOptions["emit"],
-): Promise<void> {
-  for (const request of requests) {
-    await emit({
-      kind: "authorization",
-      tool,
-      url: request.url,
-      instructions: request.message,
-      mode: request.mode,
-      elicitation_id: request.elicitationId,
+  // emitted; still make one captured URL visible before done. The first
+  // challenge is the terminal event and duplicate requests are discarded.
+  const trailingNative = takeNativeAuthorization("unknown");
+  if (trailingNative !== null) {
+    await endOnAuthorization("unknown", {
+      url: trailingNative.url,
+      instructions: trailingNative.message,
+      mode: trailingNative.mode,
+      elicitation_id: trailingNative.elicitationId,
     });
   }
+
+  await emit({ kind: "done", calls });
 }
 
 /** `for await` over a web `ReadableStream`, which Node's typings do not make iterable. */
