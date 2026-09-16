@@ -8,6 +8,7 @@ import {
   readConversationHistory,
   withPrompt,
 } from "../lib/agent/conversation.ts";
+import { runTurn, type Streamable } from "../lib/agent/run.ts";
 
 describe("the in-memory conversation boundary", () => {
   test("keeps the newest bounded turns and clips oversized messages", () => {
@@ -50,6 +51,35 @@ describe("the in-memory conversation boundary", () => {
         "Now explain the approval path.",
       ),
     ).toEqual([
+      { role: "user", content: "What is the loan status?" },
+      { role: "assistant", content: "It is pending." },
+      { role: "user", content: "Now explain the approval path." },
+    ]);
+  });
+
+  test("hands the bounded conversation to the agent as its actual input", async () => {
+    let received: string | readonly { role: "user" | "assistant"; content: string }[] = "";
+    const agent: Streamable = {
+      stream(messages) {
+        received = messages;
+        return Promise.resolve({
+          fullStream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", payload: { text: "done" } });
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
+    const history = [
+      { role: "user" as const, content: "What is the loan status?" },
+      { role: "assistant" as const, content: "It is pending." },
+    ];
+    await runTurn({ agent, prompt: withPrompt(history, "Now explain the approval path."), emit: () => undefined });
+
+    expect(received as unknown as readonly { role: "user" | "assistant"; content: string }[]).toEqual([
       { role: "user", content: "What is the loan status?" },
       { role: "assistant", content: "It is pending." },
       { role: "user", content: "Now explain the approval path." },
