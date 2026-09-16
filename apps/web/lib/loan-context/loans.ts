@@ -78,7 +78,7 @@ export type LoanRead =
 
 /** What the page produced when it got far enough to try. */
 export interface LoanContextBody {
-  /** One entry per id in {@link DEMO_LOAN_IDS}, in that order. */
+  /** One entry per attempted id, in order; a challenge stops the next read. */
   reads: LoanRead[];
   /** The person every read was made as — this browser's session, never a parameter. */
   actor: string;
