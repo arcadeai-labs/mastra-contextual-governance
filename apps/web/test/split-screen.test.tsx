@@ -308,7 +308,7 @@ describe("the loan context", () => {
     expect(markup).not.toMatch(/refused this read|denied by/i);
   });
 
-  test("a missing credential is a link, and says nothing was refused", () => {
+  test("a missing credential is a link and describes a pending authorization", () => {
     const markup = renderToStaticMarkup(
       <LoanFileCard
         read={{
@@ -320,7 +320,27 @@ describe("the loan context", () => {
     );
 
     expect(markup).toContain(`href="https://cloud.arcade.dev/api/v1/oauth/flow/abc"`);
-    expect(markup).toContain("Nothing was refused");
+    expect(markup).toContain("This read is paused pending provider authorization");
+    expect(markup).not.toContain("No policy decision was made");
+  });
+
+  test("a loan authorization card offers Continue and never renders an unsafe URL", () => {
+    const markup = renderToStaticMarkup(
+      <LoanFileCard
+        read={{
+          loan_id: "LN-2291",
+          outcome: "authorization",
+          url: "javascript:alert(1)",
+          instructions: "Authorize the provider, then continue.",
+        }}
+        onContinueAuthorization={() => undefined}
+      />,
+    );
+
+    expect(markup).not.toContain("javascript:");
+    expect(markup).toContain("Authorize access to the loan book, then reload.");
+    expect(markup).toContain('data-action="continue-loan-authorization"');
+    expect(markup).toContain("Continue");
   });
 
   test("a signed-out reader is told where to go rather than shown an empty table", () => {
@@ -596,11 +616,19 @@ describe("the fork seam", () => {
     expect(source).toContain(`href: "${GATEWAY_START_PATH}"`);
   });
 
+  test("the home shell owns Continue through Next router.refresh", () => {
+    const page = readFileSync(join(WEB, "app/page.tsx"), "utf8");
+    const boundary = readFileSync(join(WEB, "components/shell/HomeRefreshBoundary.tsx"), "utf8");
+
+    expect(page).toContain("<HomeRefreshBoundary>");
+    expect(boundary).toContain("router.refresh()");
+  });
+
   /**
    * The other direction of the same claim: `apps/web` reads the loan book
    * through the gateway and by no other route. A direct database read would be
    * invisible on screen and would make the left half a liar — see
-   * `lib/loan-context/handlers.ts`.
+   * `lib/home/surface.ts`.
    */
   test("nothing this service serves opens the loan book directly", () => {
     for (const directory of ["lib", "app", "components"]) {
