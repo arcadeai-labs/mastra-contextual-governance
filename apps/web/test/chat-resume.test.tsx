@@ -374,10 +374,19 @@ describe("approval.granted starts the next turn", () => {
   test("one resume, carrying the id and the previous turn as context", async () => {
     const container = await mountAndAsk();
 
+    await typePrompt(container, "Keep this draft while Charlie decides.");
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(
+      "Keep this draft while Charlie decides.",
+    );
+
     await act(async () => {
       harness.announce(notice());
     });
     await settle();
+
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(
+      "Keep this draft while Charlie decides.",
+    );
 
     expect(harness.posts).toHaveLength(2);
     const resume = harness.posts[1]?.resume as Record<string, unknown>;
