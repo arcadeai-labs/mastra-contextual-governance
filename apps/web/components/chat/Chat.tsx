@@ -26,9 +26,9 @@
  *    screen with an Arcade authorize URL inside them, overflowing the card by
  *    several hundred pixels. They stay on the wire and off the screen.
  * 4. **It gives a plumbing failure a different colour and different words.**
- *    A `fault` is grey and says no decision was made, because a demo whose claim
- *    is *"the control plane stopped this"* must not put that claim on screen
- *    when an unreachable API stopped it.
+ *    A `fault` is grey and describes the outcome as incomplete, because a demo
+ *    whose claim is *"the control plane stopped this"* must not put that claim on
+ *    screen when an unreachable API stopped it or a tool partially completed.
  *
  * ## What #22 changed, and why it is not decoration
  *
@@ -44,8 +44,8 @@
  *   a dated maroon rule, headed with the tool and the word `DENIED`, carrying the
  *   rule author's sentence verbatim. Deliberate, official, filed — not an alarm.
  *   It is not `role="alert"` either, and never was: nothing went wrong.
- * - **A fault is plumbing**, grey, and says no decision was made and nothing was
- *   recorded.
+ * - **A fault is plumbing**, grey, and says the tool outcome is incomplete. Any
+ *   side effects are unknown, so the detail above is the source for next steps.
  * - **An `error` and a failed request are plumbing too**, and now look like it.
  *   They used to wear the denial's colours, which is the same lie pointing the
  *   other way.
@@ -114,7 +114,7 @@ const decision: React.CSSProperties = {
   color: "#241f1b",
 };
 
-/** Plumbing: something broke and nothing decided anything. Grey, and drab. */
+/** Plumbing: the tool or turn is incomplete. Grey, and drab. */
 const plumbing: React.CSSProperties = {
   ...box,
   borderColor: "#b8b5ad",
@@ -757,8 +757,8 @@ export function EventView({
           <strong style={label}>{event.tool} — the tool did not complete</strong>
           <p style={{ margin: "0.4em 0", whiteSpace: "pre-wrap" }}>{event.message}</p>
           <p style={{ margin: 0, color: "var(--muted)" }}>
-            No policy decision was made and nothing was recorded. This is a failure in the plumbing,
-            not the control plane refusing.
+            The tool outcome is incomplete. Any side effects are unknown; use the detail above to
+            determine the next step.
           </p>
         </div>
       );
@@ -821,7 +821,8 @@ export function EventView({
           <strong style={label}>The turn stopped</strong>
           <p style={{ margin: "0.4em 0 0", whiteSpace: "pre-wrap" }}>{event.message}</p>
           <p style={{ margin: "0.4em 0 0", color: "var(--muted)" }}>
-            No policy decision was made and nothing was recorded.
+            The turn is incomplete. Any side effects from attempted tools are unknown; use the
+            details above to determine the next step.
           </p>
         </div>
       );

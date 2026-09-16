@@ -33,6 +33,7 @@ import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from arcade_core.schema import ToolAuthorizationContext, ToolContext, ToolSecretItem
@@ -225,6 +226,8 @@ class SlackState:
     posted: list[dict[str, Any]] = field(default_factory=list)
     #: Every Slack method that was called, in order.
     calls: list[str] = field(default_factory=list)
+    #: The actual HTTP requests, captured at the loopback boundary.
+    requests: list[dict[str, Any]] = field(default_factory=list)
     #: The recipient email handed to users.lookupByEmail.
     looked_up_emails: list[str] = field(default_factory=list)
     #: Slack's own error code to answer the next call with, if any.
@@ -251,23 +254,50 @@ class _SlackHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def do_POST(self) -> None:  # noqa: N802
+    def _request(self) -> tuple[str, bytes, dict[str, list[str]]]:
+        target = urlsplit(self.path)
+        method = target.path.removeprefix("/api/")
         length = int(self.headers.get("Content-Length") or 0)
-        body = json.loads(self.rfile.read(length) or b"{}")
-        self.state.calls.append(self.path.removeprefix("/api/"))
+        raw_body = self.rfile.read(length)
+        self.state.calls.append(method)
         self.state.seen_tokens.append(
             (self.headers.get("Authorization") or "").removeprefix("Bearer ")
         )
+        self.state.requests.append(
+            {
+                "method": self.command,
+                "path": target.path,
+                "query": target.query,
+                "body": raw_body,
+                "authorization": self.headers.get("Authorization"),
+                "content_type": self.headers.get("Content-Type"),
+            }
+        )
+        return method, raw_body, parse_qs(target.query, keep_blank_values=True)
 
-        if self.state.fail_with is not None and (
-            self.state.fail_on is None or self.state.fail_on == self.path.removeprefix("/api/")
+    def _maybe_fail(self, method: str) -> bool:
+        if self.state.fail_with is None or (
+            self.state.fail_on is not None and self.state.fail_on != method
         ):
-            error, self.state.fail_with = self.state.fail_with, None
-            self._send({"ok": False, "error": error, **self.state.fail_detail})
+            return False
+        error, self.state.fail_with = self.state.fail_with, None
+        self._send({"ok": False, "error": error, **self.state.fail_detail})
+        return True
+
+    def do_GET(self) -> None:  # noqa: N802
+        method, raw_body, query = self._request()
+        if self._maybe_fail(method):
             return
 
-        if self.path == "/api/users.lookupByEmail":
-            email = body.get("email", "")
+        if method == "users.lookupByEmail":
+            # The real endpoint takes exactly one email query argument. Keeping
+            # this stand-in strict makes the pre-change POST/JSON transport fail
+            # instead of silently teaching the test whatever the client sends.
+            emails = query.get("email", [])
+            if set(query) != {"email"} or len(emails) != 1 or raw_body:
+                self._send({"ok": False, "error": "invalid_arguments"})
+                return
+            email = emails[0]
             self.state.looked_up_emails.append(email)
             user_id = self.state.users.get(email)
             if user_id is None:
@@ -276,7 +306,15 @@ class _SlackHandler(BaseHTTPRequestHandler):
             self._send({"ok": True, "user": {"id": user_id}})
             return
 
-        if self.path == "/api/conversations.open":
+        self._send({"ok": False, "error": "unknown_method"})
+
+    def do_POST(self) -> None:  # noqa: N802
+        method, raw_body, _ = self._request()
+        body = json.loads(raw_body or b"{}")
+        if self._maybe_fail(method):
+            return
+
+        if method == "conversations.open":
             user_id = body.get("users", "")
             channel = self.state.dms.get(user_id)
             if channel is None:
@@ -285,7 +323,7 @@ class _SlackHandler(BaseHTTPRequestHandler):
             self._send({"ok": True, "channel": {"id": channel}})
             return
 
-        if self.path == "/api/chat.postMessage":
+        if method == "chat.postMessage":
             self.state.posted.append(body)
             self._send({"ok": True, "channel": body.get("channel"), "ts": "1757419200.000100"})
             return

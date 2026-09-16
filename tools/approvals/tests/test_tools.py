@@ -9,11 +9,13 @@ message Slack was handed.
 from __future__ import annotations
 
 import json
+from urllib.parse import parse_qs
 
 import pytest
 from arcade_core.errors import ToolExecutionError
 
 from approvals import Decision, app, decide, request_approval
+from approvals.slack import lookup_user_by_email
 from tests.conftest import (
     CAST,
     DANA,
@@ -209,6 +211,43 @@ class TestRequestApproval:
 
 
 class TestTheSlackMessage:
+    async def test_lookup_uses_get_query_encoding_and_bearer_header(
+        self, slack: SlackState
+    ) -> None:
+        email = "riley+approvals@example.test"
+        slack.users[email] = "U_PLUS"
+
+        assert await lookup_user_by_email(SLACK_TOKEN, email) == "U_PLUS"
+
+        request = slack.requests[-1]
+        assert request["method"] == "GET"
+        assert request["path"] == "/api/users.lookupByEmail"
+        assert parse_qs(request["query"], keep_blank_values=True) == {"email": [email]}
+        assert request["query"].count("&") == 0
+        assert "%2B" in request["query"].upper()
+        assert request["body"] == b""
+        assert request["authorization"] == f"Bearer {SLACK_TOKEN}"
+        assert request["content_type"] is None
+        assert "token" not in request["query"].lower()
+
+    async def test_lookup_get_and_dm_posts_keep_method_payload_and_order(
+        self, as_dana, store: StoreState, slack: SlackState
+    ) -> None:
+        await request_approval(as_dana, **ACT_TWO)
+
+        assert [(request["method"], request["path"]) for request in slack.requests] == [
+            ("GET", "/api/users.lookupByEmail"),
+            ("POST", "/api/conversations.open"),
+            ("POST", "/api/chat.postMessage"),
+        ]
+        assert json.loads(slack.requests[1]["body"]) == {"users": "U_RILEY"}
+        assert json.loads(slack.requests[2]["body"]) == slack.posted[0]
+        assert all(
+            request["content_type"] == "application/json; charset=utf-8"
+            for request in slack.requests[1:]
+        )
+        assert all(request["authorization"] == f"Bearer {SLACK_TOKEN}" for request in slack.requests)
+
     async def test_posts_as_the_requester_using_her_own_delegated_token(
         self, as_dana, store: StoreState, slack: SlackState
     ) -> None:
