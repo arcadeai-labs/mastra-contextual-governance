@@ -4,25 +4,25 @@
       "persona": "dana",
       "name": "Alice",
       "email": "alice@bank.example",
-      "password": "dana-demo-2026"
+      "password": "megaforce-demo-2026"
     },
     {
       "persona": "sam",
       "name": "Bob",
       "email": "bob@bank.example",
-      "password": "sam-demo-2026"
+      "password": "megaforce-demo-2026"
     },
     {
       "persona": "riley",
       "name": "Charlie",
       "email": "charlie@bank.example",
-      "password": "riley-demo-2026"
+      "password": "megaforce-demo-2026"
     },
     {
       "persona": "morgan",
       "name": "Michael",
       "email": "michael@bank.example",
-      "password": "morgan-demo-2026"
+      "password": "megaforce-demo-2026"
     }
   ]
 }

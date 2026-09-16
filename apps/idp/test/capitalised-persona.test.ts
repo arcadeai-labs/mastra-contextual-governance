@@ -27,7 +27,7 @@ const SECRET = "test-secret-".padEnd(48, "x");
 const CONFIGURED = "Alice@Bank.Example";
 const STORED = CONFIGURED.toLowerCase();
 /** The fixture's password for Alice, which the override does not change. */
-const PASSWORD = "dana-demo-2026";
+const PASSWORD = "megaforce-demo-2026";
 
 let child: Subprocess;
 let baseUrl: string;

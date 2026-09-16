@@ -682,6 +682,12 @@ the pre-hook folds case on the `user_id` Arcade sends. So the four role email va
 be typed in whatever case the Arcade accounts use and the three databases still describe one
 person.
 
+**The four demo personas share one password:** `megaforce-demo-2026`. This checked-in
+credential is deliberately demo-only, not a production secret, and must not be reused
+outside this demo. After a merged change to the fixture is deployed, run `bun run reset`
+(`bun run reset --target render` for Render) so the persistent `idp.db` reseeds; a redeploy
+alone does not change existing rows.
+
 ## Two things that will bite you
 
 **Zod is pinned to 3.25.76.** Zod 4 changes internals the Arcade/Mastra path does not
