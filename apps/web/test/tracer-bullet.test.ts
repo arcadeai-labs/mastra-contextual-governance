@@ -534,17 +534,28 @@ describe("#89 measured: the model acts on the remediation instruction", () => {
 describe("layer 2, which fires no hook at all", () => {
   test("an authorization challenge is rendered as a link and is not reported as a denial", async () => {
     const auditBefore = (await harness.audit()).length;
+    const callsBefore = harness.calls.length;
     harness.gateway.requireAuthorizationFor("Loan_GetLoan", "https://cloud.arcade.dev/api/v1/oauth/flow/abc");
 
     const result = await turn({
       cookie: await browserFor(DANA),
       prompt: `Read loan ${OVER_LIMIT_LOAN}.`,
-      script: [{ call: "Loan_GetLoan", input: { loan_id: OVER_LIMIT_LOAN } }, { say: "Please authorize first." }],
+      // The second call is the scripted retry that the old stream consumer
+      // used to send after the first auth challenge. It must remain unused:
+      // this is an outbound-count regression, not merely a card-rendering one.
+      script: [
+        { call: "Loan_GetLoan", input: { loan_id: OVER_LIMIT_LOAN } },
+        { call: "Loan_GetLoan", input: { loan_id: OVER_LIMIT_LOAN } },
+        { say: "Please authorize first." },
+      ],
     });
 
     const authorization = of(result.events, "authorization")[0];
     expect(authorization?.url).toBe("https://cloud.arcade.dev/api/v1/oauth/flow/abc");
     expect(authorization?.instructions).toContain("authorize");
+    expect(of(result.events, "authorization")).toHaveLength(1);
+    expect(of(result.events, "text")).toHaveLength(0);
+    expect(harness.calls.slice(callsBefore).map((call) => call.outcome)).toEqual(["authorization_required"]);
     // Not a denial: nothing was refused, a credential was missing.
     expect(of(result.events, "denied")).toHaveLength(0);
 

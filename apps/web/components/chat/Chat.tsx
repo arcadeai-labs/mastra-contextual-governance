@@ -223,6 +223,8 @@ export function Chat({
   const waitingRef = useRef<Waiting | null>(null);
   /** A decision received while another turn owns the stream lock. */
   const queuedResumeRef = useRef<QueuedResume | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const followTranscriptRef = useRef(true);
   // A turn in flight, so a second Send cannot interleave two streams into one
   // transcript — which would read as the agent contradicting itself. A resume
   // is a turn and takes the same lock.
@@ -245,8 +247,18 @@ export function Chat({
     setWaiting(null);
     waitingRef.current = null;
     queuedResumeRef.current = null;
+    followTranscriptRef.current = true;
     onTurnStart?.();
   }, [onTurnStart, signedInAs]);
+
+  // Follow only while the reader is near the latest content. A presenter can
+  // inspect older turns without a streamed delta yanking the viewport away;
+  // once they return to the bottom, later deltas stay in view again.
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (transcript === null || !followTranscriptRef.current) return;
+    transcript.scrollTop = transcript.scrollHeight;
+  }, [turns]);
 
   function addTurn(turn: ChatTurn): number {
     const index = turnsRef.current.length;
@@ -333,7 +345,7 @@ export function Chat({
           if (generation !== runGenerationRef.current) continue;
           addEvent(options.turnIndex, parsed);
           onEvent?.(parsed);
-          if (parsed.kind === "authorization") {
+          if (parsed.kind === "authorization" && authorizationChallengeRef.current === null) {
             const challenge = { prompt: options.prompt, turnIndex: options.turnIndex };
             authorizationChallengeRef.current = challenge;
             setAuthorizationChallenge(challenge);
@@ -412,6 +424,10 @@ export function Chat({
     event.preventDefault();
     if (prompt.trim() === "" || inFlight.current) return;
     const requested = prompt.trim();
+    // The submitted prompt is already preserved in the visible user bubble;
+    // leave the composer ready for the next turn instead of making a reader
+    // delete the previous request by hand.
+    setPrompt("");
     // A new user turn takes precedence over an old, uncontinued challenge;
     // its card remains in the transcript, but cannot be clicked to replay a
     // stale prompt after the conversation has moved on.
@@ -566,6 +582,15 @@ export function Chat({
         </div>
       )}
 
+      <div
+        className="chat-transcript-scroll"
+        ref={transcriptRef}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          followTranscriptRef.current =
+            element.scrollHeight - element.scrollTop - element.clientHeight <= 48;
+        }}
+      >
       <div className="chat-transcript" aria-live="polite">
         {turns.map((turn, index) => {
           const latestAuthorization = [...turn.events]
@@ -585,9 +610,20 @@ export function Chat({
                   deltas either side of a tool call are two messages and the
                   deltas between them are one. `transcript.ts` says why that
                   distinction is the whole bug #99 was filed for. */}
-              {transcript(visibleEvents(turn.events)).map((block, blockIndex) =>
+              {groupToolBlocks(transcript(visibleEvents(turn.events))).map((block, blockIndex) =>
                 block.kind === "reply" ? (
                   <Markdown key={blockIndex} source={block.text} />
+                ) : block.kind === "tools" ? (
+                  <details className="chat-tools" key={blockIndex}>
+                    <summary>
+                      {block.toolCount === 1 ? "1 tool call" : `${block.toolCount} tool calls`} · {toolIdentity(block)}
+                    </summary>
+                    <div className="chat-tools-body">
+                      {block.events.map((event, eventIndex) => (
+                        <EventView key={eventIndex} event={event} />
+                      ))}
+                    </div>
+                  </details>
                 ) : (
                   <EventView
                     key={blockIndex}
@@ -608,8 +644,49 @@ export function Chat({
           );
         })}
       </div>
+      </div>
+
     </section>
   );
+}
+
+type TranscriptBlock = ReturnType<typeof transcript>[number];
+type ToolEvent = Extract<ChatEvent, { kind: "tool-call" | "tool-result" }>;
+type RenderBlock =
+  | TranscriptBlock
+  | { kind: "tools"; events: ToolEvent[]; toolCount: number; identities: string[] };
+
+/** Keep tool traffic available without letting it crowd the conversation. */
+function groupToolBlocks(blocks: readonly TranscriptBlock[]): RenderBlock[] {
+  const grouped: RenderBlock[] = [];
+  let toolEvents: ToolEvent[] = [];
+
+  const flush = () => {
+    if (toolEvents.length === 0) return;
+    const identities = [...new Set(toolEvents.map((event) => event.tool))];
+    grouped.push({
+      kind: "tools",
+      events: toolEvents,
+      toolCount: toolEvents.filter((event) => event.kind === "tool-call").length || identities.length,
+      identities,
+    });
+    toolEvents = [];
+  };
+
+  for (const block of blocks) {
+    if (block.kind === "event" && (block.event.kind === "tool-call" || block.event.kind === "tool-result")) {
+      toolEvents.push(block.event);
+      continue;
+    }
+    flush();
+    grouped.push(block);
+  }
+  flush();
+  return grouped;
+}
+
+function toolIdentity(block: Extract<RenderBlock, { kind: "tools" }>): string {
+  return block.identities.join(", ");
 }
 
 function detailOf(detail: unknown): string {
@@ -701,11 +778,18 @@ export function EventView({
           <strong style={label}>{event.tool} — authorization needed</strong>
           <p style={{ margin: "0.4em 0 0" }}>
             {/* "Authorize", not "authorize this tool": the thing to authorize is
-                whatever the heading just named. */}
-            <a href={event.url} target="_blank" rel="noreferrer">
-              Authorize
-            </a>
-            , then ask again.
+                whatever the heading just named. Continue is the one explicit
+                retry; the server has already ended the challenged turn. */}
+            {event.url === undefined ? (
+              <>Authorize the provider, then use Continue.</>
+            ) : (
+              <>
+                <a href={event.url} target="_blank" rel="noreferrer">
+                  Authorize
+                </a>
+                , then use Continue.
+              </>
+            )}
           </p>
           {onContinueAuthorization === undefined ? null : (
             <button
@@ -716,19 +800,14 @@ export function EventView({
               disabled={authorizationContinuing}
               style={{ font: "inherit", marginTop: "0.55em", padding: "0.35em 0.75em" }}
             >
-              {authorizationContinuing ? "Continuing…" : "I’ve authorized — continue"}
+              {authorizationContinuing ? "Continuing…" : "Continue"}
             </button>
           )}
-          {/* This card's own sentence, not the event's. `instructions` are words
-              written for the model — Arcade's `llm_instructions` on layer 2,
-              ours on hop 1 — and on layer 2 they carry the full authorize URL,
-              which is what overflowed the card by several hundred pixels on the
-              Render URL (#99). They stay in the event, where the tests read
-              them; the person gets the name, the link, and the one thing the
-              control plane can actually prove about this event. */}
+          {/* The event's instructions are words written for the model. They can
+              contain retry advice or a long URL, so they stay off screen. */}
           <p style={{ margin: "0.4em 0 0", color: "var(--muted)" }}>
-            A credential is missing. Nothing was refused: no rule ran and nothing was written to
-            the audit log.
+            A credential is missing. This turn is paused; Continue starts exactly one new attempt.
+            Nothing was refused: no rule ran and nothing was written to the audit log.
           </p>
         </div>
       );
@@ -808,7 +887,8 @@ function visibleEvents(events: readonly ChatEvent[]): ChatEvent[] {
   if (!events.some((event) => event.kind === "authorization")) return [...events];
   const authorizationUrls = events
     .filter((event): event is Extract<ChatEvent, { kind: "authorization" }> => event.kind === "authorization")
-    .map((event) => event.url);
+    .map((event) => event.url)
+    .filter((url): url is string => url !== undefined);
   // Streaming text arrives as many deltas. Fold each contiguous text run before
   // filtering so a challenge sentence split across chunks is still recognized,
   // while keeping tool events as structural boundaries.

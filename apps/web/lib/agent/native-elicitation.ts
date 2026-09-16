@@ -85,12 +85,21 @@ function isHttpUrl(value: string): boolean {
  * cancellation lets the current MCP call finish while the UI offers the
  * explicit fallback continuation action.
  */
-export function createNativeElicitationBridge() {
+export function createNativeElicitationBridge(options: { onRequest?: () => void } = {}) {
   let pending: NativeUrlElicitation[] = [];
 
   return {
     handle: async (params: unknown): Promise<NativeElicitationResult> => {
-      pending.push(...readNativeUrlElicitations(params));
+      const requests = readNativeUrlElicitations(params);
+      if (requests.length > 0) {
+        pending.push(...requests);
+        // The callback is deliberately synchronous with the protocol request.
+        // A model can have queued tool dispatches by the time `runTurn` sees
+        // the resulting error; closing the turn here prevents those dispatches
+        // from reaching the gateway. The current request is already in flight
+        // and is allowed to settle, which is the precise boundary we can make.
+        options.onRequest?.();
+      }
       return { action: "cancel" };
     },
     take: (): NativeUrlElicitation[] => {

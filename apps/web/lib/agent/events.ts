@@ -105,7 +105,8 @@ export type ChatEvent =
   | {
       kind: "authorization";
       tool: string;
-      url: string;
+      /** Native elicitation and -32042 can carry no URL; Continue remains explicit. */
+      url?: string;
       instructions?: string;
       /** Present when this card came from native MCP URL elicitation. */
       mode?: "url";

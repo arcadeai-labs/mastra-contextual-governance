@@ -124,10 +124,12 @@ interface Executable {
 export interface TurnClosure {
   /** The same tools, with the turn boundary enforced inside `execute`. */
   tools: Record<string, unknown>;
-  /** True once the escalation has returned a request id. */
+  /** True once the escalation or an authorization challenge has ended the turn. */
   readonly closed: boolean;
   /** Wire names refused because the turn was already over, in call order. */
   readonly refused: readonly string[];
+  /** Close the turn synchronously when a non-escalation terminal outcome arrives. */
+  close: () => void;
 }
 
 /**
@@ -215,6 +217,9 @@ export function closeTurnOnEscalation(
     },
     get refused() {
       return refused;
+    },
+    close() {
+      state.closed = true;
     },
   };
 }

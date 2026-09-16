@@ -144,7 +144,7 @@ async function readOne(
       return {
         loan_id: loanId,
         outcome: "authorization",
-        url: authorization.url,
+        ...(authorization.url === undefined ? {} : { url: authorization.url }),
         ...(authorization.instructions ? { instructions: authorization.instructions } : {}),
       };
     }

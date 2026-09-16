@@ -191,7 +191,13 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
   // back this persona's bearer.
   let step: string = PRE_STREAM.body;
   let client: ReturnType<typeof gatewayClient> | null = null;
-  const nativeElicitation = createNativeElicitationBridge();
+  // Native URL elicitation can arrive while the agent has already queued
+  // sibling tool dispatches. The callback closes the wrapped toolset at the
+  // protocol boundary; `runTurn` closes it again when it consumes the event.
+  let closeAuthorization: (() => void) | undefined;
+  const nativeElicitation = createNativeElicitationBridge({
+    onRequest: () => closeAuthorization?.(),
+  });
 
   try {
     const body = (await request.json().catch(() => null)) as {
@@ -447,6 +453,7 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
             `the turn's toolset refused it and nothing reached the gateway`,
         ),
     });
+    closeAuthorization = closure.close;
 
     const agent = buildAgent({
       model: (options.model?.(config) ??
@@ -470,6 +477,7 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       headers,
       requestApprovalTool: escalationTool,
       nativeElicitation,
+      onAuthorization: closure.close,
     });
   } catch (cause) {
     // The connection belongs to a turn that will never happen. Same reason the
@@ -619,8 +627,9 @@ function streamTurn(turn: {
   headers: Headers;
   requestApprovalTool: string;
   nativeElicitation: ReturnType<typeof createNativeElicitationBridge>;
+  onAuthorization: () => void;
 }): Response {
-  const { agent, prompt, opening, client, headers, requestApprovalTool, nativeElicitation } = turn;
+  const { agent, prompt, opening, client, headers, requestApprovalTool, nativeElicitation, onAuthorization } = turn;
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -629,7 +638,7 @@ function streamTurn(turn: {
       };
       try {
         for (const event of opening) emit(event);
-        await runTurn({ agent, prompt, emit, requestApprovalTool, nativeElicitation });
+        await runTurn({ agent, prompt, emit, requestApprovalTool, nativeElicitation, onAuthorization });
       } finally {
         // The MCP connection belongs to this turn and this persona. Leaving it
         // open would leave a bearer token alive in a process that serves every

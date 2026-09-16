@@ -110,6 +110,16 @@ async function submit(container: HTMLElement): Promise<void> {
   });
 }
 
+async function typePrompt(container: HTMLElement, value: string): Promise<void> {
+  await act(async () => {
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    if (textarea === null) throw new Error("chat composer is missing");
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    setter?.call(textarea, value);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 async function cleanup(container: HTMLElement, root: Root): Promise<void> {
   await act(async () => {
     root.unmount();
@@ -127,6 +137,8 @@ describe("conversation turns", () => {
     try {
       await submit(container);
       await settle(() => harness?.posts.length === 1 && container.querySelector("button")?.textContent === "Send");
+      expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("");
+      await typePrompt(container, "What did the first answer say?");
       await submit(container);
       await settle(() => harness?.posts.length === 2 && container.querySelector("button")?.textContent === "Send");
 

@@ -297,6 +297,16 @@ async function settle(ticks = 12, ms = 5): Promise<void> {
 
 const textOf = (container: HTMLElement): string => container.textContent ?? "";
 
+async function typePrompt(container: HTMLElement, value: string): Promise<void> {
+  await act(async () => {
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    if (textarea === null) throw new Error("chat composer is missing");
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    setter?.call(textarea, value);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 // ---------------------------------------------------------------------------
 
 describe("a turn that ends waiting", () => {
@@ -340,6 +350,7 @@ describe("approval.granted starts the next turn", () => {
     // The next ordinary prompt receives both the server-built decision line
     // and the completed resumed reply, after the waiting turn that preceded it.
     const form = container.querySelector("form");
+    await typePrompt(container, "What should I do next?");
     await act(async () => {
       form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
@@ -361,6 +372,7 @@ describe("approval.granted starts the next turn", () => {
     harness.holdSecond();
 
     // Start a normal follow-up and leave its HTTP response in flight.
+    await typePrompt(container, "Check the follow-up status.");
     await act(async () => {
       container.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
@@ -410,6 +422,7 @@ describe("approval.granted starts the next turn", () => {
     await settle();
 
     harness.holdSecond();
+    await typePrompt(container, "Check the follow-up status.");
     await act(async () => {
       container.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });

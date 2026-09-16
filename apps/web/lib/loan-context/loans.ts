@@ -72,7 +72,7 @@ export type LoanRead =
   /** A hook decided. `reason` is the rule's own words; `ref` is its audit row (#6). */
   | { loan_id: string; outcome: "denied"; reason: string; ref: string | null }
   /** Layer 2: a credential is missing. No hook fired and no audit row exists. */
-  | { loan_id: string; outcome: "authorization"; url: string; instructions?: string }
+  | { loan_id: string; outcome: "authorization"; url?: string; instructions?: string }
   /** Plumbing. Nothing decided anything. */
   | { loan_id: string; outcome: "fault"; message: string };
 
