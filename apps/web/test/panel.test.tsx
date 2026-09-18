@@ -472,24 +472,46 @@ describe("nothing is hidden behind a hover", () => {
 describe("a lane past what it can draw counts the rest", () => {
   /**
    * A whole-project `/access` sweep, which is what overflows this lane: one
-   * decision per tool, so 10,844 of them are 10,844 *different* tools. Each
-   * one is its own row — #64's grouping joins decisions about the same tool,
-   * and this shape has none to join. (An earlier version of these two tests
-   * repeated one tool, which the grouping now correctly collapses into a
-   * single row; a sweep never looks like that.)
+   * decision per tool, so 10,844 of them are 10,844 *different* tools.
+   *
+   * Since #156 one person's sweep is one **listing** card — it is one
+   * catalogue-wide question about one person, which is exactly what the card
+   * is for — so what a sweep tests here is no longer "many rows" but "the
+   * decisions a bounded lane could not keep are still counted". The card
+   * states the members the lane still holds; everything it let go is in the
+   * lane header, and between them every decision received is accounted for.
    */
-  const sweep = (count: number): GovernanceEvent[] =>
+  const sweep = (count: number, user = "supervisor@example.com"): GovernanceEvent[] =>
     Array.from({ length: count }, (_, index) =>
-      aGovernanceEvent({ id: `evt_${index}`, hook: "access", tool: `Widgets.tool_${index}` }),
+      aGovernanceEvent({
+        id: `evt_${user}_${index}`,
+        hook: "access",
+        user_id: user,
+        tool: `Widgets.tool_${index}`,
+      }),
     );
 
-  test("the overflow is stated, not silently dropped", () => {
-    expect(render(sweep(20))).toContain("14 earlier decisions");
+  test("a sweep the lane can hold is one card and nothing is behind it", () => {
+    const markup = render(sweep(20));
+
+    expect(markup).toContain("20 decisions");
+    expect(markup).not.toContain("cg-lane-behind");
   });
 
   test("the count includes what the timeline itself let go", () => {
-    // 10,000 received, 6 drawn — every one of the rest is accounted for.
-    expect(render(sweep(10_000))).toContain("9,994 earlier decisions");
+    // 10,000 received, 50 still held and drawn inside one listing card — every
+    // one of the rest is accounted for in the header.
+    expect(render(sweep(10_000))).toContain("9,950 earlier decisions");
+  });
+
+  test("the overflow is stated, not silently dropped, when the rows are what overflow", () => {
+    // Twenty people listing three tools each: twenty cards, six drawn, and the
+    // forty-two decisions inside the fourteen cards that were not are counted.
+    const many = Array.from({ length: 20 }, (_, index) =>
+      sweep(3, `person-${index}@example.com`),
+    ).flat();
+
+    expect(render(many)).toContain("42 earlier decisions");
   });
 
   test("one is singular", () => {

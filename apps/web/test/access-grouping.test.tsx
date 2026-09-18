@@ -23,6 +23,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { GET } from "../app/api/governance/fixture-stream/route.ts";
 import { ControlPlanePanelView } from "../components/governance/ControlPlanePanelView.tsx";
 import { anAccessFanout } from "../lib/governance/access-fanout.ts";
+import { anAccessListing } from "../lib/governance/access-listing.ts";
 import {
   ACCESS_GROUP_WINDOW_MS,
   groupAccessEvents,
@@ -356,30 +357,40 @@ async function play(url: string, count: number): Promise<{ timeline: Timeline; i
   return { timeline, ids };
 }
 
+/**
+ * `?fanout=1` carries a second burst since #156 — one persona's whole
+ * `tools/list`, ten seconds after the fan-out — so the counts here are stated
+ * in terms of both fixtures rather than as literals. What this suite is about
+ * is unchanged: the five measured fan-out decisions are two rows, and every
+ * one of them reaches the panel. `access-listing.test.tsx` owns the listing.
+ */
+const FIXTURE_EVENTS = 5 + anAccessFanout().length + anAccessListing().length;
+
 describe("fixture mode replays the measured fan-out", () => {
   test("?fanout=1 adds the five measured access decisions to the four acts", async () => {
-    const { timeline } = await play(`${serveFixtureRoute()}?fanout=1&delayMs=0`, 10);
+    const { timeline } = await play(`${serveFixtureRoute()}?fanout=1&delayMs=0`, FIXTURE_EVENTS);
 
-    expect(timeline.received).toBe(10);
-    expect(timeline.lanes.access).toHaveLength(6);
+    expect(timeline.received).toBe(FIXTURE_EVENTS);
+    // Every event but the four the other two lanes take.
+    expect(timeline.lanes.access).toHaveLength(FIXTURE_EVENTS - 4);
   });
 
   test("the stream itself carries every one of them — no de-duplication on the wire", async () => {
-    const { ids } = await play(`${serveFixtureRoute()}?fanout=1&delayMs=0`, 10);
+    const { ids } = await play(`${serveFixtureRoute()}?fanout=1&delayMs=0`, FIXTURE_EVENTS);
 
     for (const event of anAccessFanout()) {
       expect(ids).toContain(event.id);
     }
   });
 
-  test("the panel draws the five as two rows plus #5's own access event", async () => {
-    const { timeline } = await play(`${serveFixtureRoute()}?fanout=1&delayMs=0`, 10);
+  test("the panel draws the five as two rows, beside #5's access event and the listing", async () => {
+    const { timeline } = await play(`${serveFixtureRoute()}?fanout=1&delayMs=0`, FIXTURE_EVENTS);
 
     const markup = renderToStaticMarkup(
       <ControlPlanePanelView timeline={timeline} status="live" source={{ mode: "fixture" }} />,
     );
 
-    expect(cardsIn(markup, "access")).toHaveLength(3);
+    expect(cardsIn(markup, "access")).toHaveLength(4);
     expect(markup).toContain("3 decisions");
     expect(markup).toContain("2 decisions");
   });

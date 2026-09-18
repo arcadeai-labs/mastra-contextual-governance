@@ -6,11 +6,14 @@
  * control points are the structure the audience should find first; a card is a
  * detail inside one of them.
  *
- * The lane draws at most `visible` cards, and one card can stand for a run of
- * decisions: `/access` fans out — one `tools/call` produced three access
- * decisions for one tool when it was measured (#64) — so adjacent matching
- * access decisions share a row that carries their count. `lib/governance/
- * grouping.ts` owns that rule and says at length why it is presentation only.
+ * The lane draws at most `visible` cards, and one card can stand for several
+ * decisions. Two shapes do that, and the Access lane draws them differently:
+ * a run of repeats about one tool keeps the ordinary card with its count
+ * (`/access` fans out — one `tools/call` produced three access decisions for
+ * one tool when it was measured, #64), while a person's whole `tools/list`
+ * becomes one `<AccessListingCard>` naming what it took away (#156).
+ * `lib/governance/grouping.ts` owns both rules, decides which burst is
+ * evidence of a listing, and says at length why all of it is presentation only.
  * What the header counts is unaffected: a grouped row is *n* decisions drawn,
  * not one, so "earlier decisions" stays a count of decisions the audience
  * cannot see rather than of cards that were not drawn.
@@ -27,6 +30,7 @@ import type { Effect, GovernanceEvent, HookPoint } from "@cg/policy-schema";
 import type { KeyboardEvent } from "react";
 
 import { rowCount, rowsFor } from "../../lib/governance/grouping.ts";
+import { AccessListingCard } from "./AccessListingCard.tsx";
 import { EventCard } from "./EventCard.tsx";
 import { DECISION_ORDER, DECISIONS, LANES } from "./decisions.ts";
 
@@ -170,17 +174,25 @@ export function Lane({
         {drawn.length === 0 ? (
           <p className="cg-lane-empty">{lane.empty}</p>
         ) : (
-          drawn.map((row) => (
-            <EventCard
-              key={row.event.id}
-              event={row.event}
-              members={row.events}
-              // Any member joining the chat's execution outlines the row: the
-              // join is to a decision, and the row is standing in for all of
-              // them.
-              correlated={row.events.some((member) => correlatedIds.has(member.id))}
-            />
-          ))
+          drawn.map((row) =>
+            // Any member joining the chat's execution outlines the row: the
+            // join is to a decision, and the row is standing in for all of
+            // them.
+            row.listing ? (
+              <AccessListingCard
+                key={row.event.id}
+                row={row}
+                correlated={row.events.some((member) => correlatedIds.has(member.id))}
+              />
+            ) : (
+              <EventCard
+                key={row.event.id}
+                event={row.event}
+                members={row.events}
+                correlated={row.events.some((member) => correlatedIds.has(member.id))}
+              />
+            ),
+          )
         )}
       </div>
     </section>
