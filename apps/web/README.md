@@ -629,12 +629,21 @@ miss is a *failure* on CI rather than a skip — the workflow installs Chrome in
 `check` job precisely so the regression cannot go quiet there. It skips only on a
 developer machine with no browser, and prints where it looked when it does.
 
-The test waits for React to hydrate the composer before driving it. The page and its
+The test waits for the shell to hydrate before driving it. The page and its
 authorization card are server-rendered, so their presence proves nothing about whether
 React is holding the form yet; clicking Send before `hydrateRoot()` installs React's
 root listener submits the composer natively as `GET /?`, which replaces the document
 and loses the turn. That was the flake PR154's reviewer measured. `CG_HYDRATION_DELAY_MS`
 holds the client chunks back so the race can be reproduced on demand.
+
+What it waits for is `.cg-split[data-hydrated="true"]` — one inert attribute
+`components/shell/SplitScreen.tsx` sets on mount and never reads. A parent's mount
+effect runs after its children have committed, so the shell saying so means the
+composer and the loan cards beneath it are hydrated with their handlers attached.
+The server never emits it (`test/split-screen.test.tsx`), which is what makes it
+worth waiting for. Round 1 of #152's review rejected the first version, which read
+React's private `__reactProps$…` DOM bookkeeping instead — a readiness proof resting
+on internals is one minor upgrade away from passing without checking anything.
 
 ### A denial is a decision, not an error state
 

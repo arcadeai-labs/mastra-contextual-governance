@@ -177,7 +177,9 @@ async function evaluate<T>(cdp: Cdp, expression: string): Promise<T> {
  * gateway challenges `Loan_GetLoan`. So `waitFor("initial authorization card")`
  * proves the HTML arrived and proves nothing about React.
  *
- * Measured, on a passing run, at the moment the old test clicked Send:
+ * Measured, on a passing run, at the moment the old test clicked Send — with a
+ * throwaway probe into React's internals, used to *find* the bug and
+ * deliberately not kept to gate on:
  *
  *     {"docKeys":["__reactContainer$…"],"bodyKeys":[],"announcer":false,
  *      "formHydrated":false,"textareaHydrated":false}
@@ -194,8 +196,8 @@ async function evaluate<T>(cdp: Cdp, expression: string): Promise<T> {
  * client chunks back makes that certain; the failure state is exact:
  *
  *     {"prompt":"Approve the loan for $95K and double-check your work…",
- *      "docMarker":null,"windowName":"cg-window-marker",
- *      "navigationEntries":["http://127.0.0.1:55104/?"],"formHydratedNow":true}
+ *      "documentReplaced":true,"shellHydrated":true,
+ *      "navigationEntries":["http://127.0.0.1:51472/?"]}
  *
  * The document marker set immediately before the click is gone while the window
  * name survives, and the navigation entry ends in `?` — a GET submission of a
@@ -205,29 +207,33 @@ async function evaluate<T>(cdp: Cdp, expression: string): Promise<T> {
  *
  * ## What is checked
  *
- * Not a timeout, and not a weaker assertion: the precondition itself. React
- * attaches its props to each host node as it hydrates it, so a node carrying a
- * `__reactProps$…` entry whose handler is a function is a node whose handler
- * will run. The three checked are exactly the three this test drives — the
- * composer's `onChange`, the form's `onSubmit`, and the authorization card's
- * `onClick`.
+ * Not a timeout, and not a weaker assertion: the precondition itself, through
+ * the shell's own `data-hydrated` attribute (`components/shell/SplitScreen.tsx`).
+ * A parent's mount effect runs after its children have committed, so the shell
+ * saying it is hydrated means the composer and the loan cards under it are
+ * hydrated too, with their handlers attached.
+ *
+ * Round 1 of this review rejected an earlier version that read React's private
+ * `__reactProps$…` properties off the DOM nodes, and was right to: those are
+ * React's internal bookkeeping, renamed or removed at React's discretion, and a
+ * readiness proof resting on them is one minor upgrade from silently passing
+ * without checking anything. The attribute is a contract this repo owns.
+ *
+ * The three controls this test drives are checked for existence in the same
+ * pass, so the gate fails loudly rather than waiting out its budget if the
+ * shell is ever hydrated without them.
  */
 async function waitForHydration(cdp: Cdp): Promise<void> {
   await waitFor(
-    "React to hydrate the composer and the authorization card",
+    "the shell to report itself hydrated, with the composer and the authorization card present",
     async () =>
       evaluate<boolean>(
         cdp,
         `(() => {
-          const handler = (selector, name) => {
-            const node = document.querySelector(selector);
-            if (node === null) return false;
-            const key = Object.getOwnPropertyNames(node).find((entry) => entry.startsWith('__reactProps$'));
-            return key !== undefined && typeof node[key]?.[name] === 'function';
-          };
-          return handler('textarea[aria-label="Message the assistant"]', 'onChange')
-            && handler('form.chat-composer', 'onSubmit')
-            && handler('[data-action="continue-loan-authorization"]', 'onClick');
+          if (document.querySelector('.cg-split[data-hydrated="true"]') === null) return false;
+          return document.querySelector('textarea[aria-label="Message the assistant"]') !== null
+            && document.querySelector('form.chat-composer') !== null
+            && document.querySelector('[data-action="continue-loan-authorization"]') !== null;
         })()`,
       ),
   );
@@ -461,12 +467,6 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
         const state = await evaluate<Record<string, unknown>>(
           cdp,
           `(() => {
-            const handler = (selector, name) => {
-              const node = document.querySelector(selector);
-              if (node === null) return null;
-              const key = Object.getOwnPropertyNames(node).find((entry) => entry.startsWith('__reactProps$'));
-              return key !== undefined && typeof node[key]?.[name] === 'function';
-            };
             return {
               prompt: document.querySelector('textarea')?.value,
               sendDisabled: document.querySelector('button[type="submit"]')?.hasAttribute('disabled'),
@@ -477,7 +477,7 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
               // was not holding it when the click landed.
               documentReplaced: document.documentElement.dataset.cgDocMarker === undefined && window.name === 'cg-window-marker',
               navigationEntries: performance.getEntriesByType('navigation').map((entry) => entry.name),
-              composerHydrated: handler('form.chat-composer', 'onSubmit'),
+              shellHydrated: document.querySelector('.cg-split[data-hydrated="true"]') !== null,
             };
           })()`,
         );
