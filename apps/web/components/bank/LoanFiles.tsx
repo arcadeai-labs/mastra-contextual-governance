@@ -1,150 +1,104 @@
 "use client";
 
 /**
- * The applications under review, read through the governed path.
+ * The two applications under review, beside the chat.
  *
- * The initial render is a pure function of what the read produced, so every
- * property worth asserting is checkable without a socket. The component also
- * accepts the explicit post-authorization refresh from the App Router boundary:
- * the shell uses Next's router.refresh(), while the reads still happen
- * server-side through the gateway.
+ * Read from `GET /api/loans` — the bank's own API, over HTTP, as the person
+ * signed in on this browser — and polled, so an approval the agent makes in the
+ * conversation shows on the card next to it within one interval and nobody has
+ * to reload anything. `lib/loan-context/loans.ts` has the argument for reading
+ * it directly rather than through the gateway (#157), and
+ * `components/bank/use-loan-book.ts` has the polling.
  *
- * **The files are still read through the gateway.** Two real governed tool
- * calls as the signed-in person — `Loan_GetLoan`, through `/access`, the auth
- * requirement and `/pre` — and two rows appear on the panel opposite before the
- * presenter has said anything. That is the honest price of a bank screen that
- * reads the bank's system of record the same way the agent does; the
- * alternative is a second, ungoverned path into the same data sitting inches
- * from a panel claiming there is only one. `lib/loan-context/read.ts` has the
- * full argument. A normal page load remains one `tools/list`; a Continue action
- * starts one separate, fresh page attempt.
+ * **Nothing here is a governance surface.** No hook runs on this path, so this
+ * component has no `denied` state and must never grow one: the words it can put
+ * on screen are the loan book's own, a request to sign in again, and an
+ * admission that the loan book did not answer.
  */
-import { useContext, useEffect, useRef, useState } from "react";
-
-import { HomeRefreshContext } from "../shell/HomeRefreshBoundary.tsx";
-import type { LoanContextRefusal, LoanFilesState } from "../../lib/loan-context/loans.ts";
+import { DEMO_LOAN_IDS, type LoanBookState } from "../../lib/loan-context/loans.ts";
 import { LoanFileCard } from "./LoanFileCard.tsx";
+import { useLoanBook } from "./use-loan-book.ts";
 
 /**
- * Where a refusal sends the reader.
+ * Where a reader with no usable sign-in is sent.
  *
- * The two paths are written out rather than imported from
- * `lib/identity/handlers.ts`, which is a server module: importing it into this
- * component drags the OIDC client and the sealing code into the browser bundle
- * — `BankPane` is `"use client"`, so everything under it is client code — which
- * is the failure `lib/agent/events.ts` records for `CHAT_PATH`. The cost of a
- * duplicated literal is drift, so `test/home-screen.test.tsx` reads the other
- * file and fails if the two ever disagree — the same bargain `lib/config.ts`
- * strikes with `DEV_STORE_TOKEN`.
+ * Written out rather than imported from `lib/identity/handlers.ts`, which is a
+ * server module: importing it into this component drags the OIDC client and the
+ * sealing code into the browser bundle — `BankPane` is `"use client"`, so
+ * everything under it is client code. The cost of a duplicated literal is
+ * drift, so `test/split-screen.test.tsx` reads the other file and fails if the
+ * two ever disagree.
  */
-const WAYS_IN = {
-  signin: { href: "/api/auth/signin", label: "Sign in" },
-  gateway: { href: "/api/arcade/start", label: "Authorize the loan book" },
-} as const;
+const SIGN_IN = { href: "/api/auth/signin", label: "Sign in" } as const;
 
-export function LoanFilesView({
-  state,
-  onContinueAuthorization,
-}: {
-  state: LoanFilesState;
-  onContinueAuthorization?: () => void | Promise<void>;
-}) {
-  const [current, setCurrent] = useState(state);
-  const [refreshing, setRefreshing] = useState(false);
-  const refreshController = useContext(HomeRefreshContext);
-  const refreshAction = onContinueAuthorization ?? refreshController?.refresh;
-  const refreshingRef = useRef(false);
-
-  // A server navigation can deliver a newer initial state. Keep the explicit
-  // client refresh local so Chat and its bounded history are not remounted. A
-  // refresh action resolves here: this is the first point at which the new
-  // server result has actually reached the browser, including a repeated
-  // authorization challenge.
-  useEffect(() => {
-    setCurrent(state);
-    refreshController?.settle();
-  }, [state, refreshController]);
-
-  async function continueAuthorization(): Promise<void> {
-    if (refreshingRef.current || refreshAction === null || refreshAction === undefined) return;
-    refreshingRef.current = true;
-    setRefreshing(true);
-    try {
-      await refreshAction();
-    } catch (cause) {
-      setCurrent({
-        status: "refused",
-        refusal: {
-          error: `The loan files could not be refreshed: ${cause instanceof Error ? cause.message : String(cause)}`,
-        },
-      });
-    } finally {
-      refreshingRef.current = false;
-      setRefreshing(false);
-    }
-  }
-
-  // Keep the button mounted while the server refresh is in flight. It is the
-  // visible, disabled feedback that makes the single-attempt guard legible.
-  const cardContinue = refreshAction === null || refreshAction === undefined
-    ? undefined
-    : () => { void continueAuthorization(); };
+export function LoanFilesView({ initial }: { initial: LoanBookState }) {
+  const state = useLoanBook(initial);
 
   return (
     <section className="bank-panel" aria-label="Applications under review">
       <h2 className="bank-panel-title">Applications under review</h2>
       <div className="bank-panel-body">
-        {current.status === "refused" ? <Refusal refusal={current.refusal} /> : null}
-
-        {current.status === "loaded" ? (
+        {state.status === "loaded" ? (
           <>
             <div className="bank-files">
-              {current.body.reads.map((read) => (
-                <LoanFileCard
-                  key={read.loan_id}
-                  read={read}
-                  {...(cardContinue === undefined ? {} : { onContinueAuthorization: cardContinue })}
-                  refreshing={refreshing}
-                />
+              {shown(state).map((loan) => (
+                <LoanFileCard key={loan.loan_id} loan={loan} />
               ))}
             </div>
-            {/* Who the files were read as. The same question the panel opposite
-                answers about every decision, asked here about this screen — and
-                the reason the two can be pointed at together. */}
+            {/* Who the screen is reading as. The same question the panel
+                opposite answers about every decision, asked here about this
+                screen — and the reason the two can be pointed at together. */}
             <p className="bank-quiet" style={{ marginTop: "0.5em" }}>
-              Retrieved as <code>{current.body.actor}</code>.
+              Retrieved as <code>{state.actor}</code>.
             </p>
           </>
-        ) : null}
+        ) : (
+          <LoanBookProblem state={state} />
+        )}
       </div>
     </section>
   );
 }
 
 /**
- * The read never happened.
+ * The two applications the demo is about, in the order `DESIGN.md` names them,
+ * and only those.
  *
- * It says what is missing and, when there is somewhere to go, links to it — a
- * screen that leaves a presenter with no next move is the failure #84's review
- * found on the home page.
+ * The route answers with the whole book because `/loans` shows the whole book;
+ * this column is the pair beside the chat. An id the book does not hold is
+ * simply absent rather than drawn as an empty card.
  */
-function Refusal({ refusal }: { refusal: LoanContextRefusal }) {
-  const way = refusal.action ? WAYS_IN[refusal.action] : undefined;
-  const detail = Array.isArray(refusal.detail) ? refusal.detail : [];
+function shown(state: Extract<LoanBookState, { status: "loaded" }>) {
+  return DEMO_LOAN_IDS.map((id) => state.loans.find((loan) => loan.loan_id === id)).filter(
+    (loan): loan is NonNullable<typeof loan> => loan !== undefined,
+  );
+}
+
+/**
+ * The read did not produce a book, and why.
+ *
+ * Two different claims, kept apart in words: a sign-in to do again, and a loan
+ * book that did not answer. Neither is a policy decision and both say so,
+ * because this screen sits next to one that shows real ones.
+ */
+export function LoanBookProblem({
+  state,
+}: {
+  state: Exclude<LoanBookState, { status: "loaded" }>;
+}) {
+  const signIn = state.status !== "unavailable";
 
   return (
-    <div role="status">
-      <p className="bank-file-note">{refusal.error}</p>
-      {detail.length === 0 ? null : (
-        <ul className="bank-quiet" style={{ margin: "0.3em 0 0", paddingLeft: "1.2em" }}>
-          {detail.map((problem) => (
-            <li key={String(problem)}>{String(problem)}</li>
-          ))}
-        </ul>
-      )}
-      {way === undefined ? null : (
+    <div role="status" data-loan-book={state.status}>
+      <p className="bank-file-note">{state.message}</p>
+      {signIn ? (
         <p className="bank-file-note">
-          <a href={way.href}>{way.label}</a>.
+          <a href={SIGN_IN.href}>{SIGN_IN.label}</a>.
+        </p>
+      ) : (
+        <p className="bank-quiet">
+          No policy decision was made and nothing was recorded. This is a failure in the plumbing,
+          not a refusal.
         </p>
       )}
     </div>

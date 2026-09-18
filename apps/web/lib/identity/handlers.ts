@@ -38,7 +38,7 @@ import { clearLeg, clearSession, GATEWAY_COOKIE, PENDING_FLOW_COOKIE, readLeg, r
   SIGNIN_COOKIE, withGatewayToken, writeLeg, writeSession, type GatewayLeg, type PendingFlow,
   type Session, type SigninLeg } from "./session.ts";
 import { escapeHtml, notConfigured, page, redirect, verbatim } from "./pages.ts";
-import { authorizeUrl, exchangeCode, fetchUserinfo, nonce, pkce } from "./oidc.ts";
+import { authorizeUrl, exchangeCode, fetchUserinfo, nonce, pkce, tokenExpiry } from "./oidc.ts";
 import { accessTokenOf, exchangeGatewayCode, expiryOf, gatewayAuthorizeUrl, gatewayClient, isExpiring,
   mcpUrl, refreshGatewayToken } from "./gateway.ts";
 import { knownPersona } from "./personas.ts";
@@ -213,7 +213,20 @@ export async function signinCallback(request: Request, config: IdentitySurface =
     return page("The identity provider returned no email", verbatim(`${userinfo.status} ${userinfo.body}`), 502, headers);
   }
 
-  const session: Session = { email: userinfo.email, signed_in_at: Date.now() };
+  // The bearer is kept, not dropped (#157). `apps/loan-app` derives the actor
+  // from it at `/oauth2/userinfo` — the same endpoint that just named this
+  // person — so the bank's own screens read the loan book as them and not as a
+  // service account. `refresh_token` is present only when `IDP_SCOPES` asked
+  // for `offline_access`; `session.ts` records what that costs.
+  const session: Session = {
+    email: userinfo.email,
+    signed_in_at: Date.now(),
+    idp: {
+      access_token: exchanged.token.access_token,
+      ...(exchanged.token.refresh_token ? { refresh_token: exchanged.token.refresh_token } : {}),
+      expires_at: tokenExpiry(exchanged.token),
+    },
+  };
   await writeSession(headers, request, session, config);
 
   // A sign-in that an Arcade verification parked: finish that, not the

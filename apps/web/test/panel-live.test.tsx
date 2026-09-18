@@ -1,15 +1,25 @@
 /**
  * #129's live panel boundary, end to end.
  *
- * The page's server component reads both loans before the browser hydrates the
- * panel. This mounts the real `ControlPlanePanel` after those reads complete,
- * against the real hooks subprocess and its real SSE endpoint, and asserts
- * that the panel recovers the committed rows through its initial replay.
+ * Governed reads land before the browser hydrates the panel. This mounts the
+ * real `ControlPlanePanel` after those reads complete, against the real hooks
+ * subprocess and its real SSE endpoint, and asserts that the panel recovers the
+ * committed rows through its initial replay.
+ *
+ * The reads used to be the ones `app/page.tsx` made while rendering. #157 moved
+ * the loan cards off the MCP path, so a page load makes no tool call at all and
+ * there would be nothing for the panel to recover. They are made here instead,
+ * on the same real MCP session `lib/agent/tool-list.ts` opens for the chat —
+ * which is what the rows on a live panel come from now.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import { MORGAN, SAM, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
+// `homeSurface` for #156's listing, which is still exactly what one page load
+// asks the gateway for; `sessionSurface` for the governed reads below, which a
+// page load no longer makes at all since #157.
 import { homeSurface } from "../lib/home/surface.ts";
+import { sessionSurface } from "../lib/agent/tool-list.ts";
 import type { Session } from "../lib/identity/session.ts";
 
 // Keep the network implementation captured before happy-dom replaces browser
@@ -77,6 +87,27 @@ function sessionFor(email: string): Session {
   };
 }
 
+/**
+ * Two real governed `Loan_GetLoan` calls, on one real MCP session.
+ *
+ * The same path the chat takes: `sessionSurface` lists the persona's tools
+ * through `/access` and runs the call the listing produced, so every row this
+ * test then looks for was written by the real hooks deciding a real call.
+ */
+async function readTwoLoans(email: string): Promise<void> {
+  const { inside } = await sessionSurface(
+    sessionFor(email),
+    async (listing) => {
+      const tool = listing.tools["Loan_GetLoan"] as { execute: (input: unknown) => Promise<unknown> } | undefined;
+      if (tool === undefined) throw new Error("the gateway advertised no Loan_GetLoan");
+      for (const loanId of ["LN-2291", "LN-2299"]) await tool.execute({ loan_id: loanId });
+      return true;
+    },
+    { config: harness.config },
+  );
+  if (inside !== true) throw new Error("the gateway session did not produce a listing");
+}
+
 async function until(predicate: () => boolean, what: string, timeoutMs = 8_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -89,8 +120,7 @@ describe("the hydrated live panel", () => {
   test("shows both Loan_GetLoan reads made before hydration", async () => {
     const before = await harness.audit();
     const beforeIds = new Set(before.map((row) => String(row.id)));
-    const surface = await homeSurface(sessionFor(MORGAN), { config: harness.config });
-    if (surface.files.status !== "loaded") throw new Error(surface.files.refusal.error);
+    await readTwoLoans(MORGAN);
 
     const after = await harness.audit();
     const expectedIds = after

@@ -19,7 +19,9 @@
  * 3. **The `/pre` and `/post` lanes are untouched.** Two `Loan.GetLoan` calls
  *    are two decisions at each of those layers, and they stay two cards each —
  *    grouping is the Access lane's alone, because a `/pre` retry is the beat
- *    act 2 turns on.
+ *    act 2 turns on. Those two calls used to be made by a page load; since #157
+ *    a page load makes none, so they are made here on a real MCP session
+ *    instead — which is where every `/pre` row on a live panel comes from now.
  *
  * It also **measures the burst**, and prints the spread, which is the number
  * `ACCESS_GROUP_WINDOW_MS` is justified against in `apps/web/README.md`. The
@@ -34,6 +36,7 @@ import { DANA, SAM, startAgentHarness, type AgentHarness } from "./agent-harness
 import { ControlPlanePanelView } from "../components/governance/ControlPlanePanelView.tsx";
 import { ACCESS_GROUP_WINDOW_MS } from "../lib/governance/grouping.ts";
 import { homeSurface } from "../lib/home/surface.ts";
+import { sessionSurface } from "../lib/agent/tool-list.ts";
 import { appendEvents, emptyTimeline, type Timeline } from "../lib/governance/timeline.ts";
 import type { Session } from "../lib/identity/session.ts";
 
@@ -68,8 +71,46 @@ function sessionFor(email: string): Session {
  * thing under test even when the suite has made others.
  */
 async function loadAndRecord(email: string): Promise<GovernanceEvent[]> {
+  return record(email, async (session) => {
+    await homeSurface(session, { config: harness.config });
+  });
+}
+
+/**
+ * Two real governed `Loan_GetLoan` calls, and the rows they wrote.
+ *
+ * The same path the chat takes: `sessionSurface` lists the persona's tools
+ * through `/access` and runs the calls against that listing. A page load made
+ * these until #157 moved the loan cards off the MCP path (`test/home-surface.test.ts`
+ * asserts it now makes none), so the `/pre` and `/post` rows a live panel shows
+ * come from the conversation — which is the point of that change, and does not
+ * alter what the lanes do with them.
+ */
+async function readTwoLoansAndRecord(email: string): Promise<GovernanceEvent[]> {
+  return record(email, async (session) => {
+    const { inside } = await sessionSurface(
+      session,
+      async (listing) => {
+        const tool = listing.tools["Loan_GetLoan"] as
+          | { execute: (input: unknown) => Promise<unknown> }
+          | undefined;
+        if (tool === undefined) throw new Error("the gateway advertised no Loan_GetLoan");
+        for (const loanId of ["LN-2291", "LN-2299"]) await tool.execute({ loan_id: loanId });
+        return true;
+      },
+      { config: harness.config },
+    );
+    if (inside !== true) throw new Error("the gateway session did not produce a listing");
+  });
+}
+
+/** Whatever `drive` wrote to the audit log, in the order the hook wrote it. */
+async function record(
+  email: string,
+  drive: (session: Session) => Promise<void>,
+): Promise<GovernanceEvent[]> {
   const before = (await harness.audit()).length;
-  await homeSurface(sessionFor(email), { config: harness.config });
+  await drive(sessionFor(email));
   const rows = await harness.audit();
   // `/audit` answers newest first; reversing gives the order the hook wrote
   // them, which is the order the panel would have received them on the stream.
@@ -166,7 +207,7 @@ describe("one page load's listing, through the real control plane", () => {
   });
 
   test("the Loan.GetLoan pre and post cards are unaffected — one card per call", async () => {
-    const events = await loadAndRecord(DANA);
+    const events = await readTwoLoansAndRecord(DANA);
     const { markup } = panel(events);
 
     const pre = events.filter((event) => event.hook === "pre");

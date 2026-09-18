@@ -406,37 +406,29 @@
   word-break: break-word;
 }
 
-.bank-notes {
+/* The one line on the card that moves during the demo: what was decided, by
+   whom, and when. Ruled off the fields above it so a change in it is visible
+   from the back of the room without being loud about it. `underwriter_notes`
+   used to sit here and no longer reaches the browser at all (#157) — the
+   route's projection never sends it. */
+.bank-file-decision {
   margin: 0.5em 0 0;
   border-top: 1px solid var(--bank-rule-soft);
-  padding-top: 0.3em;
-}
-
-.bank-notes-body {
-  margin: 0.15em 0 0;
-  font-size: 0.85em;
+  padding-top: 0.35em;
+  font-size: 0.9em;
   line-height: 1.4;
+  color: var(--bank-ink-soft);
+}
+
+.bank-file-decision[data-decision="approved"],
+.bank-file-decision[data-decision="denied"] {
   color: var(--bank-ink);
-  /* Capped and scrollable. The file's notes are part of the context and act 4 is
-     hidden in them, but they are the longest thing on the card and pushing the
-     chat below the fold costs more than they are worth. */
-  max-height: 3.3em;
-  overflow-y: auto;
-  white-space: pre-wrap;
+  font-weight: 600;
 }
 
-/* A file that did not load. Three different reasons, three different words,
-   never merged: the control plane refused, a credential is missing, or the
-   plumbing broke. `LoanFileCard` picks; this only colours. */
-.bank-file[data-outcome="denied"] {
-  border-left: 0.35em solid var(--bank-decision);
-  background: var(--bank-decision-paper);
-}
-
-.bank-file[data-outcome="fault"],
-.bank-file[data-outcome="authorization"] {
-  border-left: 0.35em solid var(--bank-rule);
-  background: var(--bank-paper);
+.bank-file-decision-status {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .bank-file-note {
@@ -504,4 +496,143 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+
+/* --- /loans: the board on the presenter's second screen ------------------- */
+
+/* Full-screen and sized for the back of the room, which is the only thing that
+   makes it different from the cards beside the chat: same chrome, same paper,
+   same status boxes, same stylesheet. It is the bank's screen — nothing on it
+   knows what a hook is. */
+.bank-board {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  /* Half again the shell's root. A board read from four metres away is the
+     whole reason this page exists; measured at 1920x1080, the borrower line
+     lands at 40px and the amount at 52px. */
+  font-size: clamp(18px, 1.5vw, 30px);
+  background: var(--bank-paper);
+  color: var(--bank-ink);
+}
+
+.bank-board-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1em;
+  flex-wrap: wrap;
+  padding: 0.6em 0.9em 0.4em;
+  border-bottom: 1px solid var(--bank-rule);
+}
+
+.bank-board-title {
+  margin: 0;
+  font-size: 1.15em;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.bank-board-actor {
+  margin: 0;
+  font-size: 0.6em;
+}
+
+/* Fills the screen rather than sitting in the top third of it. `1fr` rows with
+   a floor, so eight applications become eight tall cards on a projector and a
+   longer book still gets readable ones instead of slivers. */
+.bank-board-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13em, 1fr));
+  grid-auto-rows: minmax(7em, 1fr);
+  gap: 0.6em;
+  padding: 0.7em 0.9em 1em;
+}
+
+.bank-board-card {
+  border: 1px solid var(--bank-rule);
+  border-left: 0.3em solid var(--bank-rule);
+  background: #fff;
+  padding: 0.55em 0.7em 0.65em;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+}
+
+/* Status as a stripe as well as a box. A room reading a wall of cards sees the
+   colour of the edge before it reads any word on them. */
+.bank-board-card[data-status="approved"] {
+  border-left-color: #7ca17a;
+}
+
+.bank-board-card[data-status="denied"] {
+  border-left-color: #b4777d;
+}
+
+.bank-board-card[data-status="pending"] {
+  border-left-color: #b99b3f;
+}
+
+.bank-board-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5em;
+  border-bottom: 1px solid var(--bank-rule-soft);
+  padding-bottom: 0.2em;
+}
+
+.bank-board-card-id {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.bank-board-card-borrower {
+  margin: 0.25em 0 0;
+  font-size: 1.05em;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.bank-board-card-amount {
+  margin: 0.05em 0 0.2em;
+  font-size: 1.35em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+.bank-board-card-purpose {
+  margin: 0;
+  font-size: 0.62em;
+  line-height: 1.35;
+  color: var(--bank-ink-soft);
+}
+
+.bank-board-card-decision {
+  margin: auto 0 0;
+  padding-top: 0.3em;
+  border-top: 1px solid var(--bank-rule-soft);
+  font-size: 0.62em;
+  line-height: 1.35;
+  color: var(--bank-ink-soft);
+}
+
+.bank-board-card-decision[data-decision="decided"] {
+  color: var(--bank-ink);
+  font-weight: 600;
+}
+
+.bank-board-card-decision-status {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.bank-board-problem {
+  padding: 1em 0.9em;
+  font-size: 0.7em;
 }

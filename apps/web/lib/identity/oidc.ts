@@ -8,11 +8,12 @@
  * party is the shape, after a shared one left hop 2 failing at the token
  * endpoint.
  *
- * Authorization code + PKCE, `openid email`. The access token is used once, to
- * read `/oauth2/userinfo`, and then dropped: this service wants the **email**
- * and nothing else. Holding an IdP token longer would be holding a credential
- * with no use, and the session cookie already carries the one credential this
- * slice cannot avoid (the gateway token).
+ * Authorization code + PKCE, `openid email`. Sign-in itself wants one thing
+ * from the access token — the **email**, read from `/oauth2/userinfo` — and
+ * since #157 the token is kept afterwards rather than dropped, because the
+ * bank's own screens read `apps/loan-app` with it as the signed-in person.
+ * `lib/identity/session.ts` → `IdpToken` has the argument and the measurement;
+ * this module's job is only to obtain and renew one.
  */
 
 /** What `/oauth2/userinfo` answers with. `email` is the only field this service needs. */
@@ -101,14 +102,8 @@ export type TokenResult =
   | { ok: false; status: number; body: string };
 
 /**
- * Trade the authorization code for a token, authenticating the client the way
- * this IdP wants.
- *
- * `apps/idp` enforces **one** method per client and refuses the other outright
- * rather than accepting either, so the order comes from what it publishes. Only
- * an explicit method mismatch is retried: a wrong secret, a spent code or an
- * expired one must not be, because a second attempt doubles the noise in the
- * IdP's log and tells nobody anything.
+ * Trade the authorization code for a token. See {@link tokenRequest} for how
+ * the client authenticates itself.
  */
 export async function exchangeCode(
   options: {
@@ -118,19 +113,51 @@ export async function exchangeCode(
     codeVerifier: string;
   } & ClientCredentials,
 ): Promise<TokenResult> {
+  return tokenRequest(options, {
+    grant_type: "authorization_code",
+    code: options.code,
+    redirect_uri: options.redirectUri,
+    code_verifier: options.codeVerifier,
+  });
+}
+
+/**
+ * Renew the IdP bearer this browser holds, when the IdP issued a refresh token
+ * to renew it with.
+ *
+ * Only reachable on a deployment whose `IDP_SCOPES` asks for `offline_access`:
+ * measured 2026-09-18, `apps/idp` answers `openid email` with no refresh token
+ * at all, so the default path never calls this and an expired bearer is a
+ * re-sign-in. Kept here rather than inlined at the call site because the client
+ * authentication negotiation below is the part that has bitten this repo twice
+ * (#61, #75) and a second copy of it is a second thing to get wrong.
+ */
+export async function refreshIdpToken(
+  options: { issuer: string; refreshToken: string } & ClientCredentials,
+): Promise<TokenResult> {
+  return tokenRequest(options, { grant_type: "refresh_token", refresh_token: options.refreshToken });
+}
+
+/**
+ * One `POST /oauth2/token`, authenticated the way this IdP wants.
+ *
+ * `apps/idp` enforces **one** method per client and refuses the other outright
+ * rather than accepting either, so the order comes from what it publishes. Only
+ * an explicit method mismatch is retried: a wrong secret, a spent code or an
+ * expired one must not be, because a second attempt doubles the noise in the
+ * IdP's log and tells nobody anything.
+ */
+async function tokenRequest(
+  options: { issuer: string } & ClientCredentials,
+  grant: Record<string, string>,
+): Promise<TokenResult> {
   const advertised = await advertisedAuthMethod(options.issuer, options.clientId);
   const order = advertised === "client_secret_post" ? (["post", "basic"] as const) : (["basic", "post"] as const);
 
   let last: { status: number; body: string } = { status: 0, body: "no token request was made" };
   for (const method of order) {
     const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded" };
-    const form: Record<string, string> = {
-      grant_type: "authorization_code",
-      code: options.code,
-      redirect_uri: options.redirectUri,
-      client_id: options.clientId,
-      code_verifier: options.codeVerifier,
-    };
+    const form: Record<string, string> = { ...grant, client_id: options.clientId };
     if (method === "basic") {
       headers.authorization = `Basic ${basic(options)}`;
     } else {
@@ -148,6 +175,22 @@ export async function exchangeCode(
     if (!/cannot use client_secret_(post|basic)/.test(body)) break;
   }
   return { ok: false, ...last };
+}
+
+/**
+ * `expires_in` seconds, as the absolute epoch-millisecond instant the session
+ * records.
+ *
+ * An hour when the IdP says nothing, which is what `apps/idp` issues anyway
+ * (measured 2026-09-18) — a token with no stated lifetime is still a token with
+ * a lifetime, and treating it as immortal would put the re-sign-in prompt on
+ * screen only once the loan book had already refused the read.
+ */
+export function tokenExpiry(token: TokenSet, now = Date.now()): number {
+  const seconds = typeof token.expires_in === "number" && Number.isFinite(token.expires_in)
+    ? token.expires_in
+    : 3600;
+  return now + Math.max(0, seconds) * 1000;
 }
 
 /**

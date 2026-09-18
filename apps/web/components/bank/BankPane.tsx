@@ -23,11 +23,11 @@
  *
  * ## What is real here
  *
- * Everything. The loan files are read from `apps/loan-app` through the Arcade
- * gateway as the signed-in person, the sign-in panel is #82's real OIDC
- * sign-in against `apps/idp`, and the chat is #14's real agent. Nothing on this
- * screen is a mock, and the one region that is not built yet says so
- * ({@link ToolListSlot}).
+ * Everything. The loan cards are read from `apps/loan-app` — the bank's own
+ * HTTP API, over HTTP, as the signed-in person, and polled (#157) — the sign-in
+ * panel is #82's real OIDC sign-in against `apps/idp`, and the chat is #14's
+ * real agent. Nothing on this screen is a mock, and the one region that is not
+ * built yet says so ({@link ToolListSlot}).
  *
  * ## The fork seam
  *
@@ -56,15 +56,18 @@
  *
  * It lived on `.cg-split` until #155 deleted that shell. This is the same
  * marker on the component that inherited the job: `BankPane` is now the
- * outermost thing on `/` with a DOM element of its own — `HomeRefreshBoundary`
- * wraps it but renders only a context provider — so its mount effect is still
- * the last one to run over everything this page's tests drive.
+ * outermost thing on `/` with a DOM element of its own, and since #157 retired
+ * the loan cards' Continue button it is the outermost thing full stop — the
+ * `HomeRefreshBoundary` that used to wrap it existed only for that button. So
+ * its mount effect is still the last one to run over everything this page's
+ * tests drive, and it is now also the signal that the cards have started
+ * polling.
  */
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Chat } from "../chat/Chat.tsx";
 import { LoanFilesView } from "./LoanFiles.tsx";
-import type { LoanFilesState } from "../../lib/loan-context/loans.ts";
+import type { LoanBookState } from "../../lib/loan-context/loans.ts";
 import { ToolListSlot } from "./ToolListSlot.tsx";
 import "./bank.css";
 
@@ -86,17 +89,15 @@ export interface BankPaneProps {
    */
   identity: ReactNode;
   /**
-   * The two applications under review, already read.
+   * The loan book as the server read it for this request.
    *
-   * Data rather than an element, and required rather than optional. The reads
-   * are two governed `Loan_GetLoan` calls made in `app/page.tsx` on the same
-   * gateway session that listed this persona's tools (#109), so by the time
-   * this component exists they have happened — there is nothing for it to
-   * fetch and no state for it to hold. Required because a screen that silently
-   * drew no applications would look exactly like a control plane that refused
-   * both.
+   * Data rather than an element, and required rather than optional: a screen
+   * that silently drew no applications would look exactly like a loan book with
+   * nothing in it. `LoanFilesView` takes it as the first paint and polls
+   * `GET /api/loans` from there (#157), so this is a starting value rather than
+   * the state.
    */
-  loanFiles: LoanFilesState;
+  loans: LoanBookState;
   /** #15's tool list, when there is one. */
   toolList?: ReactNode;
   /**
@@ -110,17 +111,14 @@ export interface BankPaneProps {
    * control plane, and then nothing here opens a socket at all.
    */
   approvalStreamUrl?: string | null;
-  /** Explicit home authorization continuation; the App Router supplies this at the shell boundary. */
-  onContinueAuthorization?: () => void | Promise<void>;
 }
 
 export function BankPane({
   signedInAs,
   identity,
-  loanFiles,
+  loans,
   toolList,
   approvalStreamUrl = null,
-  onContinueAuthorization,
 }: BankPaneProps) {
   // Inert, and deliberately so: nothing here reads it. See the note above.
   const [hydrated, setHydrated] = useState(false);
@@ -175,10 +173,7 @@ export function BankPane({
           its own effect (#157). */}
       <div className="bank-body">
         <div className="bank-column bank-column-records">
-          <LoanFilesView
-            state={loanFiles}
-            {...(onContinueAuthorization === undefined ? {} : { onContinueAuthorization })}
-          />
+          <LoanFilesView initial={loans} />
 
           <ToolListSlot>{toolList}</ToolListSlot>
 

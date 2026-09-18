@@ -44,6 +44,17 @@ export const LOAN_TOOLKIT = "Loan";
 /** `tool.toolkit` as Arcade files the deployed approvals toolkit (#35). */
 export const APPROVALS_TOOLKIT = "Approvals";
 
+/**
+ * What the dev IdP stub accepts as a bearer: `dev:<email>`.
+ *
+ * `apps/loan-app/scripts/dev-idp.ts` answers `/oauth2/userinfo` for these, so a
+ * token of this shape is how a test gets a bearer the loan book will derive an
+ * actor from — the real code path in `apps/loan-app/src/actor.ts`, with a
+ * fixture issuer behind it. Named here rather than spelled at each call site
+ * since #157, when the browser regression started needing one too.
+ */
+export const DEV_IDP_TOKEN_PREFIX = "dev:";
+
 /** The four, as both fixtures seed them. Lower case — the join key (#58). */
 export const DANA = "alice@bank.example";
 export const SAM = "bob@bank.example";
@@ -261,7 +272,7 @@ export async function startAgentHarness(
     tokenFor: (email) => gateway.issueToken(email),
     async loan(loanId, asEmail) {
       const response = await fetch(`http://${loanAppHost}/loans/${loanId}`, {
-        headers: { authorization: `Bearer dev:${asEmail}` },
+        headers: { authorization: `Bearer ${DEV_IDP_TOKEN_PREFIX}${asEmail}` },
       });
       if (!response.ok) throw new Error(`GET /loans/${loanId} -> ${response.status} ${await response.text()}`);
       return (await response.json()) as Record<string, unknown>;

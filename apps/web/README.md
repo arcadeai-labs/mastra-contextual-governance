@@ -651,89 +651,115 @@ reconnects asking to resume from it. With no live control plane the address is `
 and this page opens nothing at all — it does not depend on `panel_stream`, which
 `/health` still reports for `/panel`.
 
-### The bank's screen reads the loan book through the governed path
+### The bank's screen reads the loan book directly, as the signed-in person
 
-`lib/loan-context/read.ts` calls `Loan_GetLoan` for `LN-2291` and `LN-2299` over the MCP
-session `homeSurface` already opened, carrying the signed-in persona's bearer — the same
-path `lib/agent/tools.ts` takes. **There is no direct read of `loans.db` in this service
-and there must never be one.** A second, ungoverned path into the bank's system of record
-sitting inches from a panel claiming there is only one would be a screen that lies, and
-with `/post` redaction live (#16) the chat would show a masked account number beside a
-file that never had one masked.
+**This reverses #22 and #109, and `DESIGN.md` → Business system records it.** Until
+2026-09-18 the loan cards were two governed `Loan_GetLoan` calls made while the page
+rendered. Two things were wrong with that on a webinar: the control plane showed tool
+calls before the presenter had said anything, so the audience could not tell the agent's
+work from the page's chrome; and because a page load was the only read, an approval the
+agent had just made never appeared on the card beside the chat.
 
-**One gateway session per page load (#109).** Until #109 the files were fetched from the
-browser-side request that had to run its own `tools/list` to
-find `Loan_GetLoan` — so loading `/` cost two listings, in two MCP sessions, because a
-separate HTTP request cannot share a connection with the server render before it. That
-route is gone and nothing fetches it. `sessionSurface` takes a continuation and runs it
-against the listing it just made, which is how one `tools/list` answers both halves of
-the screen. `test/home-surface.test.ts` (*"one load of / makes exactly one tools/list"*)
-counts the gateway stand-in's own record rather than trusting this paragraph.
+Now `lib/loan-context/read.ts` calls `apps/loan-app` over plain HTTP — `GET /loans`, then
+`GET /loans/:id` for each application, because `decided_by` and `decided_at` live on the
+detail route — and `GET /api/loans` serves the result to the browser, which **polls** it
+every `LOAN_POLL_INTERVAL_MS` (2 s). Loading `/` now costs **one `tools/list` and zero
+governed tool calls**; `test/home-surface.test.ts` counts the gateway stand-in's own
+record rather than trusting this paragraph.
 
-The honest cost that remains: opening `/` makes two real governed tool calls plus the one
-`tools/list`, so `access` rows and two `Loan.GetLoan` `pre` rows land on the panel before
-the presenter has said anything. That is what reading a loan file costs when reading one
-is governed.
+The old objection — a second, ungoverned path into the bank's data beside a control
+plane claiming there is only one — is answered by scope rather than by volume. The thesis is
+about the **agent's** path; the bank's own screen, for an authenticated human, is not
+that path; and after this change every MCP call in the demo starts in the chat.
 
-The sentence for a misconfigured toolkit moved with the reads and did not soften: nothing
-governed ending in `_GetLoan` puts *"The gateway advertised N tools and none of the
-governed ones is a `GetLoan` … Check `ARCADE_LOAN_TOOLKIT` against a real `tools/list`"*
-in the loan column, with the advertised names under it. An empty column looks exactly
-like a control plane that denied both files, and only that sentence names the variable a
-human has to go and fix.
+Two rules survive intact, and both are enforced:
 
-A read that does not produce a file is classified exactly as a failed tool call in the
-chat is, by importing that judgement rather than repeating it: a denial needs positive
-evidence that a hook decided, and everything else is a fault.
+- **No service credential.** The bearer is the IdP access token from this browser's own
+  sign-in, kept in the sealed session since #157 instead of being dropped after
+  `/oauth2/userinfo`. `apps/loan-app` derives the actor from it (`src/actor.ts`), so the
+  read is attributable to a person or it does not happen. `test/api-loans.test.ts` puts a
+  recording proxy in front of the loan book, takes the bearer off the wire, presents it to
+  the IdP's `/oauth2/userinfo` — the same endpoint the loan API uses — and requires it to
+  name the person who signed in.
+- **Act 3 and act 4 are not undercut.** `GET /api/loans` projects an **allow-list**:
+  `bank_account_number`, `tax_id` and `underwriter_notes` are absent because nothing names
+  them, not because three fields are deleted from a record. A field the loan book grows
+  tomorrow is absent for the same reason.
 
-### Loan-file authorization pauses and refreshes
+Nothing on this path is governed, and no surface on it may say otherwise. The four states
+`GET /api/loans` can answer with are `loaded`, `signed-out`, `expired` and `unavailable`.
+An expired or refused IdP token renders a plain **sign in again** prompt on the card — not
+a denial, and not a fault. An unreachable loan book says nothing was decided and nothing
+was recorded.
 
-The first `Loan_GetLoan` authorization challenge is a terminal outcome for that page
-attempt. The sequential reader stops before the next loan call, and the loan card keeps
-the validated HTTP(S) authorization URL and provider instructions instead of flattening
-the structured MCP error into an unavailable-file message. Legacy `authorization_url`
-errors, native URL elicitation callbacks, and structured MCP `-32042` results all use
-this path; arbitrary prose is still a fault.
+**`IDP_SCOPES` was measured, not guessed.** Against `apps/idp` on 2026-09-18: `openid
+email` returns no refresh token and a 3600-second access token; `openid email
+offline_access` returns one and the refresh grant works. The default is left at `openid
+email` — an hour outlasts a webinar, and the re-sign-in prompt has to exist either way —
+and the code consumes a refresh token whenever a deployment opts in by setting
+`IDP_SCOPES`.
 
-The card's `Continue` button invokes the App Router's `router.refresh()`, which starts
-one new server-side home attempt: one fresh gateway session, one `tools/list`, and reads
-through that listing. It never assumes the person's click succeeded. A repeated
-challenge pauses again, while a successful refresh replaces the server-provided
-loan-file state; the stable client shell keeps the Chat component and its in-memory
-conversation history mounted. `test/home-surface.test.ts` covers the real local MCP
-transport, `test/home-loan-browser.test.tsx` covers the isolated rendered component,
-and `test/home-loan-next-browser.test.ts` drives a real Next page in headless
-Chrome at 1440x900: a delayed synthetic gateway response, rapid clicks, a re-challenge,
-and a successful Continue are measured through the production refresh/context path.
-`test/home-full-screen-browser.test.ts` is the second browser measurement, and it
-resolves its browser the same way.
+**A refresh token is only ever spent where the replacement can be stored**, and that is a
+rule rather than a preference. Measured on the real IdP, in this order: a clean rotation
+leaves both the old and the new access token working (`/oauth2/userinfo` answers 200 for
+each), but presenting a refresh token that has already been redeemed answers `400
+invalid_grant` **and revokes the grant family** — the access token minted by that rotation
+goes from 200 to 401 the moment the spent one is replayed. So a renewal whose result is
+dropped does not waste a round trip, it arms the next caller: the cookie still carries the
+spent token, the next poll presents it, and that replay kills a session that was working.
+Round 1 of #160's review found exactly that, because `app/page.tsx` and
+`app/loans/page.tsx` are server components that cannot set a cookie. Renewal therefore
+happens only in `GET /api/loans`, which can reseal; a server render uses the bearer it was
+given whatever the clock says and lets the loan book decide, which costs at most one 401
+and one poll interval. `test/loan-book-renewal.test.ts` is the regression, and it counts
+the token endpoint's `grant_type`s through a proxy rather than taking this paragraph's
+word for it.
 
-That last one runs on CI as well as on a laptop (#152). `test/chrome.ts` resolves the
-browser from `CG_CHROME_BIN`, then `PATH`, then the platform's usual locations, and a
-miss is a *failure* on CI rather than a skip — the workflow installs Chrome in the
-`check` job precisely so the regression cannot go quiet there. It skips only on a
-developer machine with no browser, and prints where it looked when it does.
+The same measurement is why `expires_at` never on its own produces a re-sign-in: it is
+this service's note to itself, the IdP and the loan book are the only things that decide a
+token is dead, and the 30-second margin exists to renew *early*, not to declare death
+early.
 
-The test waits for the screen to hydrate before driving it. The page and its
-authorization card are server-rendered, so their presence proves nothing about whether
-React is holding the form yet; clicking Send before `hydrateRoot()` installs React's
-root listener submits the composer natively as `GET /?`, which replaces the document
-and loses the turn. That was the flake PR154's reviewer measured. `CG_HYDRATION_DELAY_MS`
-holds the client chunks back so the race can be reproduced on demand.
+### The browser regressions, and what they are for
+
+Two of them, both driving a real headless Chrome, and since #152 both **required on CI**
+rather than skipped there. `test/chrome.ts` resolves the browser from `CG_CHROME_BIN`,
+then `PATH`, then the platform's usual locations, and a miss is a *failure* on CI — the
+workflow installs Chrome in the `check` job precisely so a regression cannot go quiet
+there. They skip only on a developer machine with no browser, and print where they
+looked when they do. `test/cdp.ts` holds the DevTools client all of them drive Chrome
+with; `test/chrome.ts` is only about *finding* a browser. There is one of each, on
+purpose.
+
+`test/home-loan-next-browser.test.ts` is #152's: it waits for the screen to hydrate
+before driving it. The page is server-rendered, so its HTML proves nothing about whether
+React is holding the form yet; clicking Send before `hydrateRoot()` installs React's root
+listener submits the composer natively as `GET /?`, which replaces the document and loses
+the turn. That was the flake PR154's reviewer measured, and the test now asserts both
+halves of the failure state directly — the pre-submit document marker survives, and no
+navigation entry was added. `CG_HYDRATION_DELAY_MS` holds the client chunks back so the
+race can be reproduced on demand.
 
 What it waits for is `.bank[data-hydrated="true"]` — one inert attribute
-`components/bank/BankPane.tsx` sets on mount and never reads. A parent's mount
-effect runs after its children have committed, so the screen saying so means the
-composer and the loan cards beneath it are hydrated with their handlers attached.
-The server never emits it (`test/home-screen.test.tsx`), which is what makes it
-worth waiting for. Round 1 of #152's review rejected the first version, which read
-React's private `__reactProps$…` DOM bookkeeping instead — a readiness proof resting
-on internals is one minor upgrade away from passing without checking anything.
+`components/bank/BankPane.tsx` sets on mount and never reads. A parent's mount effect
+runs after its children have committed, so the screen saying so means the composer and
+the loan cards beneath it are hydrated with their handlers attached. The server never
+emits it (`test/home-screen.test.tsx`), which is what makes it worth waiting for. Round 1
+of #152's review rejected the first version, which read React's private `__reactProps$…`
+DOM bookkeeping instead — a readiness proof resting on internals is one minor upgrade
+away from passing without checking anything.
 
 It was `.cg-split`, on the split screen's shell, until #155 deleted that shell; the
-marker moved to the container that inherited the job, and the property it proves did
-not move with it. `test/cdp.ts` holds the DevTools client both browser tests drive
-Chrome with; `test/chrome.ts` is only about *finding* a browser.
+marker moved to the container that inherited the job, and the property it proves did not
+move with it. **#157 moved one more thing.** The third control that test waited for was a
+loan card's `Continue` button, from #149's layer-2 continuation: the cards were governed
+reads, a challenge paused one, and clicking Continue drove `router.refresh()` through a
+re-challenge and a success. The cards no longer go through the gateway, so there is no
+challenge, no button and no `HomeRefreshBoundary` — that half of the file is deleted with
+the UI it drove, and a loan card stands in the button's place as the hydration gate's
+third control. What replaced it is `test/loan-board-browser.test.ts`, below.
+`test/home-full-screen-browser.test.ts` is the third browser measurement and resolves its
+browser the same way.
 
 ### A denial is a decision, not an error state
 

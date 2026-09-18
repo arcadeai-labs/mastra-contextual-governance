@@ -37,11 +37,50 @@ export interface GatewayToken {
   client_id: string;
 }
 
+/**
+ * The token `apps/idp` issued to **this browser's own sign-in** (client C).
+ *
+ * Kept since #157, where it stopped being a credential with no use. The bank's
+ * own screens — the `/` cards and the `/loans` board — read `apps/loan-app`
+ * over HTTP as the signed-in person, and `apps/loan-app` derives the actor from
+ * exactly this bearer at `/oauth2/userinfo`. Before #157 the sign-in leg spent
+ * it once for the email and dropped it, which is why `lib/identity/oidc.ts`
+ * still describes reading userinfo as its one job: that is still the only thing
+ * *sign-in* wants it for.
+ *
+ * A service credential would have been simpler and is refused: a read nobody
+ * can be named for is a read this demo does not make (`DESIGN.md` → Business
+ * system).
+ */
+export interface IdpToken {
+  access_token: string;
+  /**
+   * Only when the IdP issues one — measured 2026-09-18 against `apps/idp`:
+   * `openid email` comes back **without** a refresh token and `openid email
+   * offline_access` comes back with one, both on a 3600-second access token.
+   * `IDP_SCOPES` still defaults to `openid email`, so on a default deployment
+   * this is absent and an expired token is a re-sign-in rather than a silent
+   * renewal. A deployment that adds `offline_access` gets the renewal for free.
+   */
+  refresh_token?: string;
+  /** Epoch milliseconds. Absolute rather than `expires_in`, which is only meaningful at issue. */
+  expires_at: number;
+}
+
 export interface Session {
   /** The persona's email, lowercase. The join key: Arcade `user_id`, OAuth subject, loan-book actor. */
   email: string;
   /** Absent between sign-in and hop 1 completing, and after the gateway refuses what hop 1 produced. */
   gateway?: GatewayToken;
+  /**
+   * The IdP bearer the bank's own screens read the loan book with (#157).
+   *
+   * Absent on a session sealed before #157 shipped, which is a real state on a
+   * browser that was signed in across the deploy: the cookie unseals, the
+   * persona is still named, and the loan cards ask for a fresh sign-in rather
+   * than reading the book as nobody.
+   */
+  idp?: IdpToken;
   /**
    * When the gateway last refused this browser's bearer, epoch ms. Absent
    * otherwise.
@@ -84,6 +123,26 @@ export function withGatewayToken(session: Session, gateway: GatewayToken): Sessi
  * `withGatewayToken` clears the flag whenever a fresh bearer is stored, so an
  * existing stamp always belongs to the gap this one is still inside.
  */
+/**
+ * Store a freshly-issued IdP bearer, replacing whatever was there.
+ *
+ * A refresh that answers without a new refresh token keeps the old one — RFC
+ * 6749 §6 allows either, `apps/idp` rotates, and a session that dropped the
+ * one it holds because a response omitted it would need a password for a token
+ * it could still have renewed.
+ */
+export function withIdpToken(session: Session, idp: IdpToken): Session {
+  return {
+    ...session,
+    idp: {
+      ...idp,
+      ...(idp.refresh_token === undefined && session.idp?.refresh_token !== undefined
+        ? { refresh_token: session.idp.refresh_token }
+        : {}),
+    },
+  };
+}
+
 export function gatewayTokenRejected(session: Session, at = Date.now()): Session {
   const { gateway: _refused, ...rest } = session;
   return { ...rest, gateway_rejected_at: session.gateway_rejected_at ?? at };
