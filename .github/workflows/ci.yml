@@ -48,8 +48,26 @@ jobs:
       - name: idp schema is regenerated from the installed Better Auth
         run: bun run --cwd apps/idp generate:check
 
+      # `apps/web/test/home-loan-next-browser.test.ts` drives the real Next page
+      # in a real headless Chrome. Until #152 it looked only for the macOS
+      # application bundle, so on this runner it skipped — and a regression that
+      # skips in the environment that gates merges is a regression that is not
+      # run. Chrome is installed here so the test is required rather than
+      # optional: `test/chrome.ts` treats a missing browser on CI as a failure,
+      # never a skip. No paid infrastructure and no secrets; the action fetches a
+      # public build, and the test itself talks to nothing but loopback.
+      - name: Install Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
       - name: Test
         run: bun test
+        env:
+          # Explicit rather than trusting discovery to agree with whatever the
+          # action put on PATH. A wrong value here fails loudly by design.
+          CG_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
 
       # `bun test` and `tsc` never exercise `apps/web`'s build, and a Next.js
       # build is where most of this service's failures show up.
