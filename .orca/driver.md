@@ -66,37 +66,6 @@ once.
 - `check --wait` timeout 900000 ms. Timeouts and `count:0` are checkpoints, not
   failures. Slices run 30-120 minutes. Never stop a worker for being quiet.
 
-## Settlement monitoring — mandatory
-
-Worker completion is **not** pushed into the driver conversation. After every
-dispatch, actively monitor until every dispatched task is reconciled: poll
-`worker-list --terminal-state active` and `task-list` in addition to
-`check --wait`. For every task that has newly become `completed`, read the PR's
-latest `**[reviewer]** VERDICT:` comment (or the implementer's PR evidence) and
-act on it before doing anything else: dispatch the next review/fix/merge, create
-the required gate, or release/clean up. Do not end a turn merely because a
-`check --wait` call is quiet or returns an old message.
-
-Messages from wiped or settled dispatches can replay indefinitely. Identify them
-by their dispatch/task id; acknowledge heartbeats silently and treat a replayed
-old question as noise, **but never let it replace task-list/PR polling**. Before
-reporting that work is still running, cross-check the active worker list. Before
-returning control while any slice was dispatched in this session, do one final
-settlement sweep (`worker-list`, `task-list`, and the affected PR comments).
-
-**Codex-runtime limitation:** `orca orchestration check --wait` is the actual
-mailbox wake mechanism, including `worker_done`. In the Claude harness, a
-persistent waiter can print into its terminal loop; in this Codex conversation,
-background-terminal stdout is **not** delivered as a new driver turn. Do not
-treat a background `wait.py` as notification plumbing here (and
-`CLAUDE_JOB_DIR` may be unset). Run `check --wait` foreground while waiting;
-on every later user turn, settlement-poll *before* answering their new request.
-When adopting a wiped/restarted Run, first reconcile and acknowledge every
-historical delivery. Otherwise `check --wait` returns immediately with that old
-FIFO batch instead of waiting for the active workers. Never acknowledge a batch
-blindly: identify its dispatches, reconcile any genuine unfinished completion,
-then acknowledge stale/settled messages so one actionable waiter can block.
-
 ## Worktree settlement — mandatory
 
 `worker-release` only closes the terminal; it does **not** remove the Orca/git
