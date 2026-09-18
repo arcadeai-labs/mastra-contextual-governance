@@ -126,6 +126,29 @@ async function loginPage(
   );
 }
 
+/**
+ * The provider's own sentence about a failure, when it gave one.
+ *
+ * Better Auth answers errors as `{"message": "…"}` and sometimes with nothing
+ * at all — a 500 from a database whose `user` table has gone answers with an
+ * empty body, measured. Only that one field reaches the page, and only 200
+ * characters of it: pasting a whole error payload onto a login page is how
+ * table names and stack frames end up in front of whoever found the form. A
+ * longer extract — 500 characters, JSON or not — goes to the log line beside
+ * it, where a reader with access to the logs is the right audience for it.
+ */
+function providerMessage(body: string): string {
+  const parsed = ((): { message?: unknown } | null => {
+    try {
+      return JSON.parse(body) as { message?: unknown };
+    } catch {
+      return null;
+    }
+  })();
+  const message = typeof parsed?.message === "string" ? parsed.message.trim() : "";
+  return message === "" ? "" : ` ${message.slice(0, 200)}`;
+}
+
 async function handleLogin(request: Request): Promise<Response> {
   const form = await request.formData();
   const email = String(form.get("email") ?? "").trim();
@@ -176,8 +199,37 @@ async function handleLogin(request: Request): Promise<Response> {
       email,
     });
   }
-  if (!response.ok && response.status < 300) {
-    return html(renderMessagePage("Sign-in failed", `The identity provider answered ${response.status}.`), 502);
+  if (response.status >= 400) {
+    // Everything else the provider said, and the reason this branch is one
+    // comparison rather than two. A sign-in that worked is 2xx, and one that
+    // continues an authorize flow arrives as a 3xx with a `Location`, so 400
+    // and above is "not a session" exhaustively.
+    //
+    // Until #170 this read `!response.ok && response.status < 300`, and
+    // `Response.ok` is true only for 200–299 — the two halves intersect at
+    // **1xx**, which this service never returns. So the one branch written to
+    // catch failures could not fire for any of them, and a 500 from a broken
+    // database fell through to the `303 Location: /` below: byte-for-byte what
+    // a successful sign-in with no OAuth flow to continue returns. The persona
+    // landed on the provider's home page with no session and nothing said.
+    //
+    // The page answers 502 rather than echoing the provider's status: this
+    // route exists and did answer, so mirroring a 404 onto `POST /login` would
+    // assert something false about the route. The status that *is* true about
+    // what happened goes in the text, where it is a statement rather than a
+    // header nobody reads.
+    const detail = (await response.clone().text().catch(() => "")).trim();
+    console.log(
+      `[${SERVICE}] POST ${LOGIN_PAGE} failed: status=${response.status} ` +
+        `body=${JSON.stringify(detail.slice(0, 500) || "(empty)")}`,
+    );
+    return html(
+      renderMessagePage(
+        "Sign-in failed",
+        `The identity provider answered ${response.status}.${providerMessage(detail)}`,
+      ),
+      502,
+    );
   }
 
   const redirect = await redirectFrom(response);
