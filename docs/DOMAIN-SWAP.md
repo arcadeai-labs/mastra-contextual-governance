@@ -342,27 +342,38 @@ escalating, retrying, caution or irreversibility. If your swapped demo needs a s
 in the prompt to reach the hook, the run is proving the prompt. Measured on #14 and
 again on #16; round 1 of #88's review removed exactly such a sentence.
 
-### The reads behind the bank's screen (#109)
+### The reads behind the bank's screen (#157)
 
 These are the files that decide *what the boring enterprise app puts on screen*, and
 they are the ones a forker is most likely to miss — the guide missed them until round 2
-of this PR's review.
+of #150's review.
 
 | | |
 |---|---|
-| `apps/web/lib/loan-context/loans.ts` | the records the bank's screen shows, by id — `DEMO_LOAN_IDS = ["LN-2291", "LN-2299"]` — and the field types one read comes back as |
-| `apps/web/lib/loan-context/read.ts` | runs two `Loan_GetLoan` calls on an already-open gateway session. Rename the tool, keep the shape |
-| `apps/web/lib/home/surface.ts` | one gateway session per page load, answering both of `/`'s questions: the persona's tool list (act 1) and those reads |
-| `apps/web/app/page.tsx` | `/` itself — the server component that calls `apps/web/lib/home/surface.ts` and hands the result to `BankPane` |
+| `apps/web/lib/loan-context/loans.ts` | the records the bank's screens show, by id — `DEMO_LOAN_IDS = ["LN-2291", "LN-2299"]` — the poll interval, and the fields one record is allowed to carry to the browser |
+| `apps/web/lib/loan-context/read.ts` | calls your API over HTTP as the signed-in person: a list, then a detail read per record. Rename the paths, keep the shape |
+| `apps/web/app/api/loans/route.ts` | the cookie-bound route both screens poll. No parameters, on purpose |
+| `apps/web/lib/home/surface.ts` | the one gateway session a page load opens, for the persona's tool list (act 1). Nothing else |
+| `apps/web/app/page.tsx` | `/` itself — the server component that paints the first read and hands it to `BankPane` |
+| `apps/web/app/loans/page.tsx` | `/loans`, the full-screen board for a presenter's second display |
 
-> ⚠️ **Do not replace these with a database read.** Opening your own database, or calling
-> your API with a service credential, is faster and makes the screen a liar. The claim
-> this demo makes is that *every* read of the system of record passes the control plane,
-> keyed on who is asking — so the bank's screen goes through an MCP client of the gateway
-> with the signed-in person's bearer, exactly like the agent, and shows up in the audit
-> log like any other call. With `/post` redaction live, a pane that reached past the
-> hooks would show an unmasked account number inches from a panel asserting there is only
-> one path to the data.
+> ⚠️ **Do not replace these with a database read, and do not reach for a service
+> credential.** Opening your own database directly, or calling your own API as the
+> application rather than as the person, is faster and costs you the one property this
+> screen has: *the read is attributable to a person or it does not happen.* The bearer
+> is the IdP access token from that browser's own sign-in, and `apps/loan-app` derives
+> the actor from it — so swap in your API and your IdP, never a shared secret.
+>
+> **These reads deliberately do *not* go through the gateway (#157, reversing #22 and
+> #109).** They used to, and the argument was that every read of the system of record
+> should pass the control plane. Two things were wrong with it in front of an audience:
+> a page load put governed tool calls on the control plane before the presenter had
+> said anything, so nobody could tell the agent's work from the page's chrome; and a
+> page load being the only read meant the cards never moved when the agent approved
+> something. The thesis is about the **agent's** path. The business system's own screen,
+> for an authenticated human, is not that path — and it never shows a field `/post`
+> redacts, because `route.ts` projects an allow-list rather than deleting fields from a
+> record. `DESIGN.md` → Business system carries the decision.
 
 ### The bank pane
 
@@ -371,8 +382,10 @@ The whole directory is yours to replace: `apps/web/components/bank/`.
 | | |
 |---|---|
 | `apps/web/components/bank/BankPane.tsx` | the whole of `/` — chrome, tabs, a release number nobody has bumped since 2009, and the two-column body |
-| `apps/web/components/bank/LoanFiles.tsx` | the list of records under review |
+| `apps/web/components/bank/LoanFiles.tsx` | the list of records under review, beside the chat |
 | `apps/web/components/bank/LoanFileCard.tsx` | one record: every field name and every label |
+| `apps/web/components/bank/LoanBoard.tsx` | `/loans` — the same records, large, for the back of the room |
+| `apps/web/components/bank/use-loan-book.ts` | the polling both of those share. One request in flight, one interval |
 | `apps/web/components/bank/format.ts` | currency, dates, the masked-field rendering |
 | `apps/web/components/bank/bank.css` | the deliberately dull styling |
 | `apps/web/components/bank/ToolListSlot.tsx` | where act 1's tool list sits inside the pane |
@@ -432,7 +445,7 @@ Every variable, its owner and where its value comes from is one table in the
 | `ARCADE_LOAN_TOOLKIT` | your toolkit name, **measured off a real deploy**, not derived |
 | `ARCADE_APPROVALS_TOOLKIT` | unchanged unless you rename `tools/approvals` |
 | `ARCADE_IDP_PROVIDER_ID` | the Arcade auth provider id your tools require |
-| `LOAN_APP_PUBLIC_HOST` | your API's host. Rename the variable, and rename it in the toolkit's `requires_secrets` at the same time |
+| `LOAN_APP_PUBLIC_HOST` | your API's host. Rename the variable, and rename it in the toolkit's `requires_secrets` at the same time. Since #157 `apps/web` needs it too — the bank's own screens read your API directly |
 | `PERSONA_<ROLE>_EMAIL` | your cast's role addresses, read once at first seed |
 | `LOANS_DB_PATH` | only if you keep a database of your own |
 

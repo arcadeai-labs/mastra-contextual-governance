@@ -37,6 +37,7 @@ import type { Subprocess } from "bun";
 import { chunk, chunkName, seal } from "../lib/identity/seal.ts";
 import { SESSION_COOKIE } from "../lib/identity/session.ts";
 import { encodeEvent } from "../lib/agent/events.ts";
+import { LOAN_POLL_INTERVAL_MS } from "../lib/loan-context/loans.ts";
 import { DANA, DEV_IDP_TOKEN_PREFIX, SESSION_SECRET, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
 import { browserRequired, missingBrowserMessage, resolveChrome } from "./chrome.ts";
 // The CDP client moved to `cdp.ts` on #155 so `home-full-screen-browser.test.ts`
@@ -435,16 +436,28 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
       ).toEqual(["Northwind Bakery LLC", "Meridian Physical Therapy"]);
       expect(harness.lists.length - initialCounts.lists).toBe(0);
       expect(harness.calls.length - initialCounts.calls).toBe(0);
-      // The route the cards actually poll, named. `/api/loan-context` was
-      // #109's browser fetch and has been gone since; `/api/loans` is what
-      // replaced the governed read on #157, and a page that had quietly stopped
-      // polling would still pass every assertion above.
-      const fetched = await evaluate<string[]>(
-        cdp,
-        `performance.getEntriesByType('resource').map((entry) => entry.name)`,
+      // The route the cards actually poll, waited for rather than sampled. A
+      // page that server-rendered its cards and then quietly never polled would
+      // pass every assertion above, and would be exactly the regression #157
+      // exists to prevent: cards that do not move when a decision lands.
+      await waitFor(
+        "the loan cards to poll /api/loans",
+        async () =>
+          evaluate<boolean>(
+            cdp as Cdp,
+            `performance.getEntriesByType('resource').some((entry) => entry.name.includes('/api/loans'))`,
+          ),
+        LOAN_POLL_INTERVAL_MS + 8_000,
       );
-      expect(fetched.filter((name) => name.includes("/api/loan-context"))).toEqual([]);
-      expect(fetched.some((name) => name.includes("/api/loans"))).toBe(true);
+      // And `/api/loan-context` stays gone: it was #109's browser fetch, deleted
+      // when the reads moved into the server component, and nothing has brought
+      // a second client-side loan path back.
+      expect(
+        await evaluate<string[]>(
+          cdp,
+          `performance.getEntriesByType('resource').map((entry) => entry.name).filter((name) => name.includes('/api/loan-context'))`,
+        ),
+      ).toEqual([]);
     } finally {
       cdp?.close();
       await stopProcess(chrome);
