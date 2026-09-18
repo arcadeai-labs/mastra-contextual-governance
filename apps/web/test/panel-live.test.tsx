@@ -8,7 +8,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
-import { MORGAN, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
+import { MORGAN, SAM, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
 import { homeSurface } from "../lib/home/surface.ts";
 import type { Session } from "../lib/identity/session.ts";
 
@@ -123,6 +123,61 @@ describe("the hydrated live panel", () => {
 
       const cards = expectedIds.map((id) => container.querySelector(`[data-event-id="${id}"]`));
       expect(cards.every((card) => card?.querySelector(".cg-tool")?.textContent === "Loan.GetLoan")).toBe(true);
+    } finally {
+      root.unmount();
+      container.remove();
+    }
+  });
+
+  /**
+   * #156 in the browser rather than in a render-to-string: the same page load,
+   * the same real SSE stream, and what the Access lane actually mounts.
+   *
+   * The listing is asserted by its members, not by counting cards in the lane —
+   * the stream replays everything the hooks subprocess has ever written, so
+   * another persona's listing is legitimately on screen beside this one.
+   */
+  test("one persona's listing mounts as one Access card naming what it hid", async () => {
+    const before = new Set((await harness.audit()).map((row) => String(row.id)));
+    const surface = await homeSurface(sessionFor(SAM), { config: harness.config });
+    expect(surface.tools.ok).toBe(true);
+
+    const listing = (await harness.audit()).filter(
+      (row) => !before.has(String(row.id)) && row.user_id === SAM && row.hook === "access",
+    );
+    // Six governed tools decided in one burst, one of them hidden.
+    expect(listing.length).toBeGreaterThan(1);
+    const ids = listing.map((row) => String(row.id));
+    const newest = ids[0] as string;
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(
+          <ControlPlanePanel
+            stream={{ mode: "hooks", url: `http://${harness.hooksHost}/events`, host: harness.hooksHost }}
+          />,
+        );
+      });
+
+      await until(
+        () => container.querySelector(`[data-event-id="${newest}"]`) !== null,
+        "the analyst's listing in the live panel",
+      );
+
+      const cards = [...container.querySelectorAll('section[aria-labelledby="cg-lane-access"] article')];
+      const mine = cards.filter((card) => ids.some((id) => card.textContent?.includes(id)));
+
+      // Every decision in the burst is on one card, and that card is a listing.
+      expect(mine).toHaveLength(1);
+      const card = mine[0] as Element;
+      expect(card.getAttribute("data-listing")).toBe("true");
+      expect(card.querySelector(".cg-tool")?.textContent).toBe("tools/list");
+      for (const id of ids) expect(card.textContent).toContain(id);
+      expect(card.textContent).toContain("Loan.ApproveLoan");
+      expect(card.textContent).toContain("access.analysts-cannot-see-approve");
     } finally {
       root.unmount();
       container.remove();
