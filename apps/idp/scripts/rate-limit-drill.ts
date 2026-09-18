@@ -141,6 +141,24 @@ const PROBES: Record<string, (baseUrl: string, nonce: string) => Promise<Respons
     }),
   "/oauth2/authorize": (baseUrl, nonce) =>
     fetch(`${baseUrl}/oauth2/authorize?client_id=drill-${nonce}&response_type=code`, { redirect: "manual" }),
+  "/oauth2/introspect": (baseUrl, nonce) =>
+    fetch(`${baseUrl}/oauth2/introspect`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `token=drill-${nonce}`,
+    }),
+  "/oauth2/revoke": (baseUrl, nonce) =>
+    fetch(`${baseUrl}/oauth2/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `token=drill-${nonce}`,
+    }),
+  "/oauth2/register": (baseUrl, nonce) =>
+    fetch(`${baseUrl}/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: `drill-${nonce}`, redirect_uris: ["http://127.0.0.1:9/callback"] }),
+    }),
   "/sign-in/email": (baseUrl, nonce) =>
     fetch(`${baseUrl}/sign-in/email`, {
       method: "POST",
@@ -188,10 +206,11 @@ interface Tally {
   firstRefusalMs: number | null;
 }
 
+/** The paths a rehearsal drives. The other three are measured, never driven. */
+const REHEARSED = ["/oauth2/userinfo", "/oauth2/token", "/oauth2/authorize", "/sign-in/email"];
+
 function tallies(): Record<string, Tally> {
-  return Object.fromEntries(
-    Object.keys(PROBES).map((path) => [path, { sent: 0, refused: 0, firstRefusalMs: null }]),
-  );
+  return Object.fromEntries(REHEARSED.map((path) => [path, { sent: 0, refused: 0, firstRefusalMs: null }]));
 }
 
 async function fire(
