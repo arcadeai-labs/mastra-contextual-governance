@@ -1,6 +1,6 @@
 # Orca driver prompt — mastra-contextual-governance
 
-Paste everything below into a Claude session running in the **main worktree**
+Paste everything below into a driver session running in the **main worktree**
 (`/Users/mateo/Arcade/pg/mastra-arcade-workshop/mastra-contextual-governance`).
 If this is a compacted session that already knows the project, read it anyway:
 it is the source of truth for orchestration rules, and it is written to be read
@@ -66,7 +66,75 @@ once.
 - `check --wait` timeout 900000 ms. Timeouts and `count:0` are checkpoints, not
   failures. Slices run 30-120 minutes. Never stop a worker for being quiet.
 
+## Settlement monitoring — mandatory
+
+Worker completion is **not** pushed into the driver conversation. After every
+dispatch, actively monitor until every dispatched task is reconciled: poll
+`worker-list --terminal-state active` and `task-list` in addition to
+`check --wait`. For every task that has newly become `completed`, read the PR's
+latest `**[reviewer]** VERDICT:` comment (or the implementer's PR evidence) and
+act on it before doing anything else: dispatch the next review/fix/merge, create
+the required gate, or release/clean up. Do not end a turn merely because a
+`check --wait` call is quiet or returns an old message.
+
+Messages from wiped or settled dispatches can replay indefinitely. Identify them
+by their dispatch/task id; acknowledge heartbeats silently and treat a replayed
+old question as noise, **but never let it replace task-list/PR polling**. Before
+reporting that work is still running, cross-check the active worker list. Before
+returning control while any slice was dispatched in this session, do one final
+settlement sweep (`worker-list`, `task-list`, and the affected PR comments).
+
+**Codex-runtime limitation:** `orca orchestration check --wait` is the actual
+mailbox wake mechanism, including `worker_done`. In the Claude harness, a
+persistent waiter can print into its terminal loop; in this Codex conversation,
+background-terminal stdout is **not** delivered as a new driver turn. Do not
+treat a background `wait.py` as notification plumbing here (and
+`CLAUDE_JOB_DIR` may be unset). Run `check --wait` foreground while waiting;
+on every later user turn, settlement-poll *before* answering their new request.
+When adopting a wiped/restarted Run, first reconcile and acknowledge every
+historical delivery. Otherwise `check --wait` returns immediately with that old
+FIFO batch instead of waiting for the active workers. Never acknowledge a batch
+blindly: identify its dispatches, reconcile any genuine unfinished completion,
+then acknowledge stale/settled messages so one actionable waiter can block.
+
+## Worktree settlement — mandatory
+
+`worker-release` only closes the terminal; it does **not** remove the Orca/git
+worktree. After every completed, failed, or superseded worker, release its
+terminal and remove its worktree in the same settlement pass. Retain only a
+worktree whose branch backs an open PR, an active worker, or an explicitly
+pending human gate. Before returning control, run `orca worktree list` and
+account for every project worktree by one of those three reasons. Failed setup
+or readiness retries are stale worktrees too: remove the failed retry before
+launching the next one.
+
+If removal reports untracked SQLite sidecars, inspect the exact path, delete
+only the named `*.db-shm` / `*.db-wal` files, then retry `orca worktree rm`.
+Never use broad recursive deletion. Local branches that Git cannot prove safe
+to delete are not a reason to keep an otherwise stale worktree.
+
 ## Start here
+
+Cold-restart entry point: `prompts/human/NEXT-DRIVER-PROMPT.md`. Read its current
+snapshot before dispatching; do not revive settled historical tasks. At the
+2026-09-16 wipe remote main is a08de7c but local main remains 2b254eb with
+preserved driver edits. Use fresh origin-based worktrees for current source.
+
+CLI details verified in this run:
+- Acknowledge processed batches with `check --ack <delivery_id> --run <run>`;
+  there is no `orchestration ack` command.
+- Release with `worker-release --dispatch <dispatch_id>`, not --terminal.
+- Do not inspect another terminal's mailbox by impersonating --terminal.
+- `gh pr view --comments` and `--json comments` are alternatives, not combined flags.
+- Check both Orca worktrees and `git worktree list --porcelain`; locked
+  .orca-preparing entries can survive outside the normal list. Inspect owner
+  and liveness before removal; never broadly delete that directory.
+
+Every reviewer DELTA must explicitly say: do not execute arcade deploy; do not
+deploy, provision, log in, authenticate, use/create credentials, alter
+Arcade/Render/Slack/OAuth configuration, or otherwise change external state.
+Human owns live deployment/configuration. GitHub operations explicitly scoped
+to a worker's task remain permitted.
 
 1. `orca status --json`; bind the Run.
 2. `gh issue list --repo ArcadeAI-labs/mastra-contextual-governance --state open
@@ -151,9 +219,13 @@ fresh reviewer.
 **On `approve`** — merge policy is **not uniform**:
 
 *Auto-merge* where the slice is pure and reversible: no I/O, no contract others
-inherit. Dispatch to the implementer terminal: "Run
-`gh pr merge <pr> --squash --delete-branch`. Confirm the PR merged and issue
-#<N> closed. Report `worker_done`." Then `worker-release` and `orca worktree rm`.
+inherit. Dispatch a merge worker: fetch and rebase on current origin/main,
+run full suite/typecheck plus the affected Python toolkit tests, push with
+--force-with-lease, then squash merge with branch deletion. Verify merge SHA,
+issue state (diagnostics may intentionally leave the incident open), and remote
+ref absence. Stop on conflicts and report hunks for human authorization.
+Never rebase old commits after the squash merge; that caused a redundant
+post-merge conflict in #141. Release workers and remove settled worktrees.
 
 *Gate before merge* where the slice sets a contract, touches the demo, or is
 visible to the audience. By the time drift shows up in a contract slice, three
@@ -207,3 +279,10 @@ about state; a stale mirror is worse than none, because you would act on it.
 The real defence against compaction is upstream of the journal: **a finding goes
 onto the GitHub issue the moment you have it**, not at the end of the wave.
 GitHub is the durable store.
+
+Before every wipe update prompts/DRIVER-STATE.md, prompts/human/STATUS.md,
+prompts/human/DAG.md, and prompts/human/NEXT-DRIVER-PROMPT.md. Replace stale
+current-state claims instead of appending contradictory updates. These local
+prompts are not tracked public documentation; committed docs must be self-contained.
+Distinguish a diagnostics PR from resolution of its originating live failure,
+and ensure unresolved incidents retain explicit issue ownership.
