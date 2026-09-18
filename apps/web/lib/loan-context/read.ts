@@ -46,6 +46,10 @@ import type { LoanBookState, LoanCard } from "./loans.ts";
  * `expires_at` is this service's note to itself; the only clock that decides is
  * the IdP's. A margin means an ordinary poll does not spend its round trip
  * discovering that a token died half a second ago.
+ *
+ * It brings a renewal **forward**; it never brings a refusal forward. Crossing
+ * this line is not a reason to tell anybody their sign-in is over — see
+ * {@link usableToken}.
  */
 const RENEW_BEFORE_MS = 30_000;
 
@@ -75,9 +79,12 @@ export interface ReadLoanBookOptions {
   /**
    * Called when the bearer was renewed, so the caller can reseal the cookie.
    *
-   * Only a route handler can. A server component that renews and cannot store
-   * the result would spend a refresh token per page load, so the first paint
-   * passes nothing here and lets the first poll do it.
+   * **Its presence is what permits a renewal at all.** `apps/idp` rotates
+   * refresh tokens and replaying a spent one revokes the grant family
+   * (measured; see {@link usableToken}), so a caller that cannot store the
+   * replacement must not mint one — it would leave the cookie holding a token
+   * whose next use destroys the session. Only a route handler can store one; a
+   * server component passes nothing here and reads with the bearer it has.
    */
   onRenewed?: (session: Session) => void;
   /** Only for tests, which need to see what was actually asked for. */
@@ -127,8 +134,9 @@ export async function readLoanBook(
     return {
       status: "expired",
       message:
-        `This browser's sign-in as ${session.email} no longer carries a token the loan system ` +
-        `accepts. Nothing was refused by policy — sign in again to read the loan book.`,
+        `This browser's sign-in as ${session.email} carries no loan-system token — it predates ` +
+        `the version of this app that keeps one. Nothing was refused by policy — sign in again ` +
+        `to read the loan book.`,
     };
   }
 
@@ -235,26 +243,56 @@ async function ask(
 }
 
 /**
- * A bearer this read can use, renewing it first when the session holds the
- * means to.
+ * A bearer this read can use.
  *
- * `null` means the reader has to sign in again, which is the only remedy on a
- * default deployment: measured 2026-09-18, `apps/idp` issues no refresh token
- * for `openid email`, so `IDP_SCOPES` has to name `offline_access` for the
- * renewal branch below to exist at all.
+ * ## A refresh token is only ever spent where the replacement can be stored
+ *
+ * `apps/idp` **rotates**, and a rotation is destructive to whatever the cookie
+ * still holds. Measured 2026-09-18, in this order: a clean rotation leaves both
+ * the old and the new access token working (`/oauth2/userinfo` answers 200 for
+ * each), but presenting a refresh token that has already been redeemed answers
+ * `400 invalid_grant` **and revokes the grant family** — the access token
+ * minted by that rotation went from 200 to 401 the moment the spent one was
+ * replayed.
+ *
+ * So a renewal whose result is dropped does not merely waste a round trip. It
+ * arms the next one: the cookie still carries the spent refresh token, the next
+ * caller presents it, and that replay kills a session that was working. Round 1
+ * of #160's review found exactly that — a server render renewed, `app/page.tsx`
+ * and `app/loans/page.tsx` pass no `onRenewed`, and the following poll read as
+ * expired. `test/loan-book-renewal.test.ts` is the regression.
+ *
+ * The rule that follows is narrow and checkable: **renew only when there is a
+ * callback to hand the new session to.** A server component therefore uses the
+ * bearer it was given, whatever the clock says, and lets the loan book decide —
+ * which costs at most one 401 and one poll interval, because `GET /api/loans`
+ * *can* reseal and renews two seconds later.
+ *
+ * That is also why `expires_at` never on its own produces a re-sign-in here.
+ * It is this service's note to itself; the IdP and the loan book are the only
+ * things that decide a token is dead, and `RENEW_BEFORE_MS` exists to renew
+ * *early*, not to declare death early. The one `null` below is a session
+ * carrying no bearer at all.
  */
 async function usableToken(session: Session, options: ReadLoanBookOptions): Promise<IdpToken | null> {
   const held = session.idp;
   if (held === undefined || held.access_token.trim() === "") return null;
+
+  // Nowhere to put a renewed token: do not mint one. This is the guard the
+  // review round 1 asked for, and it is first because it is the one that is
+  // unsafe to get wrong.
+  const store = options.onRenewed;
+  if (store === undefined) return held;
+
   if (held.expires_at > Date.now() + RENEW_BEFORE_MS) return held;
-  if (held.refresh_token === undefined) return null;
+  if (held.refresh_token === undefined) return held;
 
   const idp = options.idp ?? {
     issuer: (process.env.IDP_ISSUER ?? "").trim().replace(/\/+$/, ""),
     clientId: (process.env.IDP_CLIENT_ID ?? "").trim(),
     clientSecret: (process.env.IDP_CLIENT_SECRET ?? "").trim(),
   };
-  if (!idp.issuer || !idp.clientId) return null;
+  if (!idp.issuer || !idp.clientId) return held;
 
   const renewed = await refreshIdpToken({
     issuer: idp.issuer,
@@ -262,14 +300,17 @@ async function usableToken(session: Session, options: ReadLoanBookOptions): Prom
     clientSecret: idp.clientSecret,
     refreshToken: held.refresh_token,
   });
-  if (!renewed.ok) return null;
+  // A refusal here is not this read's answer. The bearer in the cookie may
+  // still be live — a rotation does not revoke it — so it is presented, and the
+  // loan book says whether it works.
+  if (!renewed.ok) return held;
 
   const token: IdpToken = {
     access_token: renewed.token.access_token,
     ...(renewed.token.refresh_token ? { refresh_token: renewed.token.refresh_token } : {}),
     expires_at: tokenExpiry(renewed.token),
   };
-  options.onRenewed?.(withIdpToken(session, token));
+  store(withIdpToken(session, token));
   return token;
 }
 

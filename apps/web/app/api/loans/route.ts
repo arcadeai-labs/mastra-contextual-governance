@@ -31,11 +31,13 @@ export async function GET(request: Request): Promise<Response> {
   const session = await readSession(request, config);
   const headers = new Headers({ "cache-control": "no-store" });
 
-  // A route handler is the one place that *can* store a renewed bearer, which
-  // is why the renewal lives here and not in the server component that paints
-  // first. Only reachable on a deployment whose `IDP_SCOPES` asks for
-  // `offline_access`; the default never issues a refresh token (measured
-  // 2026-09-18, `lib/identity/session.ts`).
+  // A route handler is the one place that *can* store a renewed bearer, and
+  // passing `onRenewed` is what permits `readLoanBook` to mint one at all: the
+  // IdP rotates, and replaying a spent refresh token revokes the grant family,
+  // so a caller that would drop the replacement must not renew (round 1 of
+  // #160's review; `lib/loan-context/read.ts` has the measurement). Only
+  // reachable on a deployment whose `IDP_SCOPES` asks for `offline_access`; the
+  // default never issues a refresh token (measured 2026-09-18).
   const renewed: Session[] = [];
   const state = await readLoanBook(session, {
     idp: {

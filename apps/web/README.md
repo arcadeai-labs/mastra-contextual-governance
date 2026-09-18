@@ -697,9 +697,28 @@ email` returns no refresh token and a 3600-second access token; `openid email
 offline_access` returns one and the refresh grant works. The default is left at `openid
 email` — an hour outlasts a webinar, and the re-sign-in prompt has to exist either way —
 and the code consumes a refresh token whenever a deployment opts in by setting
-`IDP_SCOPES`. Renewal happens in `GET /api/loans`, which is a route handler and can
-reseal the cookie; the server components that paint first deliberately do not, because
-they cannot store the result.
+`IDP_SCOPES`.
+
+**A refresh token is only ever spent where the replacement can be stored**, and that is a
+rule rather than a preference. Measured on the real IdP, in this order: a clean rotation
+leaves both the old and the new access token working (`/oauth2/userinfo` answers 200 for
+each), but presenting a refresh token that has already been redeemed answers `400
+invalid_grant` **and revokes the grant family** — the access token minted by that rotation
+goes from 200 to 401 the moment the spent one is replayed. So a renewal whose result is
+dropped does not waste a round trip, it arms the next caller: the cookie still carries the
+spent token, the next poll presents it, and that replay kills a session that was working.
+Round 1 of #160's review found exactly that, because `app/page.tsx` and
+`app/loans/page.tsx` are server components that cannot set a cookie. Renewal therefore
+happens only in `GET /api/loans`, which can reseal; a server render uses the bearer it was
+given whatever the clock says and lets the loan book decide, which costs at most one 401
+and one poll interval. `test/loan-book-renewal.test.ts` is the regression, and it counts
+the token endpoint's `grant_type`s through a proxy rather than taking this paragraph's
+word for it.
+
+The same measurement is why `expires_at` never on its own produces a re-sign-in: it is
+this service's note to itself, the IdP and the loan book are the only things that decide a
+token is dead, and the 30-second margin exists to renew *early*, not to declare death
+early.
 
 ### The browser regressions, and what they are for
 
