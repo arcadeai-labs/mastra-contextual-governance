@@ -44,6 +44,10 @@ const TOKENS: Record<string, string> = {
   "tok-dana": DANA,
   "tok-riley": RILEY,
   "tok-morgan": MORGAN_AS_ISSUED,
+  // Two tokens no other test touches, so the call counts below are the counts
+  // of what those tests did and not of what ran before them.
+  "tok-screen": DANA,
+  "tok-writer": RILEY,
 };
 
 /**
@@ -74,12 +78,21 @@ function freePort(): number {
 let idp: Server<unknown>;
 let child: Subprocess;
 let baseUrl: string;
+/**
+ * Every inbound `/oauth2/userinfo`, counted. The point of #166 is a call
+ * *volume*, and a suite that only checks the answers cannot see one: the live
+ * failure was thirty correct answers a minute per open screen, each of them
+ * costing a request the provider counts. So the number is measured here, over
+ * the wire, against the service booted the way Render boots it.
+ */
+let userinfoCalls = 0;
 
 beforeAll(async () => {
   idp = Bun.serve({
     port: 0,
     fetch(request) {
       const { pathname } = new URL(request.url);
+      if (pathname === "/oauth2/userinfo") userinfoCalls++;
       const token = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
       const email = token === undefined ? undefined : TOKENS[token];
 
@@ -180,6 +193,32 @@ describe("identity", () => {
       await fetch(`${baseUrl}/loans/LN-2292`, as("tok-dana"))
     ).json()) as LoanRecord;
     expect(loan.decisions).toHaveLength(0);
+  });
+});
+
+describe("the identity provider is not asked twice for the same token", () => {
+  test("a screen polling /loans costs one userinfo call, not one per poll", async () => {
+    const before = userinfoCalls;
+    for (let poll = 0; poll < 20; poll++) {
+      const response = await fetch(`${baseUrl}/loans`, as("tok-screen"));
+      expect(response.status).toBe(200);
+      await response.json();
+    }
+
+    // 20 polls is 40 seconds of one screen at #157's 2s interval. Before this
+    // was cached it was 20 calls; the whole of #166 is that number.
+    expect(userinfoCalls - before).toBe(1);
+  });
+
+  test("a write is resolved against the provider every time", async () => {
+    // A read first, so there is a remembered answer for this token to ignore.
+    await (await fetch(`${baseUrl}/loans`, as("tok-writer"))).json();
+    const before = userinfoCalls;
+
+    expect((await post("tok-writer", "/loans/LN-2293/deny", { reason: "First." })).status).toBe(200);
+    expect((await post("tok-writer", "/loans/LN-2293/deny", { reason: "Second." })).status).toBe(200);
+
+    expect(userinfoCalls - before).toBe(2);
   });
 });
 
