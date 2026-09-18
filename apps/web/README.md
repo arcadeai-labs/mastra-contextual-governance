@@ -613,8 +613,16 @@ one file where they meet:
 
 Two columns, both the bank's own application, because one column across 1920px gives
 the transcript and its composer the full width and pushes the tool list and the sign-in
-panel under the fold. Measured at 1920x1080: the composer is 926px wide, against 1892px
-in one column.
+panel under the fold. **Two thirds of the width go to the conversation**, decided by the
+human at the 2026-09-18 gate: the chat is what the room is asked to read, and at even
+widths it looked like one of two equal panels.
+
+Measured at 1920x1080: columns 622px and 1244px, exactly 1:2, with a 1214px composer —
+against 1892px if this were one column. At 1440x900: 466px, 933px and a 910px composer.
+`test/home-full-screen-browser.test.ts` asserts the ratio rather than the pixel counts,
+which depend on the padding and the gap. The loan cards' `auto-fit` minimum came down to
+`13.5em` so two still sit side by side in the narrower column; the sign-in panel below
+the tool list needs a scroll at both sizes, which is what the two thirds cost.
 
 The tool list is #15's, hosted rather than reimplemented, and the slot exists so that it
 can be: a client-side list that merely hid a tool would look exactly like one the access
@@ -697,6 +705,8 @@ transport, `test/home-loan-browser.test.tsx` covers the isolated rendered compon
 and `test/home-loan-next-browser.test.ts` drives a real Next page in headless
 Chrome at 1440x900: a delayed synthetic gateway response, rapid clicks, a re-challenge,
 and a successful Continue are measured through the production refresh/context path.
+`test/home-full-screen-browser.test.ts` is the second browser measurement, and it
+resolves its browser the same way.
 
 That last one runs on CI as well as on a laptop (#152). `test/chrome.ts` resolves the
 browser from `CG_CHROME_BIN`, then `PATH`, then the platform's usual locations, and a
@@ -704,21 +714,26 @@ miss is a *failure* on CI rather than a skip — the workflow installs Chrome in
 `check` job precisely so the regression cannot go quiet there. It skips only on a
 developer machine with no browser, and prints where it looked when it does.
 
-The test waits for the shell to hydrate before driving it. The page and its
+The test waits for the screen to hydrate before driving it. The page and its
 authorization card are server-rendered, so their presence proves nothing about whether
 React is holding the form yet; clicking Send before `hydrateRoot()` installs React's
 root listener submits the composer natively as `GET /?`, which replaces the document
 and loses the turn. That was the flake PR154's reviewer measured. `CG_HYDRATION_DELAY_MS`
 holds the client chunks back so the race can be reproduced on demand.
 
-What it waits for is `.cg-split[data-hydrated="true"]` — one inert attribute
-`components/shell/SplitScreen.tsx` sets on mount and never reads. A parent's mount
-effect runs after its children have committed, so the shell saying so means the
+What it waits for is `.bank[data-hydrated="true"]` — one inert attribute
+`components/bank/BankPane.tsx` sets on mount and never reads. A parent's mount
+effect runs after its children have committed, so the screen saying so means the
 composer and the loan cards beneath it are hydrated with their handlers attached.
-The server never emits it (`test/split-screen.test.tsx`), which is what makes it
+The server never emits it (`test/home-screen.test.tsx`), which is what makes it
 worth waiting for. Round 1 of #152's review rejected the first version, which read
 React's private `__reactProps$…` DOM bookkeeping instead — a readiness proof resting
 on internals is one minor upgrade away from passing without checking anything.
+
+It was `.cg-split`, on the split screen's shell, until #155 deleted that shell; the
+marker moved to the container that inherited the job, and the property it proves did
+not move with it. `test/cdp.ts` holds the DevTools client both browser tests drive
+Chrome with; `test/chrome.ts` is only about *finding* a browser.
 
 ### A denial is a decision, not an error state
 

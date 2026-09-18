@@ -185,6 +185,13 @@ interface Measured {
   html: string;
   /** What `1920x1080` and `1440x900` each gave the bank's root element. */
   viewports: Array<{ width: number; height: number; bank: { width: number; height: number } }>;
+  /** The two columns and the composer, per viewport, so the 2/3 split is a number. */
+  columns: Array<{
+    width: number;
+    records: number;
+    assistant: number;
+    composer: number;
+  }>;
 }
 
 /** Boot Next and Chrome, load `/` as Dana, and report what happened. */
@@ -296,6 +303,7 @@ async function measureHome(options: {
     });
 
     const viewports: Measured["viewports"] = [];
+    const columns: Measured["columns"] = [];
     for (const [width, height] of [
       [1920, 1080],
       [1440, 900],
@@ -311,11 +319,13 @@ async function measureHome(options: {
         evaluate<boolean>(cdp as Cdp, `document.querySelector('.bank') !== null`),
       );
       // Hydration, so the recorded network covers the client tree's effects and
-      // not only the server's HTML. The composer is a client-side input.
+      // not only the server's HTML. Through `BankPane`'s own `data-hydrated`
+      // marker (#152, moved here by #155), not through the presence of the
+      // composer: the composer is server-rendered and says nothing about React.
       await waitFor(`hydration at ${width}x${height}`, async () =>
         evaluate<boolean>(
           cdp as Cdp,
-          `document.querySelector('textarea[aria-label="Message the assistant"]') !== null`,
+          `document.querySelector('.bank[data-hydrated="true"]') !== null`,
         ),
       );
       await Bun.sleep(1_500);
@@ -328,10 +338,24 @@ async function measureHome(options: {
           `(() => { const r = document.querySelector('.bank').getBoundingClientRect(); return { width: Math.round(r.width), height: Math.round(r.height) }; })()`,
         ),
       });
+      columns.push({
+        width,
+        ...(await evaluate<{ records: number; assistant: number; composer: number }>(
+          cdp,
+          `(() => {
+            const at = (selector) => Math.round(document.querySelector(selector).getBoundingClientRect().width);
+            return {
+              records: at('.bank-column-records'),
+              assistant: at('.bank-column-assistant'),
+              composer: at('textarea[aria-label="Message the assistant"]'),
+            };
+          })()`,
+        )),
+      });
     }
 
     const html = await evaluate<string>(cdp, `document.documentElement.outerHTML`);
-    return { requests, html, viewports };
+    return { requests, html, viewports, columns };
   } finally {
     cdp?.close();
     await stopProcess(chrome);
@@ -365,6 +389,24 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
     // Two columns, and the conversation is not 1920px wide.
     expect(measured.html).toContain("bank-column-records");
     expect(measured.html).toContain("bank-column-assistant");
+
+    // **Two thirds to the conversation**, the human's call at the 2026-09-18
+    // gate. A ratio rather than two pixel counts, because the counts depend on
+    // padding and the gap and would have to be rewritten whenever either moved;
+    // what was decided is the proportion.
+    for (const column of measured.columns) {
+      const share = column.assistant / (column.records + column.assistant);
+      expect({ width: column.width, twoThirds: Math.abs(share - 2 / 3) < 0.01 }).toEqual({
+        width: column.width,
+        twoThirds: true,
+      });
+      // And still a readable measure: the thing the gate asked for alongside the
+      // ratio was "no 1900px textarea".
+      expect({ width: column.width, composer: column.composer < 1_400 }).toEqual({
+        width: column.width,
+        composer: true,
+      });
+    }
 
     // And no SSE at all was opened: with nothing to watch, this page opens
     // nothing, which is what "no longer depends on `panel_stream`" means.

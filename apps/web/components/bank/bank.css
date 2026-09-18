@@ -188,9 +188,19 @@
 
 /* Two columns since #155: the applications, the user's access and the user's
    session on the left, the conversation on the right at the full height of the
-   viewport. Equal widths, so the transcript's measure is set by the grid rather
-   than by the projector — measured at 1920x1080, the composer is 926px wide,
-   against 1892px if this were still one column across the whole screen.
+   viewport.
+
+   **Two thirds to the conversation**, decided by the human at the 2026-09-18
+   gate: the chat is the thing the demo is about and the thing the room is asked
+   to read, and at even widths it looked like one of two equal panels. The
+   records column keeps the remaining third, which is more than the loan cards
+   need — they are a 15em-minimum auto-fit grid, so at a third of 1920 they
+   stack into one column and grow taller rather than emptier.
+
+   The measure is still set by the grid rather than by the projector. Measured
+   at 1920x1080: columns 622px and 1244px, exactly 1:2, and the composer 1214px
+   — against 1892px if this were one column across the whole screen. At
+   1440x900: 466px, 933px and a 910px composer.
 
    The grid itself does not scroll; each column does. A single scroller would
    move the conversation when the reader scrolled the loan file, which is the
@@ -201,7 +211,7 @@
   overflow: hidden;
   padding: 0.7em 0.9em 1em;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 0.9em;
 }
 
@@ -275,9 +285,20 @@
 
 /* --- loan files ----------------------------------------------------------- */
 
+/* `13.5em` rather than `15em` since #155 gave the conversation two thirds of
+   the screen. The records column is 622px at 1920x1080 and its panel body 592px
+   of that: at a 15em minimum two cards needed 616px, so they stacked, the
+   column grew, and the tool list — act 1's whole surface — went below the fold.
+   At 13.5em they sit side by side at both 1920x1080 and 1440x900 (the root is a
+   `vw` clamp, so the minimum shrinks with the screen), and the tool list is
+   back above it.
+
+   The sign-in panel below the tool list still needs a scroll, at both sizes.
+   That is the price of the two thirds and it is the right thing to pay: it is
+   used once per browser profile, before the demo starts, and act 1 is not. */
 .bank-files {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15em, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(13.5em, 1fr));
   gap: 0.6em;
 }
 

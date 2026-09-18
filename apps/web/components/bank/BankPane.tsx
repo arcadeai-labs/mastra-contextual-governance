@@ -163,8 +163,10 @@ export function BankPane({
           right; on the whole of it, a single column gives the transcript and
           its composer the full 1920px and pushes the tool list and the sign-in
           panel under the fold. Two columns put the conversation beside the file
-          instead, at a readable measure and at the full height of the viewport,
-          with no scrolling needed to reach any of the four regions.
+          instead, at a readable measure and at the full height of the viewport.
+          Two thirds of the width go to the conversation — the human's call at
+          the 2026-09-18 gate: the chat is what the room is asked to read, and
+          at even widths it looked like one of two equal panels.
 
           Both columns are the bank's own application. This is not the split
           #155 removed: that one put a *second system* — the control plane —
