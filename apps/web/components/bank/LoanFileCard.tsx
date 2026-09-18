@@ -1,159 +1,95 @@
 /**
  * One loan application, as the bank's own screen shows it.
  *
- * A pure function of one {@link LoanRead}, so everything worth asserting about
- * it — that a denial says which rule refused and does not read as a crash, that
- * a fault says nothing was decided, that no borrower's account number is on the
- * page — is checkable without a socket or a browser.
- *
- * ## The four outcomes stay four
- *
- * The read either produced a file or it did not, and *why* it did not is three
- * different claims about the world (`lib/loan-context/loans.ts`). This card
- * keeps them apart in words as well as in colour:
- *
- * - **read** — the file.
- * - **denied** — the control plane refused this person this read. The rule's own
- *   sentence, verbatim, `[ref evt_…]` and all, because the panel on `/panel`
- *   joins on that token.
- * - **authorization** — a credential is missing. The card offers the link and
- *   explicit continuation rather than calling it a policy refusal.
- * - **fault** — the plumbing. Nothing decided anything, and the card says so.
+ * A pure function of one {@link LoanCard}, so everything worth asserting about
+ * it — that the decision line names who decided and when, that no borrower's
+ * account number is on the page — is checkable without a socket or a browser.
  *
  * ## What it does not show
  *
- * `bank_account_number` and `tax_id` come back on the tool's result and are not
- * rendered here. They are act 3's subject, the chat and the panel are where the
- * audience watches them being redacted, and there is no reason for a projector
- * to carry a borrower's account number for forty minutes.
+ * `bank_account_number`, `tax_id` and `underwriter_notes`. The first two are
+ * act 3's subject and the third is act 4's; the chat and the panel are where
+ * the audience watches them being redacted and stripped, and there is no reason
+ * for a projector to carry a borrower's account number for forty minutes. They
+ * are absent because `GET /api/loans` never sends them — an allow-list in
+ * `lib/loan-context/read.ts`, not a field this component declines to render.
+ *
+ * ## The decision line
+ *
+ * The one thing on this card that moves during the demo. `approved · Charlie ·
+ * <time>` the moment the approval lands in the loan book, wherever it was made:
+ * by the agent through the gateway, or by Charlie on the approval page. Since
+ * #155 the control plane is a page away rather than a pane away, so this line
+ * is what the room watches instead — the business effect, on the business
+ * system's own screen. It says who, because "approved" with nobody's name on it
+ * is the claim this whole project exists to refuse.
  */
-import type { LoanRead } from "../../lib/loan-context/loans.ts";
-import { count, dollars, statusKey, text } from "./format.ts";
+import type { LoanCard } from "../../lib/loan-context/loans.ts";
+import { count, dollars, statusKey, text, timestamp } from "./format.ts";
 
-export function LoanFileCard({
-  read,
-  onContinueAuthorization,
-  refreshing = false,
-}: {
-  read: LoanRead;
-  onContinueAuthorization?: () => void;
-  refreshing?: boolean;
-}) {
-  if (read.outcome === "read") {
-    const loan = read.loan;
-    return (
-      <article className="bank-file" data-outcome="read">
-        <header className="bank-file-head">
-          <span className="bank-file-id">{loan.loan_id}</span>
-          <span className="bank-status" data-status={statusKey(loan.status)}>
-            {text(loan.status)}
-          </span>
-        </header>
-
-        <h3 className="bank-file-borrower">{text(loan.borrower_name)}</h3>
-        <p className="bank-file-amount">{dollars(loan.amount)}</p>
-        <p className="bank-file-purpose">{text(loan.purpose)}</p>
-
-        <div className="bank-fields">
-          <Field label="Submitted" value={text(loan.submitted_at)} />
-          <Field label="Credit score" value={count(loan.credit_score)} />
-          <Field label="Annual revenue" value={dollars(loan.annual_revenue)} />
-          <Field label="Years trading" value={count(loan.years_in_business)} />
-        </div>
-
-        {loan.underwriter_notes === undefined ? null : (
-          <div className="bank-notes">
-            <span className="bank-field-label">Underwriter notes</span>
-            <p className="bank-notes-body">{loan.underwriter_notes}</p>
-          </div>
-        )}
-      </article>
-    );
-  }
-
+export function LoanFileCard({ loan }: { loan: LoanCard }) {
   return (
-    <article className="bank-file" data-outcome={read.outcome}>
+    <article className="bank-file" data-outcome="read" data-loan={loan.loan_id}>
       <header className="bank-file-head">
-        <span className="bank-file-id">{read.loan_id}</span>
-        <span className="bank-status">{HEADINGS[read.outcome]}</span>
+        <span className="bank-file-id">{loan.loan_id}</span>
+        <span className="bank-status" data-status={statusKey(loan.status)}>
+          {text(loan.status)}
+        </span>
       </header>
 
-      {read.outcome === "denied" ? (
-        <>
-          {/* Verbatim. The rule author wrote this sentence and the panel joins
-              on the token at the end of it. */}
-          <p className="bank-file-note">{read.reason}</p>
-          <p className="bank-quiet">
-            The control plane refused this read and recorded it
-            {read.ref === null ? null : (
-              <>
-                {" as "}
-                <code>{read.ref}</code>
-              </>
-            )}
-            {" in the audit log."}
-          </p>
-        </>
-      ) : null}
+      <h3 className="bank-file-borrower">{text(loan.borrower_name)}</h3>
+      <p className="bank-file-amount">{dollars(loan.amount)}</p>
+      <p className="bank-file-purpose">{text(loan.purpose)}</p>
 
-      {read.outcome === "authorization" ? (
-        <>
-          <p className="bank-file-note">
-            {safeHttpUrl(read.url) === undefined ? (
-              <>Complete provider authorization, then use Continue.</>
-            ) : (
-              <>
-                <a href={safeHttpUrl(read.url)} target="_blank" rel="noreferrer">
-                  Authorize access to the loan book
-                </a>
-                , then use Continue.
-              </>
-            )}
-          </p>
-          <p className="bank-quiet">
-            This read is paused pending provider authorization. Continue starts one fresh governed
-            attempt and does not assume authorization succeeded.
-          </p>
-          {onContinueAuthorization === undefined ? null : (
-            <button
-              type="button"
-              data-action="continue-loan-authorization"
-              aria-label="I have authorized, refresh loan files"
-              onClick={onContinueAuthorization}
-              disabled={refreshing}
-              style={{ font: "inherit", marginTop: "0.55em", padding: "0.35em 0.75em" }}
-            >
-              {refreshing ? "Refreshing…" : "Continue"}
-            </button>
-          )}
-        </>
-      ) : null}
+      <div className="bank-fields">
+        <Field label="Submitted" value={text(loan.submitted_at)} />
+        <Field label="Credit score" value={count(loan.credit_score)} />
+        <Field label="Annual revenue" value={dollars(loan.annual_revenue)} />
+        <Field label="Years trading" value={count(loan.years_in_business)} />
+      </div>
 
-      {read.outcome === "fault" ? (
-        <>
-          <p className="bank-file-note">{read.message}</p>
-          <p className="bank-quiet">
-            No policy decision was made and nothing was recorded. This is a failure in the plumbing,
-            not a refusal.
-          </p>
-        </>
-      ) : null}
+      <LoanDecision loan={loan} />
     </article>
   );
 }
 
 /**
- * The word in the status box when there is no file.
+ * What the loan book records about the decision that stands, or plainly that
+ * there is none.
  *
- * `Denied` here is about the **read**, not about the application — the loan is
- * still pending. Round-tripping that distinction through one word is why the
- * sentence underneath always says who refused what.
+ * A pending application says so rather than leaving the line off: a card whose
+ * decision line is simply missing is indistinguishable from one whose decision
+ * failed to load, and this card updates every two seconds in front of a room.
  */
-const HEADINGS = {
-  denied: "Read refused",
-  authorization: "Not authorized",
-  fault: "Unavailable",
-} as const;
+export function LoanDecision({ loan }: { loan: LoanCard }) {
+  if (loan.decided_at === null && loan.decided_by === null) {
+    return (
+      <p className="bank-file-decision" data-decision="none">
+        Awaiting a decision.
+      </p>
+    );
+  }
+
+  return (
+    <p className="bank-file-decision" data-decision={statusKey(loan.status) ?? "decided"}>
+      <span className="bank-file-decision-status">{text(loan.status)}</span>
+      {loan.decided_by === null ? null : (
+        <>
+          <span className="bank-file-decision-sep"> · </span>
+          <span className="bank-file-decision-by" title={loan.decided_by}>
+            {loan.decided_by_name ?? loan.decided_by}
+          </span>
+        </>
+      )}
+      {loan.decided_at === null ? null : (
+        <>
+          <span className="bank-file-decision-sep"> · </span>
+          <span className="bank-file-decision-at">{timestamp(loan.decided_at)}</span>
+        </>
+      )}
+    </p>
+  );
+}
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
@@ -162,14 +98,4 @@ function Field({ label, value }: { label: string; value: string }) {
       <span className="bank-field-value">{value}</span>
     </div>
   );
-}
-
-function safeHttpUrl(value: string | undefined): string | undefined {
-  if (value === undefined || value.trim() === "") return undefined;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? value : undefined;
-  } catch {
-    return undefined;
-  }
 }

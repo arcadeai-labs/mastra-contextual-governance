@@ -19,18 +19,21 @@
  * 1. It unseals the session here, so the gateway tokens in the cookie never
  *    reach the browser. `SignInPanel` is rendered on this side of the boundary
  *    and handed down as an element, so only what it prints crosses.
- * 2. It opens **one** gateway session and asks it everything this screen needs:
- *    one real `tools/list` with the session's bearer (#15,
- *    `lib/agent/tool-list.ts`), and, on that same listing, the two governed
- *    `Loan_GetLoan` reads the loan cards show (#22). Both answers are handed
- *    down as data. They belong on the server for the same reason: the bearer
- *    never leaves this process.
+ * 2. It opens **one** gateway session and asks it one thing: a real
+ *    `tools/list` with the session's bearer (#15, `lib/agent/tool-list.ts`).
+ *    That is the *whole* cost of this page against the gateway — one listing,
+ *    zero governed tool calls — since #157 moved the loan cards off the MCP
+ *    path. They used to be two `Loan_GetLoan` reads made here, which put two
+ *    decisions on the control plane before the presenter had said anything and
+ *    left the audience unable to tell the agent's calls from the page's chrome.
+ *    `test/home-surface.test.ts` asserts the counts.
  *
- *    They are one session because of #109. The loan files used to be fetched
- *    from the browser, which had to list the gateway's tools again to find
- *    `Loan_GetLoan` — so a page load cost two `tools/list` calls and, against
- *    the real gateway, twice the `/access` fan-out. That second path is gone.
- *    `test/home-surface.test.ts` asserts the count.
+ *    It also reads the loan book, but not from the gateway: `readLoanBook`
+ *    calls `apps/loan-app` over HTTP with this browser's IdP bearer, so the
+ *    first paint is already correct and the cards poll `GET /api/loans` from
+ *    then on. `lib/loan-context/loans.ts` has the argument. The two reads are
+ *    independent — one goes to the gateway, one to the bank's own API — so the
+ *    page waits once rather than twice.
  * 3. It resolves **one** address from the environment at request time: where
  *    #20's chat watches for an approval decision. `next build` inlines
  *    `NEXT_PUBLIC_*` into the client bundle while Render supplies service
@@ -62,10 +65,10 @@ import { configurationProblems, readIdentitySurface } from "../lib/config.ts";
 import { readSessionFromCookies } from "../lib/identity/session.ts";
 import { approvalStreamUrl } from "../lib/governance/stream-url.ts";
 import { homeSurface } from "../lib/home/surface.ts";
+import { readLoanBook } from "../lib/loan-context/read.ts";
 import { PersonaToolList } from "../components/identity/PersonaToolList.tsx";
 import { SignInPanel } from "../components/identity/SignInPanel.tsx";
 import { BankPane } from "../components/bank/BankPane.tsx";
-import { HomeRefreshBoundary } from "../components/shell/HomeRefreshBoundary.tsx";
 
 /**
  * Dynamic, because it reads a session cookie and the environment. Saying so
@@ -104,15 +107,18 @@ export default async function Home() {
     new Map(jar.getAll().map((cookie) => [cookie.name, cookie.value])),
     config,
   );
-  // No session means no network call: `homeSurface` answers without asking.
-  const { tools, files } = await homeSurface(session, { config });
+  // No session means no network call: both of these answer without asking.
+  const [{ tools }, loans] = await Promise.all([
+    homeSurface(session, { config }),
+    readLoanBook(session),
+  ]);
 
   return (
-    <HomeRefreshBoundary>
+    <>
       <BankPane
         signedInAs={session?.email ?? null}
         identity={<SignInPanel session={session} problems={configurationProblems(config)} />}
-        loanFiles={files}
+        loans={loans}
         toolList={<PersonaToolList session={session} tools={tools} />}
         // #20: the chat watches the control plane for the one frame that
         // resumes a turn a human was asked about. `null` unless there is a live
@@ -122,6 +128,6 @@ export default async function Home() {
       <a href="/panel" style={PANEL_LINK}>
         Control plane ↗
       </a>
-    </HomeRefreshBoundary>
+    </>
   );
 }

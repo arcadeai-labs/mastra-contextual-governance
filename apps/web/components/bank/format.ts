@@ -21,6 +21,29 @@ const money = new Intl.NumberFormat("en-US", {
 
 const plain = new Intl.NumberFormat("en-US");
 
+/**
+ * Times are printed in **UTC**, and say so.
+ *
+ * Two reasons, and neither is taste. The server renders the first paint and the
+ * browser renders every poll after it, so a formatter that read the machine's
+ * zone would produce a hydration mismatch on any laptop that is not on UTC. And
+ * `decided_at` is what `loans.db` holds, which is the value a presenter reads
+ * off the audit row beside it — two screens naming the same instant with two
+ * different numbers is a question nobody wants from the back of the room.
+ */
+const instant = new Intl.DateTimeFormat("en-US", {
+  // Written out field by field rather than with `dateStyle`/`timeStyle`, which
+  // `Intl` refuses to combine with `timeZoneName` — and the zone name is the
+  // part that stops a time on a projector from being ambiguous.
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: "UTC",
+  timeZoneName: "short",
+});
+
 /** `95000` → `$95,000`. A string passes through untouched. */
 export function dollars(value: number | string | undefined): string {
   if (typeof value === "number") return money.format(value);
@@ -31,6 +54,20 @@ export function dollars(value: number | string | undefined): string {
 export function count(value: number | string | undefined): string {
   if (typeof value === "number") return plain.format(value);
   return value ?? "—";
+}
+
+/**
+ * `2026-09-18T14:02:11.000Z` → `Sep 18, 2026, 2:02 PM UTC`.
+ *
+ * Anything that is not a timestamp is printed exactly as it arrived. The loan
+ * book writes ISO 8601 and this screen has no business silently discarding a
+ * value it did not expect: the string on screen is then the string in the
+ * database, which is a thing a presenter can check.
+ */
+export function timestamp(value: string | null | undefined): string {
+  if (value === null || value === undefined || value.trim() === "") return "—";
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? value : instant.format(at);
 }
 
 /** Whatever is there, or an em dash. Never an empty cell — a blank reads as a bug. */

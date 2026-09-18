@@ -1,77 +1,46 @@
 /**
- * Everything `/` asks the gateway for, in one gateway session.
+ * Everything `/` asks the gateway for: one `tools/list`, and nothing else.
  *
- * The page has two questions for the same MCP connection: *what may this
+ * ## What this file used to do, and why it stopped
+ *
+ * It used to answer two questions on one gateway session — *what may this
  * persona see* (#15's tool list, act 1) and *what do the two applications under
- * review say* (#22's loan files). Both are answered off one `tools/list` — the
- * tool list is the listing itself, and the loan reads run against the governed
- * tools that listing produced, before the connection is dropped.
+ * review say* (#22's loan files, moved here by #109). The second question is no
+ * longer the gateway's: since #157 the bank's own screens read `apps/loan-app`
+ * directly as the signed-in person and poll it, so loading `/` makes **one**
+ * `tools/list` and **zero** governed tool calls. Every MCP call in the demo now
+ * starts in the chat, which is what makes the panel legible: a card on it is
+ * something the agent did.
  *
- * ## Why this file exists at all
+ * `lib/loan-context/loans.ts` carries the argument in full and `DESIGN.md` →
+ * Business system records the decision. `test/home-surface.test.ts` asserts the
+ * counts off the gateway stand-in's own record rather than describing them.
  *
- * It is #109. Loading `/` used to cost **two** `tools/list` calls: one here,
- * server-side, and one from the browser, which had to list the gateway's tools
- * again to find `Loan_GetLoan` before reading the two files. They could not
- * share a session, because the second was a separate HTTP request that opened
- * its own `MCPClient`. Against the real gateway each listing is also four
- * `/access` calls, so the tidy-up is worth about five audit rows and a round
- * trip per page load. `test/home-surface.test.ts` asserts the count rather
- * than describing it.
+ * ## What is left
  *
- * ## What it does not do
+ * A named seam between the page and `lib/agent/tool-list.ts`, which is worth
+ * keeping for one reason: the page's cost against the gateway is a number this
+ * project has twice got wrong by accident (#109, then #157), and a function
+ * whose whole job is "what one page load asks for" is a place to hold a test
+ * against it.
  *
- * Reseal the session. `sessionSurface` may spend a refreshed gateway token, and
- * a server component cannot set a cookie — the route that *can* reseal is
- * `POST /api/chat`, and `lib/agent/tool-list.ts` states the bargain. The route
- * this replaced did reseal; losing that costs one extra refresh on the next
- * page load and buys the page back a whole round trip.
+ * It does not reseal the session. `sessionTools` may spend a refreshed gateway
+ * token, and a server component cannot set a cookie — the route that *can*
+ * reseal is `POST /api/chat`, and `lib/agent/tool-list.ts` states the bargain.
  */
-import { sessionSurface, type SessionTools, type SessionToolsOptions } from "../agent/tool-list.ts";
-import { createNativeElicitationBridge } from "../agent/native-elicitation.ts";
+import { sessionTools, type SessionTools, type SessionToolsOptions } from "../agent/tool-list.ts";
 import type { Session } from "../identity/session.ts";
-import type { LoanFilesState } from "../loan-context/loans.ts";
-import { readLoanFiles, type ReadLoanFilesOptions } from "../loan-context/read.ts";
 
 export interface HomeSurface {
   /** #15's widget, as data. */
   tools: SessionTools;
-  /** #22's left column, as data. */
-  files: LoanFilesState;
 }
 
-export type HomeSurfaceOptions = SessionToolsOptions & ReadLoanFilesOptions;
+export type HomeSurfaceOptions = SessionToolsOptions;
 
 export async function homeSurface(
   session: Session | null,
   options: HomeSurfaceOptions = {},
 ): Promise<HomeSurface> {
-  // One bridge belongs to this one page attempt. It is installed on the same
-  // MCP client that lists the tools and reads the files; it never crosses a
-  // request or a browser persona.
-  const nativeElicitation = createNativeElicitationBridge();
-  const { tools, inside } = await sessionSurface(
-    session,
-    (listing) => readLoanFiles(listing, session?.email ?? "", { ...options, nativeElicitation }),
-    { ...options, nativeElicitation },
-  );
-  if (inside !== null) return { tools, files: inside };
-
-  // No listing, so no read — and the two halves of the screen say so with the
-  // same sentence, because it is the same gateway session that did not answer.
-  // The one exception is nobody being signed in: "there is no persona to list
-  // tools for" is true and is also not what a column of loan files should say,
-  // and the reader's next move is the same either way.
-  return {
-    tools,
-    files: {
-      status: "refused",
-      refusal:
-        session === null
-          ? {
-              error: "Nobody is signed in on this browser, so there is no one to read the file as.",
-              action: "signin",
-            }
-          : { error: tools.reason, ...(tools.action ? { action: tools.action } : {}) },
-    },
-  };
+  return { tools: await sessionTools(session, options) };
 }

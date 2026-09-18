@@ -1,11 +1,32 @@
 /**
- * #149's production continuation regression.
+ * #152's hydration regression, on the page as it is actually served.
  *
  * This boots the actual Next page, seeds its sealed session cookie in a real
- * headless Chrome, and drives the hydrated page through `HomeRefreshBoundary`,
- * `HomeRefreshContext`, and `router.refresh()`. The gateway is the repo's
- * synthetic MCP server backed by the real hooks, loan app, and local IdP; the
- * browser never receives an injected refresh callback.
+ * headless Chrome, waits for React to take ownership of the controls, and then
+ * drives the chat composer the way a person does. The gateway is the repo's
+ * synthetic MCP server backed by the real hooks, loan app and local IdP; the
+ * loan cards are the real `GET /api/loans` against the real loan book.
+ *
+ * ## What this file used to be, and what #157 took out of it
+ *
+ * It was #149's *continuation* regression: the loan cards were governed
+ * `Loan_GetLoan` reads, a layer-2 challenge put a `Continue` button on a card,
+ * and the test clicked it to drive `HomeRefreshBoundary` and `router.refresh()`
+ * through a re-challenge and a success. #157 moved the cards off the MCP path —
+ * they read the bank's own API as the signed-in person and poll — so there is
+ * no challenge, no Continue button and no refresh boundary left to drive. That
+ * half is deleted because the UI it exercised does not exist, and
+ * `test/loan-board-browser.test.ts` covers what replaced it: a decision made by
+ * somebody else reaching this screen inside one poll interval.
+ *
+ * **The rest of the file stays, and it is the half that matters on CI.** #152's
+ * subject was never the loan card; it was the window between a page being
+ * *rendered* and being *hydrated*, in which a click escapes React and the
+ * composer's form submits natively as `GET /?`, replacing the document and
+ * taking the turn with it. That race is a property of the chat and of Next, not
+ * of how the loan cards are read, and `.github/workflows/ci.yml` installs
+ * Chrome specifically so this runs on every merge. Deleting it along with the
+ * Continue button would have dropped the regression #152 was opened to hold.
  */
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -16,7 +37,7 @@ import type { Subprocess } from "bun";
 import { chunk, chunkName, seal } from "../lib/identity/seal.ts";
 import { SESSION_COOKIE } from "../lib/identity/session.ts";
 import { encodeEvent } from "../lib/agent/events.ts";
-import { DANA, SESSION_SECRET, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
+import { DANA, DEV_IDP_TOKEN_PREFIX, SESSION_SECRET, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
 import { browserRequired, missingBrowserMessage, resolveChrome } from "./chrome.ts";
 // The CDP client moved to `cdp.ts` on #155 so `home-full-screen-browser.test.ts`
 // could drive the same browser. Lifted unchanged; nothing about it is new.
@@ -105,6 +126,13 @@ const HYDRATION_DELAY_MS = Number(process.env.CG_HYDRATION_DELAY_MS ?? "0");
  * `test/home-screen.test.tsx` still holds the other half of it — that the
  * server never emits the attribute itself.
  *
+ * The third control checked here was `[data-action="continue-loan-authorization"]`
+ * until #157 retired it. A loan card stands in its place: it is rendered by
+ * `LoanFilesView`, which is the client component that owns the polling, so its
+ * presence under a hydrated `.bank` says the same thing the button did — the
+ * subtree this test drives is live — and says one thing more, that the new read
+ * path works in a real browser against the real loan book.
+ *
  * Round 1 of this review rejected an earlier version that read React's private
  * `__reactProps$…` properties off the DOM nodes, and was right to: those are
  * React's internal bookkeeping, renamed or removed at React's discretion, and a
@@ -125,23 +153,9 @@ async function waitForHydration(cdp: Cdp): Promise<void> {
           if (document.querySelector('.bank[data-hydrated="true"]') === null) return false;
           return document.querySelector('textarea[aria-label="Message the assistant"]') !== null
             && document.querySelector('form.chat-composer') !== null
-            && document.querySelector('[data-action="continue-loan-authorization"]') !== null;
+            && document.querySelector('.bank-file[data-loan="LN-2291"]') !== null;
         })()`,
       ),
-  );
-}
-
-async function clickContinue(cdp: Cdp): Promise<void> {
-  await evaluate<boolean>(
-    cdp,
-    `(() => {
-      const button = document.querySelector('[data-action="continue-loan-authorization"]');
-      if (!(button instanceof HTMLButtonElement)) return false;
-      button.click();
-      button.click();
-      button.click();
-      return true;
-    })()`,
   );
 }
 
@@ -152,7 +166,7 @@ async function clickContinue(cdp: Cdp): Promise<void> {
  * on a developer machine with no browser at all, and says so when it does.
  */
 test.skipIf(chromeResolution.path === null && !REQUIRED)(
-  "guards one real Next refresh, retries a re-challenge, and preserves chat state",
+  "hydrates before the composer is driven, so a turn is never lost to a native form submit",
   async () => {
     if (chromeResolution.path === null) throw new Error(missingBrowserMessage(chromeResolution));
     const CHROME = chromeResolution.path;
@@ -183,6 +197,11 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
         IDP_CLIENT_ID: "web",
         IDP_CLIENT_SECRET: "not-used-by-local-next-browser",
         APPROVALS_STORE_TOKEN: "store-token-for-agent-tests",
+        // Since #157 the loan cards read the bank's own API rather than the
+        // gateway, so this page needs the loan book's address. It is the
+        // harness's real `apps/loan-app`, which validates the bearer below
+        // against the harness's real dev IdP.
+        LOAN_APP_PUBLIC_HOST: harness.loanAppHost,
       };
 
       next = Bun.spawn({
@@ -234,6 +253,14 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
           access_token: harness.gateway.issueToken(DANA),
           expires_at: Date.now() + 3_600_000,
           client_id: "local-next-browser",
+        },
+        // The IdP bearer the loan cards are read with (#157). The harness's
+        // identity provider is the repo's dev stub, which answers
+        // `/oauth2/userinfo` for `dev:<email>` — the real code path in
+        // `apps/loan-app/src/actor.ts`, with a fixture issuer behind it.
+        idp: {
+          access_token: `${DEV_IDP_TOKEN_PREFIX}${DANA}`,
+          expires_at: Date.now() + 3_600_000,
         },
       };
       const sealed = await seal(session, SESSION_SECRET);
@@ -290,15 +317,13 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
         });
       });
 
-      // The first page attempt is challenged and stops before the sibling read.
-      harness.gateway.requireAuthorizationFor("Loan_GetLoan", "https://provider.example/authorize/loan-book");
       await cdp.command("Page.navigate", { url: origin });
-      await waitFor("initial authorization card", async () =>
-        evaluate<boolean>(cdp as Cdp, `document.querySelector('[data-action="continue-loan-authorization"]') !== null`),
+      await waitFor("the server-rendered loan card", async () =>
+        evaluate<boolean>(cdp as Cdp, `document.querySelector('.bank-file[data-loan="LN-2291"]') !== null`),
       );
-      // That card is server-rendered, so it says nothing about React. Every
-      // interaction below — typing, submitting, clicking Continue — needs
-      // React's handlers to exist, so wait for the handlers themselves.
+      // That card is server-rendered — `app/page.tsx` reads the loan book
+      // before it returns — so it says nothing about React. Every interaction
+      // below needs React's handlers to exist, so wait for the handlers.
       await waitForHydration(cdp);
       // The screen this evidence was measured on, read back from the page
       // rather than assumed from the launch flag.
@@ -306,10 +331,12 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
         { width: VIEWPORT.width, height: VIEWPORT.height },
       );
 
+      // #157, from the browser rather than from a unit: one `tools/list` for
+      // act 1's widget and **no** governed tool call, because nothing this page
+      // draws goes through the gateway any more.
       const initialCounts = { lists: harness.lists.length, calls: harness.calls.length };
       expect(initialCounts.lists).toBe(1);
-      expect(initialCounts.calls).toBe(1);
-      expect(harness.calls[0]?.outcome).toBe("authorization_required");
+      expect(initialCounts.calls).toBe(0);
       const initialState = await evaluate<{ textarea: string; assistants: number }>(
         cdp,
         `(() => {
@@ -382,105 +409,42 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
         );
         throw new Error(`${String(cause)}; browser chat state: ${JSON.stringify(state)}`);
       }
-      // Sending clears the composer. Put a distinctive unsent draft back after
-      // the completed turn so the refresh assertion covers both state shapes.
-      await evaluate<void>(
-        cdp,
-        `(() => {
-          const textarea = document.querySelector('textarea[aria-label="Message the assistant"]');
-          if (!(textarea instanceof HTMLTextAreaElement)) throw new Error('chat textarea missing');
-          const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-          setter?.call(textarea, 'REVIEWER-DRAFT-150 must survive real router.refresh');
-          textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: textarea.value }));
-          textarea.dispatchEvent(new Event('change', { bubbles: true }));
-        })()`,
-      );
-      await Bun.sleep(100);
-      expect(await evaluate<string>(cdp, `document.querySelector('textarea')?.value ?? ''`)).toContain("REVIEWER-DRAFT-150");
-      await evaluate<void>(cdp, `document.querySelector('textarea')?.setAttribute('data-refresh-node', 'true')`);
-      await evaluate<void>(cdp, `document.querySelector('[aria-label="Assistant"]')?.setAttribute('data-chat-node', 'true')`);
-
-      // Hold the synthetic gateway response long enough to observe the actual
-      // pending UI. Three rapid DOM clicks must still produce one listing and
-      // one challenged call.
-      harness.gateway.setToolResponseDelay(900);
-      harness.gateway.requireAuthorizationFor("Loan_GetLoan", "https://provider.example/authorize/retry-first");
-      await clickContinue(cdp);
-      await waitFor("disabled Refreshing feedback", async () =>
-        evaluate<boolean>(
-          cdp as Cdp,
-          `(() => { const b = document.querySelector('[data-action="continue-loan-authorization"]'); return b instanceof HTMLButtonElement && b.disabled && b.textContent?.includes('Refreshing'); })()`,
-        ),
-      );
+      // The turn completed, so the composer is empty again — and the page was
+      // never replaced. Both halves of #152's failure state, asserted rather
+      // than inferred from the turn having worked: the pre-submit marker is
+      // still on the document, and no navigation entry was added.
       expect(
-        await evaluate<boolean>(cdp, `document.querySelector('[data-action="continue-loan-authorization"]') !== null`),
-      ).toBe(true);
-      try {
-        await waitFor("first refresh to settle as a challenge", async () =>
-          evaluate<boolean>(
-            cdp as Cdp,
-            `(() => { const b = document.querySelector('[data-action="continue-loan-authorization"]'); return b instanceof HTMLButtonElement && !b.disabled && b.textContent === 'Continue'; })()`,
-          ),
-        );
-      } catch (cause) {
-        const state = await evaluate<Record<string, unknown>>(
+        await evaluate<{ marker: string | undefined; entries: string[] }>(
           cdp,
-          `(() => ({
-            button: document.querySelector('[data-action="continue-loan-authorization"]')?.outerHTML,
-            cards: document.querySelectorAll('.bank-file').length,
-            body: document.querySelector('.bank-panel-body')?.textContent,
-          }))()`,
-        );
-        throw new Error(`${String(cause)}; browser refresh state: ${JSON.stringify(state)}; counts: ${JSON.stringify({ lists: harness.lists.length, calls: harness.calls.length })}`);
-      }
-      expect(harness.lists.length - initialCounts.lists).toBe(1);
-      expect(harness.calls.length - initialCounts.calls).toBe(1);
-      expect(harness.calls.at(-1)?.outcome).toBe("authorization_required");
-      expect(await evaluate<string>(cdp, `document.querySelector('textarea')?.value ?? ''`)).toContain("REVIEWER-DRAFT-150");
-      expect(await evaluate<number>(cdp, `document.querySelectorAll('[data-role="assistant"]').length`)).toBe(1);
-      expect(await evaluate<boolean>(cdp, `document.querySelector('textarea')?.dataset.refreshNode === 'true'`)).toBe(true);
-      expect(await evaluate<boolean>(cdp, `document.querySelector('[aria-label="Assistant"]')?.dataset.chatNode === 'true'`)).toBe(true);
-
-      // A re-challenge is an explicit retry: it remains paused, and does not
-      // auto-loop after the previous server refresh settles.
-      harness.gateway.requireAuthorizationFor("Loan_GetLoan", "https://provider.example/authorize/retry");
-      await clickContinue(cdp);
-      await waitFor("re-challenge pending feedback", async () =>
-        evaluate<boolean>(cdp as Cdp, `document.querySelector('[data-action="continue-loan-authorization"]')?.textContent?.includes('Refreshing') === true`),
-      );
-      await waitFor("re-challenge to settle", async () =>
-        evaluate<boolean>(
-          cdp as Cdp,
-          `(() => { const b = document.querySelector('[data-action="continue-loan-authorization"]'); return b instanceof HTMLButtonElement && !b.disabled && b.textContent === 'Continue'; })()`,
+          `({
+             marker: document.documentElement.dataset.cgDocMarker,
+             entries: performance.getEntriesByType('navigation').map((entry) => entry.name),
+           })`,
         ),
-      );
-      expect(harness.lists.length - initialCounts.lists).toBe(2);
-      expect(harness.calls.length - initialCounts.calls).toBe(2);
-      expect(harness.calls.at(-1)?.outcome).toBe("authorization_required");
+      ).toEqual({ marker: "pre-submit", entries: [`${origin}/`] });
 
-      // The successful retry replaces the server-provided loan state with both
-      // files, while the stable client shell keeps the conversation and draft.
-      await clickContinue(cdp);
-      await waitFor("both loan files after successful Continue", async () =>
-        evaluate<boolean>(cdp as Cdp, `document.querySelectorAll('.bank-file[data-outcome="read"]').length === 2`),
+      // And the loan cards are what #157 replaced the governed reads with: two
+      // applications, read from the bank's own API as this browser's person,
+      // with no governed tool call behind them. The counts are the gateway
+      // stand-in's own record.
+      expect(
+        await evaluate<string[]>(
+          cdp,
+          `Array.from(document.querySelectorAll('.bank-file-borrower')).map((node) => node.textContent)`,
+        ),
+      ).toEqual(["Northwind Bakery LLC", "Meridian Physical Therapy"]);
+      expect(harness.lists.length - initialCounts.lists).toBe(0);
+      expect(harness.calls.length - initialCounts.calls).toBe(0);
+      // The route the cards actually poll, named. `/api/loan-context` was
+      // #109's browser fetch and has been gone since; `/api/loans` is what
+      // replaced the governed read on #157, and a page that had quietly stopped
+      // polling would still pass every assertion above.
+      const fetched = await evaluate<string[]>(
+        cdp,
+        `performance.getEntriesByType('resource').map((entry) => entry.name)`,
       );
-      expect(harness.lists.length - initialCounts.lists).toBe(3);
-      expect(harness.calls.length - initialCounts.calls).toBe(4);
-      expect(harness.calls.slice(initialCounts.calls).map((call) => call.outcome)).toEqual([
-        "authorization_required",
-        "authorization_required",
-        "ran",
-        "ran",
-      ]);
-      expect(await evaluate<string>(cdp, `document.querySelector('textarea')?.value ?? ''`)).toContain("REVIEWER-DRAFT-150");
-      expect(await evaluate<number>(cdp, `document.querySelectorAll('[data-role="assistant"]').length`)).toBe(1);
-      expect(await evaluate<boolean>(cdp, `document.querySelector('textarea')?.dataset.refreshNode === 'true'`)).toBe(true);
-      expect(await evaluate<boolean>(cdp, `document.querySelector('[aria-label="Assistant"]')?.dataset.chatNode === 'true'`)).toBe(true);
-      expect(await evaluate<string[]>(cdp, `Array.from(document.querySelectorAll('.bank-file-borrower')).map((node) => node.textContent)`)).toEqual([
-        "Northwind Bakery LLC",
-        "Meridian Physical Therapy",
-      ]);
-      expect(await evaluate<string[]>(cdp, `performance.getEntriesByType('resource').map((entry) => entry.name).filter((name) => name.includes('/api/loan-context'))`)).toEqual([]);
+      expect(fetched.filter((name) => name.includes("/api/loan-context"))).toEqual([]);
+      expect(fetched.some((name) => name.includes("/api/loans"))).toBe(true);
     } finally {
       cdp?.close();
       await stopProcess(chrome);
