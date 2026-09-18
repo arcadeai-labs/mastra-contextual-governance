@@ -11,9 +11,11 @@
  * token the browser is never shown. What crosses to the client is the answer,
  * as data.
  *
- * ⚠️ **Layout is #22's.** This page is the tracer bullet's bare scaffold and the
- * split-screen shell replaces it; the widget below is a component with a
- * two-prop surface precisely so that move is a re-parent rather than a rewrite.
+ * ⚠️ **This is not the demo's screen.** `/` is, and it hosts the same two
+ * components — the widget below has a two-prop surface precisely so that the
+ * move was a re-parent rather than a rewrite. This page is the tracer bullet's
+ * bare scaffold and #155 deliberately left it alone: it is where the chat can
+ * be exercised with none of the bank around it.
  */
 import { cookies } from "next/headers";
 

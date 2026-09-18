@@ -106,7 +106,7 @@ export interface AgentHarness {
    * Where this harness's `governance.db` is.
    *
    * Exposed for #22, which needs a rule that refuses a **read** in order to
-   * prove the split screen renders one as a decision rather than as a crash.
+   * prove the bank's screen renders one as a decision rather than as a crash.
    * The seeded policy has no such rule and should not grow one for a test, so
    * the test writes it into the policy database and waits for the cache to poll
    * it up — which is the same mechanism `DESIGN.md` calls "editable live on

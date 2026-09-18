@@ -1,5 +1,5 @@
 /**
- * The loan files the split screen puts in front of the audience, and what
+ * The loan files `/` puts in front of the audience, and what
  * reading one can come back as.
  *
  * Two applications, both named by `DESIGN.md`:
@@ -13,7 +13,7 @@
  *
  * **Both are read through the governed path, as the signed-in person.** There
  * is no direct read of `loans.db` anywhere in `apps/web` and there must never
- * be one: the left half is a client of the bank's API exactly like the agent
+ * be one: the bank's screen is a client of the bank's API exactly like the agent
  * is, so what it shows is what the control plane allowed through. A screen that
  * reached past the hooks would be showing the audience a loan file the demo's
  * own thesis says it might not be entitled to — and act 3's redaction would be
@@ -95,7 +95,7 @@ export interface LoanContextRefusal {
 }
 
 /**
- * What the left half draws, and the only thing that crosses to the browser.
+ * What the bank's screen draws, and the only thing that crosses to the browser.
  *
  * Two states, not three. Until #109 there was a `loading` one, because the
  * files were fetched from the browser after the page had already rendered; they

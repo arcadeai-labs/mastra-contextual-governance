@@ -26,7 +26,7 @@ control layers, two OAuth hops, three databases.
 | `apps/hooks/src/fixtures/governance.json` | **rewrite** | The catalogue, the roster, the rules |
 | `apps/idp` | **delete** | The enterprise IdP, as a demo fixture. You have an Okta |
 | `apps/web/lib/identity/session.ts` | **repoint** | One function pair, `readSession` / `readSessionFromCookies` |
-| `apps/web` — everything else | **keep** | Chat, panel, approval page, split screen |
+| `apps/web` — everything else | **keep** | Chat, panel, approval page, the bank's screen |
 | `apps/hooks` — everything else | **keep** | `/access`, `/pre`, `/post`, audit, SSE, reset |
 | `packages/` | **do not touch** | The hook framework, the policy engine, the shared types |
 | `tools/approvals` | **keep** | Routing and Slack are domain-independent; it names actions, not loans |
@@ -323,11 +323,11 @@ convenience someone adds back later. Keep that test.
 
 ---
 
-## 6. The agent and the left half — `apps/web`
+## 6. The agent and the bank's screen — `apps/web`
 
-`apps/web` is mostly domain-free: the chat, the panel, the approval page and the split
-screen's frame all survive a swap untouched. **Fourteen files do not.** None of them
-carries a control, and they fall into five groups.
+`apps/web` is mostly domain-free: the chat, the panel and the approval page all survive
+a swap untouched. **Thirteen files do not.** None of them carries a control, and they
+fall into five groups.
 
 ### The agent
 
@@ -342,7 +342,7 @@ escalating, retrying, caution or irreversibility. If your swapped demo needs a s
 in the prompt to reach the hook, the run is proving the prompt. Measured on #14 and
 again on #16; round 1 of #88's review removed exactly such a sentence.
 
-### The reads behind the left half (#109)
+### The reads behind the bank's screen (#109)
 
 These are the files that decide *what the boring enterprise app puts on screen*, and
 they are the ones a forker is most likely to miss — the guide missed them until round 2
@@ -350,15 +350,15 @@ of this PR's review.
 
 | | |
 |---|---|
-| `apps/web/lib/loan-context/loans.ts` | the records the left half shows, by id — `DEMO_LOAN_IDS = ["LN-2291", "LN-2299"]` — and the field types one read comes back as |
+| `apps/web/lib/loan-context/loans.ts` | the records the bank's screen shows, by id — `DEMO_LOAN_IDS = ["LN-2291", "LN-2299"]` — and the field types one read comes back as |
 | `apps/web/lib/loan-context/read.ts` | runs two `Loan_GetLoan` calls on an already-open gateway session. Rename the tool, keep the shape |
 | `apps/web/lib/home/surface.ts` | one gateway session per page load, answering both of `/`'s questions: the persona's tool list (act 1) and those reads |
-| `apps/web/app/page.tsx` | `/` itself — the server component that calls `apps/web/lib/home/surface.ts` and hands the result to the split screen |
+| `apps/web/app/page.tsx` | `/` itself — the server component that calls `apps/web/lib/home/surface.ts` and hands the result to `BankPane` |
 
 > ⚠️ **Do not replace these with a database read.** Opening your own database, or calling
 > your API with a service credential, is faster and makes the screen a liar. The claim
 > this demo makes is that *every* read of the system of record passes the control plane,
-> keyed on who is asking — so the left half goes through an MCP client of the gateway
+> keyed on who is asking — so the bank's screen goes through an MCP client of the gateway
 > with the signed-in person's bearer, exactly like the agent, and shows up in the audit
 > log like any other call. With `/post` redaction live, a pane that reached past the
 > hooks would show an unmasked account number inches from a panel asserting there is only
@@ -370,7 +370,7 @@ The whole directory is yours to replace: `apps/web/components/bank/`.
 
 | | |
 |---|---|
-| `apps/web/components/bank/BankPane.tsx` | the left half's chrome — tabs, navy bar, a release number nobody has bumped since 2009 |
+| `apps/web/components/bank/BankPane.tsx` | the whole of `/` — chrome, tabs, a release number nobody has bumped since 2009, and the two-column body |
 | `apps/web/components/bank/LoanFiles.tsx` | the list of records under review |
 | `apps/web/components/bank/LoanFileCard.tsx` | one record: every field name and every label |
 | `apps/web/components/bank/format.ts` | currency, dates, the masked-field rendering |
@@ -378,14 +378,13 @@ The whole directory is yours to replace: `apps/web/components/bank/`.
 | `apps/web/components/bank/ToolListSlot.tsx` | where act 1's tool list sits inside the pane |
 
 **Keep it ugly.** Square corners, hairline rules, uppercase field labels, four tabs that
-go nowhere. A beautiful left half quietly undoes the argument: it makes the governed
+go nowhere. A beautiful bank quietly undoes the argument: it makes the governed
 system look like part of the same product as the thing governing it.
 
-### Two files that are renames rather than replacements
+### One file that is a rename rather than a replacement
 
 | | |
 |---|---|
-| `apps/web/components/shell/SplitScreen.tsx` | generic frame; carries a `loanFiles` prop typed from `apps/web/lib/loan-context/loans.ts`. Rename the prop, keep the component |
 | `apps/web/lib/governance/access-fanout.ts` | the panel's **fixture replay** — pins the measured access-row fanout using `Loan.GetLoan` and `Loan.ApproveLoan` as sample tool names. Not a live path; update it or leave it as a replay of somebody else's demo |
 
 ### Six user-visible strings, in files you otherwise keep

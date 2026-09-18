@@ -23,7 +23,7 @@
  *
  * ## Props
  *
- * Two, and they stay two: `session` and `tools`. #22 owns the split-screen
+ * Two, and they stay two: `session` and `tools`. #22 owned the split-screen
  * shell and hosts this widget inside it, so everything this component needs
  * arrives as data and nothing about the page's layout is decided here.
  */

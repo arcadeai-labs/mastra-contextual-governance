@@ -76,7 +76,7 @@ export function safeNext(value: string | null, fallback: string): string {
 /**
  * The chat, as a page a person can be sent to.
  *
- * `/` and not `/chat`: since #22 the demo's chat is the left half of the split
+ * `/` and not `/chat`: since #22 the demo's chat is on the bank's screen at
  * screen, and `/chat` says so about itself — *"the tracer bullet's bare
  * scaffold"*. Both hops end here now (#118). Hop 1's re-authorization card had
  * its own copy of this string pointing at `/chat`, which meant the two hops put
