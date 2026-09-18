@@ -1,24 +1,34 @@
 /**
- * The shell: what is on each half of the screen, and what keeps them apart.
+ * `/`: the bank's screen, full-screen — and what is no longer on it.
+ *
+ * This file was `split-screen.test.tsx` until #155. The split it was named for
+ * is gone: the bank owns the whole viewport at `/` and the control plane owns
+ * the whole of `/panel`, because in the 2026-09-18 rehearsal two panes moving
+ * in lockstep could not be narrated.
  *
  * Assertions are on markup, through each component's own props, with nothing
  * mocked — the same shape as `test/panel.test.tsx`, for the same reason: every
- * property this slice is accountable for is a property of a pure render.
+ * property this slice is accountable for is a property of a pure render. The
+ * two claims a pure render cannot make — that the served page carries no `cg-`
+ * class and opens no governance-timeline socket — are measured in a real
+ * browser against the real Next server in `test/home-full-screen-browser.test.ts`.
  *
- * Three groups, and the last is the one worth reading:
+ * Four groups, and the last is the one worth reading:
  *
- * 1. **The split.** Enterprise app left, control plane right, in that order,
- *    with the persona, the loan files and the chat on the left and the panel's
- *    stream badge on the right.
- * 2. **A denial is not an error state.** The trap #22's issue names. A red
+ * 1. **The screen.** The bank's chrome, the persona, the loan files, the chat
+ *    and the tool list, with no control-plane column anywhere near them.
+ * 2. **What the split took with it.** The panel, its stream badge, and the
+ *    `correlationKey` join. Absence is the assertion, so it is stated rather
+ *    than implied.
+ * 3. **A denial is not an error state.** The trap #22's issue names. A red
  *    crash banner reads to a room as "the demo broke", when what happened is the
  *    system working exactly as designed, and the two must not look alike.
- * 3. **The fork seam.** A developer restyles the left half and keeps the right
- *    entirely. That is a claim about imports and class names, so it is checked
- *    against the source rather than asserted in a comment.
+ * 4. **The fork seam.** A developer restyles the bank and keeps the control
+ *    plane entirely. That is a claim about imports and class names, so it is
+ *    checked against the source rather than asserted in a comment.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -27,31 +37,36 @@ import { PersonaToolList } from "../components/identity/PersonaToolList.tsx";
 import { EventView } from "../components/chat/Chat.tsx";
 import { LoanFilesView } from "../components/bank/LoanFiles.tsx";
 import { LoanFileCard } from "../components/bank/LoanFileCard.tsx";
-import { SplitScreen } from "../components/shell/SplitScreen.tsx";
 import { TOOL_LIST_SLOT } from "../components/bank/ToolListSlot.tsx";
 import { GATEWAY_START_PATH, SIGNIN_PATH } from "../lib/identity/handlers.ts";
 import type { LoanFilesState, LoanRead } from "../lib/loan-context/loans.ts";
 import type { Session } from "../lib/identity/session.ts";
 import type { SessionTools } from "../lib/agent/tool-list.ts";
-import type { PanelStream } from "../lib/governance/stream-url.ts";
 
 const HERE = import.meta.dir;
 const WEB = join(HERE, "..");
 
-const FIXTURE_STREAM: PanelStream = { mode: "fixture", url: "/api/governance/fixture-stream" };
-const LIVE_STREAM: PanelStream = {
-  mode: "hooks",
-  url: "https://cg-hooks.onrender.com/events",
-  host: "cg-hooks.onrender.com",
-};
-
-function shell(options: { stream?: PanelStream; signedInAs?: string | null; loanFiles?: LoanFilesState } = {}): string {
+/**
+ * The whole of `/`, as `app/page.tsx` composes it.
+ *
+ * One component now, where it used to be a shell wrapping two. The sign-in
+ * panel is stubbed for the same reason it always was: it arrives as an element
+ * from the server component that unseals the session, and this file is about
+ * the screen rather than about #82.
+ */
+function screen(
+  options: {
+    signedInAs?: string | null;
+    loanFiles?: LoanFilesState;
+    approvalStreamUrl?: string | null;
+  } = {},
+): string {
   return renderToStaticMarkup(
-    <SplitScreen
-      stream={options.stream ?? FIXTURE_STREAM}
+    <BankPane
       signedInAs={options.signedInAs === undefined ? "alice@bank.example" : options.signedInAs}
       identity={<p>the sign-in panel, server-rendered</p>}
       loanFiles={options.loanFiles ?? FILES}
+      approvalStreamUrl={options.approvalStreamUrl ?? null}
     />,
   );
 }
@@ -109,38 +124,54 @@ const FILES: LoanFilesState = {
   body: { reads: [NORTHWIND], actor: "alice@bank.example", tool: "Loan_GetLoan" },
 };
 
-describe("the split", () => {
-  test("the enterprise app is on the left and the control plane on the right", () => {
-    const markup = shell();
+describe("the screen", () => {
+  test("the bank owns the page: its chrome is the outermost thing on it", () => {
+    const markup = screen();
 
-    const left = markup.indexOf(`class="cg-split-left"`);
-    const right = markup.indexOf(`class="cg-split-right"`);
-    expect(left).toBeGreaterThan(-1);
-    expect(right).toBeGreaterThan(left);
-    // The bank's chrome inside the left half, the panel's title inside the right.
-    expect(markup.indexOf("Loan Origination System")).toBeGreaterThan(left);
-    expect(markup.indexOf("Loan Origination System")).toBeLessThan(right);
-    expect(markup.indexOf("Control plane")).toBeGreaterThan(right);
+    // One root, and it is the bank's. Before #155 this was `.cg-split` with the
+    // bank in one of its two children.
+    expect(markup).toStartWith(`<div class="bank">`);
+    expect(markup).toContain("Loan Origination System");
+  });
+
+  test("the four regions are all on the screen, in two columns", () => {
+    const markup = screen();
+
+    const records = markup.indexOf(`class="bank-column bank-column-records"`);
+    const assistant = markup.indexOf(`class="bank-column bank-column-assistant"`);
+    expect(records).toBeGreaterThan(-1);
+    expect(assistant).toBeGreaterThan(records);
+
+    // The applications, the user's access and the user's session read down the
+    // first column; the conversation is the whole of the second.
+    expect(markup.indexOf(`data-slot="${TOOL_LIST_SLOT}"`)).toBeGreaterThan(records);
+    expect(markup.indexOf(`data-slot="${TOOL_LIST_SLOT}"`)).toBeLessThan(assistant);
+    expect(markup.indexOf("User session")).toBeLessThan(assistant);
+    expect(markup.indexOf("Assistant")).toBeGreaterThan(assistant);
   });
 
   /**
-   * The other half of this contract — that the attribute *appears* once the
-   * shell mounts — is measured on the real thing, by
-   * `test/home-loan-next-browser.test.ts`, whose readiness gate waits for it
-   * and would time out if it never arrived. What matters here is that the
-   * server does not claim it: an attribute present in the server's own HTML
-   * would answer "yes, hydrated" to a page that is nothing of the kind, which
-   * is the failure #152 exists to close.
+   * #152's readiness marker, on the container that inherited it.
+   *
+   * It was `.cg-split[data-hydrated]`; #155 deleted that shell, so it is
+   * `.bank[data-hydrated]` now, set in `BankPane`'s mount effect. The half of
+   * the contract that says the attribute *appears* is measured on the real
+   * thing by `test/home-loan-next-browser.test.ts`, whose readiness gate waits
+   * for it and would time out if it never arrived. What matters here is the
+   * other half: that the server does not claim it. An attribute present in the
+   * server's own HTML would answer "yes, hydrated" to a page that is nothing of
+   * the kind, which is the failure #152 exists to close — and moving a marker
+   * between components is exactly the edit that could reintroduce it.
    */
-  test("the server never claims the shell is hydrated", () => {
-    const markup = shell();
+  test("the server never claims the screen is hydrated", () => {
+    const markup = screen();
 
-    expect(markup).toContain(`class="cg-split"`);
+    expect(markup).toContain(`class="bank"`);
     expect(markup).not.toContain("data-hydrated");
   });
 
-  test("the left half reads as an internal banking tool rather than a demo", () => {
-    const markup = shell();
+  test("the bank reads as an internal banking tool rather than a demo", () => {
+    const markup = screen();
 
     expect(markup).toContain("Loan Origination System");
     expect(markup).toContain("Commercial Lending Division");
@@ -149,35 +180,19 @@ describe("the split", () => {
       expect(markup).toContain(tab);
     }
     // It does not call itself a demo, a scaffold or a governance anything. The
-    // bank's software has never heard of Arcade; the panel opposite is what
-    // knows about governance.
+    // bank's software has never heard of Arcade.
     //
-    // Scoped to the shell's **own** chrome, which is what `shell()` renders:
-    // both demo fixtures the left half hosts — #82's sign-in panel and #15's
-    // tool list — arrive as props and are stubbed here. Those two do name the
-    // gateway, and should: they are the demo's own furniture standing inside the
-    // bank's screen, in the same category as the persona switcher. What must not
-    // creep in is this file's chrome announcing itself.
-    expect(leftHalf(markup)).not.toMatch(/demo|scaffold|Arcade/i);
+    // Scoped to the bank's **own** chrome, which is what `screen()` renders:
+    // both demo fixtures it hosts — #82's sign-in panel and #15's tool list —
+    // arrive as props and are stubbed here. Those two do name the gateway, and
+    // should: they are the demo's own furniture standing inside the bank's
+    // screen, in the same category as the persona switcher. What must not creep
+    // in is this file's chrome announcing itself.
+    expect(markup).not.toMatch(/demo|scaffold|Arcade/i);
   });
 
-  test("the panel says which stream it is watching, on either half", () => {
-    expect(shell({ stream: LIVE_STREAM })).toContain("LIVE · cg-hooks.onrender.com");
-    expect(shell({ stream: FIXTURE_STREAM })).toContain("FIXTURE REPLAY");
-  });
-
-  test("an unconfigured stream replaces the panel rather than sitting above it", () => {
-    const markup = shell({
-      stream: { mode: "unconfigured", problem: "GOVERNANCE_STREAM is not set." },
-    });
-
-    expect(markup).toContain("GOVERNANCE_STREAM is not set.");
-    // No lanes: nothing subscribed, and no replay is running underneath a warning.
-    expect(markup).not.toContain("cg-lanes");
-  });
-
-  test("the person the whole screen is acting as is named, large, on the left", () => {
-    const markup = shell({ signedInAs: "alice@bank.example" });
+  test("the person the whole screen is acting as is named, large", () => {
+    const markup = screen({ signedInAs: "alice@bank.example" });
 
     expect(markup).toContain("Signed in as");
     expect(markup).toContain("alice@bank.example");
@@ -185,28 +200,28 @@ describe("the split", () => {
   });
 
   test("nobody signed in is said plainly, not left blank", () => {
-    const markup = shell({ signedInAs: null });
+    const markup = screen({ signedInAs: null });
 
     expect(markup).toContain("no user");
     expect(markup).toContain(`data-signed-in="false"`);
   });
 
-  test("the persona switcher is on the left half, rendered by whoever owns it", () => {
+  test("the persona switcher is on the screen, rendered by whoever owns it", () => {
     // Handed down as an element from the server component, so the sealed
     // session is unsealed on the server. This asserts the slot, not #82's
     // markup: the switcher is `components/identity`'s and stays there.
-    expect(shell()).toContain("the sign-in panel, server-rendered");
+    expect(screen()).toContain("the sign-in panel, server-rendered");
   });
 
-  test("the chat is on the left, and says who it is acting as", () => {
-    const markup = shell();
+  test("the chat is on the screen, and says who it is acting as", () => {
+    const markup = screen();
 
     expect(markup).toContain("Assistant");
     expect(markup).toContain("Acting as");
     expect(markup).toContain("Send");
   });
 
-  test("the tool list has a named slot, and the shell does not fill it with its own", () => {
+  test("the tool list has a named slot, and the screen does not fill it with its own", () => {
     const markup = renderToStaticMarkup(
       <BankPane signedInAs="alice@bank.example" identity={null} loanFiles={FILES} />,
     );
@@ -236,16 +251,16 @@ describe("the split", () => {
    * The composition the merge with #15 exists to make.
    *
    * `app/page.tsx` asks the gateway what this session may see and hands
-   * `PersonaToolList` into the shell's slot. This is that arrangement rendered:
+   * `PersonaToolList` into the bank's slot. This is that arrangement rendered:
    * act 1's absence — `Loan_ApproveLoan` missing from Bob's list — surviving
-   * inside #22's layout, with the list still saying where it came from.
+   * the move to full screen, with the list still saying where it came from.
    *
    * Both halves of the claim are checked, because only one of them is about
-   * governance: the tool is absent, **and** nothing in the shell draws it as
+   * governance: the tool is absent, **and** nothing on the screen draws it as
    * hidden. A crossed-out approval tool is the single most tempting thing to add
    * to this screen and it would be a picture of a control that does nothing.
    */
-  test("the shell hosts #15's gateway-sourced list, and act 1's absence survives it", () => {
+  test("the screen hosts #15's gateway-sourced list, and act 1's absence survives it", () => {
     const markup = renderToStaticMarkup(
       <BankPane
         signedInAs={SAM}
@@ -263,6 +278,119 @@ describe("the split", () => {
     expect(markup).toContain("tools/list");
     // And the built-in it filtered, named rather than quietly dropped.
     expect(markup).toContain("System_ManageAuthorization");
+  });
+});
+
+/**
+ * What #155 removed, asserted as absence.
+ *
+ * A control surface that quietly stops being rendered looks exactly like one
+ * that is rendering nothing because there is nothing to render. These four
+ * facts are the ones a reviewer would otherwise have to take from a diff.
+ *
+ * The strongest of them — that the *served* page carries no `cg-` class and
+ * opens no governance-timeline socket — cannot be made by a pure render at all,
+ * because it is a claim about the whole client tree and the network. It is
+ * measured in a real browser against the real Next server in
+ * `test/home-full-screen-browser.test.ts`.
+ */
+describe("what the split took with it", () => {
+  test("no control-plane column, no lanes, no panel chrome", () => {
+    const markup = screen();
+
+    // The panel's own namespace, in any form. `.cg-split*` is deleted outright;
+    // the rest of `cg-` belongs to `/panel`.
+    expect(markup).not.toMatch(/\bcg-[a-z]/);
+    expect(markup).not.toContain("Control plane");
+    expect(markup).not.toContain("Access");
+    expect(markup).not.toContain("Pre");
+    expect(markup).not.toContain("Post");
+  });
+
+  test("no stream badge: this page makes no claim about a control plane", () => {
+    // Both halves of #81's badge. A bank page that said LIVE or FIXTURE REPLAY
+    // would be answering "is this real?" about a surface it does not show.
+    const live = screen({ approvalStreamUrl: "https://cg-hooks.onrender.com/events" });
+
+    expect(live).not.toContain("LIVE ·");
+    expect(live).not.toContain("FIXTURE REPLAY");
+    expect(live).not.toContain("cg-hooks.onrender.com");
+  });
+
+  test("the shell that held the split is gone, and nothing imports it", () => {
+    expect(existsSync(join(WEB, "components/shell/SplitScreen.tsx"))).toBe(false);
+    expect(existsSync(join(WEB, "components/shell/shell.css"))).toBe(false);
+
+    for (const directory of ["lib", "app", "components", "test"]) {
+      for (const path of walk(join(WEB, directory))) {
+        const source = readFileSync(path, "utf8");
+        expect({ path, imports: /from\s+"[^"]*(SplitScreen|shell\/shell\.css)/.test(source) }).toEqual({
+          path,
+          imports: false,
+        });
+      }
+    }
+  });
+
+  test("no `.cg-split` rule survives in any stylesheet this app serves", () => {
+    for (const path of ["app/globals.css", "components/bank/bank.css", "components/chat/chat.css"]) {
+      expect({ path, splits: readFileSync(join(WEB, path), "utf8").includes("cg-split") }).toEqual({
+        path,
+        splits: false,
+      });
+    }
+  });
+
+  /**
+   * The join goes with the screen it joined.
+   *
+   * #6's token still rides in the denial's text and the panel still outlines
+   * whatever key it is handed (`test/panel.test.tsx` covers that) — but the
+   * chat no longer has an outlet to hand one through, so nobody can wire the
+   * two together by accident and leave a highlight that means nothing.
+   */
+  test("the chat has no correlation callbacks left to feed a panel with", () => {
+    const chat = readFileSync(join(WEB, "components/chat/Chat.tsx"), "utf8");
+    const pane = readFileSync(join(WEB, "components/bank/BankPane.tsx"), "utf8");
+
+    expect(/^\s*onEvent\??[:(]/m.test(withoutComments(chat))).toBe(false);
+    expect(/^\s*onTurnStart\??[:(]/m.test(withoutComments(chat))).toBe(false);
+    expect(withoutComments(pane)).not.toContain("onChatEvent");
+    expect(withoutComments(pane)).not.toContain("correlation");
+  });
+
+  /**
+   * #20 stayed, deliberately, and this is the line where that decision is
+   * written down.
+   *
+   * The criterion #155 was filed with said `/` opens no SSE to the hooks
+   * stream. Taken literally that also removes the approval-notice listener,
+   * and act 2's second half — Charlie approves, Dana's turn resumes — silently
+   * stops working on the page the demo is given on. Confirmed with the driver
+   * 2026-09-18: the *governance timeline* subscription goes, the approval-only
+   * listener stays. It reads `event: approval` and drops every
+   * `event: governance` frame by name.
+   */
+  test("the approval listener survives, and it is the only stream the page takes", () => {
+    const page = readFileSync(join(WEB, "app/page.tsx"), "utf8");
+
+    expect(page).toContain("approvalStreamUrl(process.env)");
+    // Not the panel's resolver, which is what used to hand the shell a whole
+    // `PanelStream` so it could render a badge and open a timeline socket.
+    expect(withoutComments(page)).not.toContain("resolvePanelStream");
+    expect(withoutComments(page)).not.toContain("ControlPlanePanel");
+  });
+
+  test("with no live control plane the screen still renders, whole", () => {
+    // `approvalStreamUrl` is `null` on a deployment with no hooks host. Before
+    // #155 the same condition put #81's "there is no stream" error panel on the
+    // right half of this page; now there is nothing for it to be about.
+    const markup = screen({ approvalStreamUrl: null });
+
+    expect(markup).toContain("Loan Origination System");
+    expect(markup).toContain("Northwind Bakery LLC");
+    expect(markup).toContain("Send");
+    expect(markup).not.toContain("GOVERNANCE_STREAM");
   });
 });
 
@@ -553,17 +681,17 @@ describe("a denial is a decision, not an error", () => {
 /**
  * The fork seam.
  *
- * #22: "the layout is also the forking seam — a developer restyles the left and
- * keeps the right entirely, so keep the styling boundaries clean enough that
- * replacing the left touches no governance code."
+ * #22: "the layout is also the forking seam — a developer restyles the bank and
+ * keeps the control plane entirely, so keep the styling boundaries clean enough
+ * that replacing the bank touches no governance code."
  *
  * That is a claim nobody can keep by intention alone, so it is checked against
- * the source. The direction matters: the **left** may not reach into the right.
- * The shell may touch both — it is the seam — and is held to the narrower rule
- * that it uses the panel's two public entry points and none of its parts.
+ * the source. #155 made it a one-way rule with nothing left to qualify it:
+ * there is no shell straddling both surfaces any more, so the bank may not
+ * reach into governance, full stop.
  */
 describe("the fork seam", () => {
-  const LEFT_HALF = ["components/bank", "components/chat"];
+  const BANK_SIDE = ["components/bank", "components/chat"];
 
   function sourcesUnder(relative: string): Array<{ path: string; source: string }> {
     const directory = join(WEB, relative);
@@ -578,8 +706,8 @@ describe("the fork seam", () => {
       }));
   }
 
-  test("nothing in the left half imports a governance component", () => {
-    for (const { path, source } of LEFT_HALF.flatMap(sourcesUnder)) {
+  test("nothing on the bank's side imports a governance component", () => {
+    for (const { path, source } of BANK_SIDE.flatMap(sourcesUnder)) {
       expect({ path, imports: /from\s+"[^"]*components\/governance/.test(source) }).toEqual({
         path,
         imports: false,
@@ -587,16 +715,16 @@ describe("the fork seam", () => {
     }
   });
 
-  test("no governance class name is used on the left half", () => {
+  test("no governance class name is used on the bank's side", () => {
     // `cg-` is the panel's namespace and `app/globals.css` owns every one of
-    // them. A left half that reached for `.cg-event` would break when the panel
-    // restyled, which is the coupling this seam exists to prevent.
-    for (const { path, source } of LEFT_HALF.flatMap(sourcesUnder)) {
+    // them. A bank screen that reached for `.cg-event` would break when the
+    // panel restyled, which is the coupling this seam exists to prevent.
+    for (const { path, source } of BANK_SIDE.flatMap(sourcesUnder)) {
       expect({ path, uses: /\bcg-[a-z]/.test(source) }).toEqual({ path, uses: false });
     }
   });
 
-  test("the left half's stylesheet styles nothing but the left half", () => {
+  test("the bank's stylesheet styles nothing but the bank", () => {
     const selectors = withoutComments(readFileSync(join(WEB, "components/bank/bank.css"), "utf8"));
 
     expect(selectors).not.toContain(".cg-");
@@ -605,25 +733,44 @@ describe("the fork seam", () => {
     }
   });
 
-  test("the shell uses the panel as a whole surface, never as parts", () => {
-    const source = readFileSync(join(WEB, "components/shell/SplitScreen.tsx"), "utf8");
-    // `components/governance`, reached as `../governance/…` from here. Excluding
-    // `lib/governance`, which is not the panel: `correlation.ts` is #6's join,
-    // a module both surfaces are meant to share.
+  /**
+   * `/panel` is the only page that assembles the panel, and it places it rather
+   * than building it.
+   *
+   * This used to be asserted about `SplitScreen`, which straddled both
+   * surfaces. #155 deleted it, and the rule moved to the page that inherited
+   * the panel: the same claim, one file further out.
+   */
+  test("the panel is used as a whole surface, never as parts", () => {
+    const source = readFileSync(join(WEB, "app/panel/page.tsx"), "utf8");
+    // `components/governance`, reached as `../../components/governance/…`.
+    // Excluding `lib/governance`, which is not the panel.
     const imported = [...source.matchAll(/from\s+"([^"]*governance\/([A-Za-z]+)\.tsx?)"/g)]
       .filter((match) => !(match[1] as string).includes("lib/governance"))
       .map((match) => match[2]);
 
     expect(imported.sort()).toEqual(["ControlPlanePanel", "PanelStreamError"]);
-    // The same pair `app/panel/page.tsx` uses. Anything else — a lane, a card,
-    // the decision table — would be this shell assembling the panel rather than
-    // placing it, and #21 could no longer change its own insides.
+    // Anything else — a lane, a card, the decision table — would be this page
+    // assembling the panel rather than placing it, and #21 could no longer
+    // change its own insides.
     for (const internal of ["Lane", "EventCard", "MaskedDiff", "decisions", "ControlPlanePanelView"]) {
       expect(source).not.toContain(`governance/${internal}`);
     }
   });
 
-  test("the paths the left half links to are the ones identity actually serves", () => {
+  /**
+   * And `/` is on the other side of it: the bank's page composes the bank and
+   * nothing else. This is the import-level half of the "no control-plane
+   * column" claim; the markup-level half is in "what the split took with it"
+   * and the served-HTML half is in the browser test.
+   */
+  test("the bank's page imports nothing from components/governance", () => {
+    const source = withoutComments(readFileSync(join(WEB, "app/page.tsx"), "utf8"));
+
+    expect(/from\s+"[^"]*components\/governance/.test(source)).toBe(false);
+  });
+
+  test("the paths the bank links to are the ones identity actually serves", () => {
     // `components/bank/LoanFiles.tsx` writes the two out rather than importing a
     // server module into a client component. A duplicated literal drifts; this
     // is what stops it.
@@ -633,7 +780,7 @@ describe("the fork seam", () => {
     expect(source).toContain(`href: "${GATEWAY_START_PATH}"`);
   });
 
-  test("the home shell owns Continue through Next router.refresh", () => {
+  test("the home page owns Continue through Next router.refresh", () => {
     const page = readFileSync(join(WEB, "app/page.tsx"), "utf8");
     const boundary = readFileSync(join(WEB, "components/shell/HomeRefreshBoundary.tsx"), "utf8");
 
@@ -644,7 +791,7 @@ describe("the fork seam", () => {
   /**
    * The other direction of the same claim: `apps/web` reads the loan book
    * through the gateway and by no other route. A direct database read would be
-   * invisible on screen and would make the left half a liar — see
+   * invisible on screen and would make the bank's screen a liar — see
    * `lib/home/surface.ts`.
    */
   test("nothing this service serves opens the loan book directly", () => {
@@ -679,13 +826,6 @@ function walk(directory: string): string[] {
     if (entry.isDirectory()) return walk(path);
     return entry.name.endsWith(".ts") || entry.name.endsWith(".tsx") ? [path] : [];
   });
-}
-
-/** Everything inside the left column, so a test can assert on that half alone. */
-function leftHalf(markup: string): string {
-  const start = markup.indexOf(`class="cg-split-left"`);
-  const end = markup.indexOf(`class="cg-split-right"`);
-  return markup.slice(start, end === -1 ? undefined : end);
 }
 
 /** The `background` an inline style set, so two cards can be compared without naming a hex. */
