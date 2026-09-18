@@ -198,8 +198,8 @@ export const SIGN_IN_PATH = "/sign-in/email";
  * holding two live access tokens — the one `apps/web` got at sign-in, which the
  * bank's screens carry, and the one Arcade holds from hop 2 — with `/` and the
  * `/loans` board open on a second display, for a rehearsal longer than the
- * ~15 minutes #167 bought. Written out: **8 live tokens, 16 polling surfaces,
- * and a stage reset every few minutes that re-signs all four.**
+ * ~15 minutes #167 bought. Written out: **8 live tokens across 8 polling
+ * surfaces, and a stage reset every few minutes that re-signs all four.**
  *
  * ---
  *
@@ -227,12 +227,13 @@ export const SIGN_IN_PATH = "/sign-in/email";
  * traffic, so there is no countdown to run out.
  *
  * `max: 120` is what has to fit inside any 2-second chain. The largest burst
- * this system can produce is a stage reset landing on cold caches: 4 personas ×
- * 2 surfaces × 2 tokens = 16 simultaneous misses (`actorFromRequest` does not
- * coalesce concurrent misses — one fetch per miss), plus 4 sign-in callbacks in
- * `apps/web` and 4 Arcade reads of the email claim = **24**. 120 is 5× that,
- * and it still bounds an unauthenticated flood at 60 requests/second per
- * bucket — the guard that is actually worth keeping on a public endpoint.
+ * this system can produce is a stage reset landing on cold caches: per persona
+ * the two open surfaces miss on the same browser token at once
+ * (`actorFromRequest` does not coalesce concurrent misses — one fetch per miss)
+ * and the Arcade token misses once, so 3 × 4 personas = 12, plus 4 sign-in
+ * callbacks in `apps/web` and 4 Arcade reads of the email claim = **20**. 120
+ * is 6× that, and it still bounds an unauthenticated flood at 60
+ * requests/second per bucket — the guard worth keeping on a public endpoint.
  *
  * The pair is **strictly more permissive than what it replaces**, which is why
  * nothing that worked can start failing: every chain of requests under a 2s
