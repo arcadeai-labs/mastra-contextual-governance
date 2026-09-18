@@ -54,18 +54,50 @@ function baseUrl(host: string): string {
  * person costs 2 × 30 = 60 introspections a minute, and each one is a request
  * the identity provider counts. Reusing an answer for T milliseconds turns
  * that into one call per T per person: at T = 60_000 it is 60/min → 1/min,
- * 59 of every 60 calls gone. Halving T to 30s only recovers one call a minute
- * and doubles the upstream traffic; doubling it to 120s buys half a call a
- * minute in exchange for twice the staleness below. 60s is where the curve
- * flattens.
+ * 59 of every 60 calls gone.
  *
- * Why it has to be more than a few seconds: the provider (Better Auth 1.7.2,
- * defaults, measured 2026-09-18) counts per path in a 10-second window whose
- * counter resets only after a full window with *no* request on that path. A
- * 2-second poll therefore never lets it reset — it ratchets to the ceiling and
- * then refuses everything for a window, which is what stopped sign-in. Any
- * interval comfortably longer than 10 seconds breaks the ratchet; 60 seconds
- * is four times the margin even with all four personas signed in at once.
+ * **What the provider actually enforces**, measured 2026-09-18 against
+ * `apps/idp` booted the way its Dockerfile boots it. Not Better Auth's own
+ * default — `@better-auth/oauth-provider@1.7.2` declares a rule for this path
+ * that overrides it:
+ *
+ *     pathMatcher: (path) => path === "/oauth2/userinfo",
+ *     window: opts.rateLimit?.userinfo?.window ?? 60,
+ *     max:    opts.rateLimit?.userinfo?.max    ?? 60
+ *
+ * **60 requests per 60-second window**, and the counter resets only after a
+ * full window with *no allowed request* on that path — every allowed request
+ * slides the window forward. A 2-second poll therefore never lets it reset: it
+ * ratchets to the ceiling within a minute or two, depending on how many screens
+ * are open, and then refuses everything for a minute. That is what stopped
+ * sign-in — `apps/web` reads the same endpoint from the same bucket.
+ *
+ * **T therefore equals the window; it does not clear it.** There is no margin
+ * here, and the thing that looks like margin is Better Auth's own default
+ * (`window: 10`, `max: 100`, in `context/create-context.mjs`), which this path
+ * never uses. What T = 60s actually buys is this:
+ *
+ *  - **One signed-in person is safe.** Their single cached answer expires, and
+ *    the next 2-second poll re-resolves it, so calls land 60–62 seconds apart
+ *    — just over the window, so the counter resets every time and never passes
+ *    1. Measured at a 61-second interval: five calls, none refused.
+ *  - **Four personas are not.** Four calls a minute spaced ~15 seconds apart
+ *    never leave the window quiet, so the count still ratchets — to 60 in
+ *    about fifteen minutes rather than about fifteen seconds, ending in a
+ *    one-minute refusal window and roughly 6% of calls refused against ~80%
+ *    before this existed.
+ *
+ * **A longer T does not close that.** Silence for a whole window means one
+ * call per minute *in total*, so N signed-in people would need T ≥ N × 60s:
+ * the requirement grows with the audience, which makes it a race rather than a
+ * fix, and every second of it is staleness below. T = 60s is the smallest
+ * value that keeps a lone person at one call per window, and the largest whose
+ * staleness is still the one minute this file promises. Closing the residual
+ * needs the thing this service cannot do from here: an explicit `rateLimit`
+ * block at the provider (the rule above reads `?? 60`, so it is overridable
+ * without touching token format or registration), or registering an
+ * `oauthResource` so tokens are JWTs verified offline against `/jwks` and this
+ * endpoint is not called at all. Both are #166, and both are the human's.
  *
  * **Staleness bound.** An answer may be up to {@link RESOLUTION_TTL_MS}
  * milliseconds — 60 seconds — older than the moment it is used. A token
@@ -162,7 +194,7 @@ function remember(key: string, email: string, now: number): void {
  * the identity provider. Nothing but a successful resolution is ever kept — a
  * 401, a 429 or an unreachable provider is passed straight to the caller and
  * erases whatever was held for that token, because remembering a refusal would
- * turn a provider having a bad ten seconds into an outage that outlives it.
+ * turn a provider having a bad minute into an outage that outlives it.
  *
  * `now` is a parameter so that the expiry is testable without waiting a minute
  * of wall clock; nothing in the service passes it.

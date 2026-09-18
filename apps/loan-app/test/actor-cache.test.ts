@@ -181,7 +181,7 @@ describe("what is never remembered", () => {
     expect(rememberedKeys()).toEqual([]);
   });
 
-  test("a 429 is not remembered at all, so a bad ten seconds is not an outage", async () => {
+  test("a 429 is not remembered at all, so a bad minute is not an outage", async () => {
     answers = { "tok-alice": ALICE };
     status = 429;
 
@@ -189,9 +189,9 @@ describe("what is never remembered", () => {
     expect(rememberedKeys()).toEqual([]);
 
     // The moment the provider answers again, so does this service. A refusal
-    // kept for a minute would have turned the provider's throttling into a
-    // minute of the loan book refusing everyone, which is worse than the
-    // thing being fixed.
+    // kept for a minute would have turned the provider's own one-minute
+    // refusal window into a second minute of the loan book refusing everyone,
+    // which is worse than the thing being fixed.
     status = null;
     expect(await actorFromRequest(read("tok-alice"), idpHost)).toBe(ALICE);
     expect(calls).toBe(2);
