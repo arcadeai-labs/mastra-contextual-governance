@@ -367,6 +367,16 @@ services:
       # join key between Arcade's user_id, the OAuth subject and the loan book's
       # actor column, so a value here that omits it breaks identity rather than
       # narrowing it. Set it only to ask for more, never fewer.
+      #
+      # There is now one reason to ask for more. Since #157 cg-web keeps that
+      # access token and reads the loan book with it, and measured 2026-09-18
+      # against cg-idp: `openid email` returns **no** refresh token and a
+      # 3600-second access token, while `openid email offline_access` returns
+      # one and renews cleanly. The default is left alone because an hour
+      # outlasts a webinar and an expired token is a plain re-sign-in prompt on
+      # the card — never a denial and never a fault. Set
+      # `openid email offline_access` here to have cg-web renew instead; it
+      # adds one line to the consent screen a presenter sees once per browser.
       - key: IDP_SCOPES
         sync: false
       # Where `confirm_user` lives, which is NOT api.arcade.dev. Defaults to
@@ -457,6 +467,19 @@ services:
       # GOVERNANCE_STREAM=hooks above, leaving it blank is the error state
       # rather than a quiet replay.
       - key: HOOKS_PUBLIC_HOST
+        sync: false
+      # Where the bank's own screens read the loan book, since #157: the `/`
+      # cards and the `/loans` board call cg-loan-app's HTTP API directly, as
+      # the signed-in person, with the IdP access token from their own sign-in.
+      # Not through the gateway, and never with a service credential —
+      # `DESIGN.md` → Business system has the reversal and the reasoning.
+      #
+      # The same value cg-hooks and the Loan toolkit hold. `sync: false` for the
+      # same reason as every other cross-service address here: read it off the
+      # cg-loan-app service page. Leave it blank and this service falls back to
+      # `localhost:8082`, which on Render means the loan cards say the loan book
+      # could not be reached — loudly, and never as a policy refusal.
+      - key: LOAN_APP_PUBLIC_HOST
         sync: false
       # The same value as cg-hooks' RESET_TOKEN (#106). Held server-side only
       # and never sent to the browser: the panel's Reset button posts to a

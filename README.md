@@ -515,7 +515,7 @@ is read off the Render service page.** See the warning in step 1.
 | Variable | Read by | Where the value comes from |
 |---|---|---|
 | `HOOKS_PUBLIC_HOST` | `apps/web`, `tools/approvals`, `bun run reset` | `cg-hooks`' Render page. This one reaches the browser via the panel, so a bare service name fails in a visitor's DevTools |
-| `LOAN_APP_PUBLIC_HOST` | `apps/hooks`, `tools/loan`, `bun run reset` | `cg-loan-app`'s Render page. Reaches the toolkit as an Arcade secret |
+| `LOAN_APP_PUBLIC_HOST` | `apps/hooks`, `apps/web`, `tools/loan`, `bun run reset` | `cg-loan-app`'s Render page. Reaches the toolkit as an Arcade secret. `apps/web` reads the loan book with it for the `/` cards and the `/loans` board (#157) |
 | `IDP_PUBLIC_HOST` | `apps/loan-app`, `bun run reset` | `cg-idp`'s Render page. Where bearer tokens are validated. Locally, also the port `dev:idp-stub` binds |
 | `WEB_PUBLIC_HOST` | `tools/approvals` | `cg-web`'s Render page. Builds the approval link. Absent from `render.yaml`: Render injects `RENDER_EXTERNAL_HOSTNAME` |
 | `PUBLIC_URL` | `apps/web` | `cg-web`'s Render page, **with the scheme**. Every OAuth `redirect_uri` is built from it and matched byte for byte. Also decides whether the session cookie carries `Secure` |
