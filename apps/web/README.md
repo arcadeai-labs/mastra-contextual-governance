@@ -331,8 +331,60 @@ ids are on the card behind a disclosure. Three limits, all deliberate:
   neighbour to neighbour would let a slow drip of matching decisions collapse into one
   row claiming they arrived together.
 
-`/panel?fanout=1` replays the measured shape through the fixture stream, so the two
-rows and their counts are something to look at rather than read about.
+### One card per listing (#156)
+
+A `tools/list` is a different shape from a fan-out. Arcade answers one listing with
+**four** `/access` calls, each writing a row per governed tool plus, when it reached
+past the catalogue, one summary row — about ten rows for one listing
+(`apps/hooks/src/access-audit.ts`, #107). Drawn a card each they arrive faster than
+anyone can narrate, and the one fact worth taking from them is singular: *this is what
+that person can see.*
+
+So **all** adjacent `access` decisions for one `user_id` inside the window become one
+**listing card**: time, person, `tools/list`, the tools left enabled as a count
+expandable to names, and the tools **hidden by name** with the rule id that hid each —
+which is act 1, on one card, in the words the policy used. The summary row feeds the
+card instead of being a card, shown in the hook's own sentence rather than as a tool
+called `*`. The card states how many decisions it stands for and lists every member
+event id behind a disclosure; it never claims Arcade called `/access` once.
+
+**A burst is only labelled `tools/list` on evidence**, never on the heuristic alone:
+
+- it carries a summary row (`tool: "*"`), which only a catalogue-wide call writes; or
+- it names **`LISTING_TOOL_SPREAD` (3) or more distinct tools**. A `/access` on a
+  `tools/call` is asked about the one tool being called; the widest `tools/call` shape
+  ever measured here is #13's two successive calls naming two tools between them, and a
+  listing names six. Three is the smallest number no measured `tools/call` produces.
+
+A burst that is neither — the #13 fan-out — draws as the runs of repeats it always did
+and never says `tools/list`. A control surface that labelled a `tools/call` a listing
+would be asserting an event that did not happen.
+
+**Why three seconds.** Measured where it can be: through the local rig — `apps/hooks`
+with its real policy behind the gateway stand-in — one listing's six decisions share a
+single timestamp, a spread of **0 ms**, printed on every run by
+`test/access-listing-live.test.tsx`:
+
+```
+[#156] one listing: 6 access decisions spread over 0 ms (window 3000 ms)
+```
+
+The #13 fan-out spreads 40 ms per decision and 160 ms end to end. What the window
+actually has to cover is the gap between the deployed gateway's **four** `/access`
+calls for one listing — four HTTPS round trips to Render, which nothing here can
+measure. Three seconds is an order of magnitude above every measured burst and well
+under the gap between two things a presenter does. If a deployed listing ever spreads
+wider it draws as several cards rather than one, which is the measured case #156 says
+to reopen with — nothing is lost either way, the panel just tells a longer story.
+
+Two consequences worth knowing: two listings by the same person more than the window
+apart are two cards, and two people listing inside the window are two cards. Decisions
+that genuinely interleave on the wire are not reached past to merge them, because not
+reordering the lane outranks merging it.
+
+`/panel?fanout=1` replays both measured shapes through the fixture stream — the #13
+fan-out, then one persona's whole listing ten seconds later — so the two kinds of card
+are something to look at rather than read about.
 
 ### Which stream it watches
 
@@ -397,7 +449,7 @@ hypothetical. In fixture mode the page's own query string tunes the replay:
 ```
 /panel?repeat=2000&delayMs=0     # 10,000 events, as fast as the socket carries them
 /panel?delayMs=300               # the four acts, faster than the default 900ms pacing
-/panel?fanout=1                  # the acts, then the measured /access fan-out (#64)
+/panel?fanout=1                  # the acts, the measured /access fan-out (#64), one listing (#156)
 ```
 
 Lanes are bounded **separately** — one shared window would let an `/access` sweep evict

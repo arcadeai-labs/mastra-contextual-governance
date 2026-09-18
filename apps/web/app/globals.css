@@ -724,6 +724,95 @@ body {
   white-space: pre-wrap;
 }
 
+/* --- a listing card ------------------------------------------------------- */
+
+/*
+ * One person's `tools/list` (#156). Same card, same tints, same meta line —
+ * what changes is the middle: instead of one tool and one outcome it carries
+ * two tallies and then the tools that were taken away, by name.
+ *
+ * The hidden tools are the point of the card, so they are the largest thing
+ * inside it after `tools/list` itself. Everything that survived is a number,
+ * expandable; six tool names is a wall nobody reads from the back of a room.
+ */
+
+/* Enabled and hidden, side by side, in the slot the decision line occupies on
+   an ordinary card — display face and glyph-plus-word, so the two states stay
+   distinguishable without colour. */
+.cg-listing-tallies {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2em 1em;
+  margin: 0.22em 0 0;
+  font-family: var(--font-display);
+  font-size: 1.18em;
+  line-height: 1.1;
+}
+
+.cg-listing-tally {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
+}
+
+.cg-listing-tally[data-decision="allow"] {
+  color: var(--allow);
+}
+.cg-listing-tally[data-decision="deny"] {
+  color: var(--deny);
+}
+
+/* A tool this person cannot see, and the rule that took it. The name is
+   monospace like every other identifier on the panel, and sits above its rule
+   chip rather than beside it so a long tool name never pushes the chip off. */
+.cg-listing-hidden {
+  margin: 0.45em 0 0;
+  border-left: 0.2em solid var(--deny);
+  padding-left: 0.5em;
+}
+
+.cg-listing-hidden-tool {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 1.05em;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+/* A listing that hid nothing says so out loud: silence would read exactly like
+   a rule that matched nothing. */
+.cg-listing-none {
+  margin: 0.45em 0 0;
+  font-size: 0.94em;
+  line-height: 1.4;
+  color: var(--white);
+}
+
+/* The #107 summary row, in the hook's own words. Quieter than a rule's reason:
+   it accounts for the catalogue, it is not the decision anybody came to see. */
+.cg-listing-rest {
+  margin: 0.45em 0 0;
+  font-size: 0.86em;
+  line-height: 1.4;
+  color: var(--neutral);
+  overflow-wrap: anywhere;
+}
+
+/* What the card is. Last, smallest, and never omitted — the card stands for
+   several decisions and must not be read as one. */
+.cg-listing-note {
+  margin: 0.5em 0 0;
+  font-size: 0.78em;
+  line-height: 1.4;
+  color: var(--neutral);
+}
+
+.cg-listing-note code {
+  font-family: var(--font-mono);
+}
+
 /* --- the diff ------------------------------------------------------------- */
 
 .cg-diff {

@@ -14,6 +14,7 @@
 import { aGovernanceEventSequence } from "@cg/policy-schema";
 
 import { anAccessFanout } from "../../../../lib/governance/access-fanout.ts";
+import { anAccessListing } from "../../../../lib/governance/access-listing.ts";
 import { GOVERNANCE_EVENT_NAME } from "../../../../lib/governance/subscribe.ts";
 
 export const dynamic = "force-dynamic";
@@ -62,15 +63,23 @@ export function GET(request: Request): Response {
    */
   const repeat = Math.floor(positiveParam(params, "repeat", 1, { min: 1, max: MAX_REPEAT }));
   /**
-   * `?fanout=1` appends the `/access` fan-out measured on #13 — three access
-   * decisions for one `Loan.GetLoan` call, two for one `Loan.ApproveLoan` —
-   * so the access lane's grouping can be watched rather than described. Off
-   * by default: the four acts are the story, and a stream that silently grew
-   * five events would break the one thing every other fixture test counts.
+   * `?fanout=1` appends both measured `/access` shapes, so the access lane's
+   * two kinds of card can be watched rather than described:
+   *
+   * - the fan-out measured on #13 — three access decisions for one
+   *   `Loan.GetLoan` call, two for one `Loan.ApproveLoan` — which is a
+   *   `tools/call` shape and draws as runs of repeats; then
+   * - one persona's whole `tools/list` (#156), ten seconds later so it is
+   *   unmistakably a second burst, which draws as one listing card naming the
+   *   tool it hid.
+   *
+   * Off by default: the four acts are the story, and a stream that silently
+   * grew twelve events would break the one thing every other fixture test
+   * counts.
    */
   const events =
     params.get("fanout") === "1"
-      ? [...aGovernanceEventSequence(), ...anAccessFanout()]
+      ? [...aGovernanceEventSequence(), ...anAccessFanout(), ...anAccessListing()]
       : aGovernanceEventSequence();
 
   const encoder = new TextEncoder();
