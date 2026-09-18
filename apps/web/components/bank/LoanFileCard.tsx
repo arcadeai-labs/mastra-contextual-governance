@@ -14,7 +14,7 @@
  *
  * - **read** — the file.
  * - **denied** — the control plane refused this person this read. The rule's own
- *   sentence, verbatim, `[ref evt_…]` and all, because the panel on the right
+ *   sentence, verbatim, `[ref evt_…]` and all, because the panel on `/panel`
  *   joins on that token.
  * - **authorization** — a credential is missing. The card offers the link and
  *   explicit continuation rather than calling it a policy refusal.

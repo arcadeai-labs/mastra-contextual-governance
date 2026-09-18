@@ -18,7 +18,7 @@
  *
  * `sessionTools` is the narrow reading of this module; {@link sessionSurface}
  * is the general one. A page load needs the persona's tool list *and* the two
- * governed `Loan_GetLoan` reads the left half puts on screen, and until #109
+ * governed `Loan_GetLoan` reads the bank's screen puts up, and until #109
  * those were two `tools/list` calls in two MCP sessions — the second one
  * because a browser-side request could not share a connection with a server
  * render it was not part of. `sessionSurface` takes a
@@ -77,7 +77,7 @@ export type SessionTools =
    *
    * `action` is the click that would fix it, when there is one. It is a field
    * rather than something a caller greps out of `reason`, because a second
-   * surface reads this same answer since #109 — the loan files on the left half
+   * surface reads this same answer since #109 — the loan files on the bank's screen
    * come out of this same listing — and two surfaces deciding from a sentence
    * whether there is a way in would be two chances to get it wrong.
    */
@@ -164,7 +164,7 @@ export async function sessionTools(
  * One gateway session: `tools/list` once, then `inside` on what it advertised.
  *
  * `inside` runs **before the connection is dropped and only when the listing
- * arrived**, which is the whole of #109: the loan files the left half shows are
+ * arrived**, which is the whole of #109: the loan files the bank's screen shows are
  * two `Loan_GetLoan` calls that used to cost a second `tools/list` in a second
  * MCP session, because they were made from the browser through a route of their
  * own. They are now made here, on the session the page already opens.

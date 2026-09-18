@@ -135,7 +135,7 @@ describe("nothing outside the subset renders", () => {
     // The claim above is only worth as much as this one. One React escape hatch
     // anywhere on this side of the seam and the parser's care stops mattering.
     //
-    // Comments stripped, the same way `test/split-screen.test.tsx` strips them
+    // Comments stripped, the same way `test/home-screen.test.tsx` strips them
     // for the seam rules: every file in this directory explains why the escape
     // hatch is forbidden, and a rule nobody may write down is a rule nobody can
     // follow.

@@ -3,11 +3,16 @@
  * on the socket.
  *
  * The panel watches the same URL for `event: governance` (`subscribe.ts`). This
- * is a second subscription for a second consumer, rather than a fan-out of the
- * first, for one reason: the two halves of the split screen are two component
- * trees with two lifetimes, and threading one subscription between them would
- * make the chat's ability to resume depend on the panel being mounted. On
- * `/chat` it is not.
+ * is a second subscription for a second consumer rather than a fan-out of the
+ * first, and #155 turned that from a design choice into the only thing that
+ * could have worked: the panel is on `/panel` now and the chat is on `/` and
+ * `/chat`, so the two consumers are never in the same page at all. The chat's
+ * ability to resume a turn has never depended on the panel being mounted, and
+ * now it could not.
+ *
+ * This is the only stream `/` opens, and `test/home-full-screen-browser.test.ts`
+ * is what says so: it cuts the socket after pushing a governance row with an
+ * `id:` and checks that nothing reconnects asking to resume from it.
  *
  * ## What it does not do
  *

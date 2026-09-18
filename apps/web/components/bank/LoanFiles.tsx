@@ -5,14 +5,14 @@
  *
  * The initial render is a pure function of what the read produced, so every
  * property worth asserting is checkable without a socket. The component also
- * accepts the explicit post-authorization refresh from the split-screen shell:
+ * accepts the explicit post-authorization refresh from the App Router boundary:
  * the shell uses Next's router.refresh(), while the reads still happen
  * server-side through the gateway.
  *
  * **The files are still read through the gateway.** Two real governed tool
  * calls as the signed-in person — `Loan_GetLoan`, through `/access`, the auth
  * requirement and `/pre` — and two rows appear on the panel opposite before the
- * presenter has said anything. That is the honest price of a left half that
+ * presenter has said anything. That is the honest price of a bank screen that
  * reads the bank's system of record the same way the agent does; the
  * alternative is a second, ungoverned path into the same data sitting inches
  * from a panel claiming there is only one. `lib/loan-context/read.ts` has the
@@ -33,7 +33,7 @@ import { LoanFileCard } from "./LoanFileCard.tsx";
  * component drags the OIDC client and the sealing code into the browser bundle
  * — `BankPane` is `"use client"`, so everything under it is client code — which
  * is the failure `lib/agent/events.ts` records for `CHAT_PATH`. The cost of a
- * duplicated literal is drift, so `test/split-screen.test.tsx` reads the other
+ * duplicated literal is drift, so `test/home-screen.test.tsx` reads the other
  * file and fails if the two ever disagree — the same bargain `lib/config.ts`
  * strikes with `DEV_STORE_TOKEN`.
  */

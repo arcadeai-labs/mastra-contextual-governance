@@ -1,8 +1,10 @@
 # apps/web — the demo UI
 
-Next.js, and since #22 `/` is the demo: a deliberately boring enterprise loan app on
-the left, the Arcade control plane on the right. It carries the identity (#82), the
-chat with the agent (#14), the control-plane panel (#21) and the approval page (#19).
+Next.js, and `/` is the demo: a deliberately boring enterprise loan app, full-screen.
+The Arcade control plane is full-screen too, on its own page at `/panel`, and the
+presenter switches between them — #22 put them side by side and #155 took the split
+back out. This service carries the identity (#82), the chat with the agent (#14), the
+control-plane panel (#21) and the approval page (#19).
 
 ```sh
 bun run --cwd apps/web dev               # then open / — or /panel, /chat, /approvals/<id>
@@ -298,8 +300,9 @@ locally by `test/identity-flow.test.ts` against a stand-in.
 
 ## The control-plane panel
 
-`/panel` renders it full-screen. `<ControlPlanePanel>` is the component #22 drops into
-the right half; it renders no `<html>` or `<body>` of its own.
+`/panel` renders it full-screen, and since #155 that is the only place it renders at
+all. `<ControlPlanePanel>` renders no `<html>` or `<body>` of its own, so the page it
+sits in owns the frame.
 
 Three lanes — Access, Pre, Post — fed by a `text/event-stream` of `GovernanceEvent`s
 (#5). Green allow, red deny with the rule that fired, amber modify with one row per
@@ -582,23 +585,44 @@ needs a real admin identity, and no persona in this demo is an administrator
 (DESIGN.md) — inventing one for a button would be inventing an identity the four acts
 then have to explain. A deployment nobody is presenting from leaves the variable unset.
 
-## The split screen — `/`
+## The bank's screen — `/`
 
-`components/shell/SplitScreen.tsx`. Two halves, a chartreuse rule between them, and
-nothing embedded in anything: the layout is the argument, because the claim is that the
-controls live *outside* the system being controlled.
+`components/bank/BankPane.tsx`, full-screen. #22 built this as the left half of a split
+screen with the control plane in the right; #155 deleted the split after the 2026-09-18
+rehearsal, because every action on the left moved the right at the same moment and an
+audience cannot be asked to watch two surfaces animate while the presenter explains a
+third. The claim that the controls live *outside* the system being controlled is now
+made by there being two pages, and by the bank's page knowing nothing about the other
+one.
+
+What went with the split: `SplitScreen.tsx`, `components/shell/shell.css`, the panel's
+stream badge on this page, and the `correlationKey` join. Nothing is reconstructed
+across tabs.
 
 It **composes**, and every piece of it was built by another slice. `app/page.tsx` is the
 one file where they meet:
 
 | region | component | slice |
 |---|---|---|
-| left · chrome, tabs, the signed-in email | `components/bank/BankPane.tsx` | #22 |
-| left · applications under review | `components/bank/LoanFiles.tsx` | #22, #109 |
-| left · assistant | `components/chat/Chat.tsx` | #14 |
-| left · user access (`data-slot="tool-list"`) | `components/identity/PersonaToolList.tsx` | #15 |
-| left · user session | `components/identity/SignInPanel.tsx` | #82 |
-| right | `components/governance/ControlPlanePanel.tsx` | #21, #81 |
+| chrome, tabs, the signed-in email | `components/bank/BankPane.tsx` | #22, #155 |
+| left column · applications under review | `components/bank/LoanFiles.tsx` | #22, #109 |
+| left column · user access (`data-slot="tool-list"`) | `components/identity/PersonaToolList.tsx` | #15 |
+| left column · user session | `components/identity/SignInPanel.tsx` | #82 |
+| right column · assistant | `components/chat/Chat.tsx` | #14 |
+| the corner link to `/panel` | `app/page.tsx` | #155 |
+
+Two columns, both the bank's own application, because one column across 1920px gives
+the transcript and its composer the full width and pushes the tool list and the sign-in
+panel under the fold. **Two thirds of the width go to the conversation**, decided by the
+human at the 2026-09-18 gate: the chat is what the room is asked to read, and at even
+widths it looked like one of two equal panels.
+
+Measured at 1920x1080: columns 622px and 1244px, exactly 1:2, with a 1214px composer —
+against 1892px if this were one column. At 1440x900: 466px, 933px and a 910px composer.
+`test/home-full-screen-browser.test.ts` asserts the ratio rather than the pixel counts,
+which depend on the padding and the gap. The loan cards' `auto-fit` minimum came down to
+`13.5em` so two still sit side by side in the narrower column; the sign-in panel below
+the tool list needs a scroll at both sizes, which is what the two thirds cost.
 
 The tool list is #15's, hosted rather than reimplemented, and the slot exists so that it
 can be: a client-side list that merely hid a tool would look exactly like one the access
@@ -607,20 +631,27 @@ hook shortened, which is the failure this project keeps naming. `homeSurface`
 leaves the process, and the result arrives at the widget as data — the arrangement
 `PersonaToolList`'s own docstring asks for. Act 1 survives the layout: as Bob,
 `Loan_ApproveLoan` is absent from the list, and nothing in the shell draws it as hidden
-(`test/split-screen.test.tsx`, *"the shell hosts #15's gateway-sourced list, and act 1's
+(`test/home-screen.test.tsx`, *"the screen hosts #15's gateway-sourced list, and act 1's
 absence survives it"*).
 
-The widget keeps its own card and is drawn in the left half's colours, because `--line`
+The widget keeps its own card and is drawn in the bank's colours, because `--line`
 and `--muted` reach it from `.bank`. That is as far as this stylesheet goes: the card's
 frame is set inline, and flattening it would mean `!important` against another slice's
 component. `components/bank/bank.css` says so where the rule would have gone.
 
-The one thing the shell adds is a join: when the chat shows a denial, the panel outlines
-the audit rows it came from. #6 built that seam and #21 wired the panel to accept a key;
-nothing had handed it one before, because the two surfaces had never been on the same
-page.
+### The one stream this page opens
 
-### The left half reads the loan book through the governed path
+#20's approval listener, and nothing else. It reads `event: approval` off the hook
+server's `/events` and drops every `event: governance` frame by name
+(`lib/governance/approval-stream.ts`), which is what resumes Dana's turn when Charlie
+approves. The panel's timeline subscription went to `/panel` with the panel, and
+`test/home-full-screen-browser.test.ts` measures the difference in a real browser: it
+pushes a governance row with an `id:`, cuts the socket, and checks that nothing
+reconnects asking to resume from it. With no live control plane the address is `null`
+and this page opens nothing at all — it does not depend on `panel_stream`, which
+`/health` still reports for `/panel`.
+
+### The bank's screen reads the loan book through the governed path
 
 `lib/loan-context/read.ts` calls `Loan_GetLoan` for `LN-2291` and `LN-2299` over the MCP
 session `homeSurface` already opened, carrying the signed-in persona's bearer — the same
@@ -647,7 +678,7 @@ is governed.
 The sentence for a misconfigured toolkit moved with the reads and did not soften: nothing
 governed ending in `_GetLoan` puts *"The gateway advertised N tools and none of the
 governed ones is a `GetLoan` … Check `ARCADE_LOAN_TOOLKIT` against a real `tools/list`"*
-in the left column, with the advertised names under it. An empty column looks exactly
+in the loan column, with the advertised names under it. An empty column looks exactly
 like a control plane that denied both files, and only that sentence names the variable a
 human has to go and fix.
 
@@ -658,7 +689,7 @@ evidence that a hook decided, and everything else is a fault.
 ### Loan-file authorization pauses and refreshes
 
 The first `Loan_GetLoan` authorization challenge is a terminal outcome for that page
-attempt. The sequential reader stops before the next loan call, and the left card keeps
+attempt. The sequential reader stops before the next loan call, and the loan card keeps
 the validated HTTP(S) authorization URL and provider instructions instead of flattening
 the structured MCP error into an unavailable-file message. Legacy `authorization_url`
 errors, native URL elicitation callbacks, and structured MCP `-32042` results all use
@@ -674,6 +705,8 @@ transport, `test/home-loan-browser.test.tsx` covers the isolated rendered compon
 and `test/home-loan-next-browser.test.ts` drives a real Next page in headless
 Chrome at 1440x900: a delayed synthetic gateway response, rapid clicks, a re-challenge,
 and a successful Continue are measured through the production refresh/context path.
+`test/home-full-screen-browser.test.ts` is the second browser measurement, and it
+resolves its browser the same way.
 
 That last one runs on CI as well as on a laptop (#152). `test/chrome.ts` resolves the
 browser from `CG_CHROME_BIN`, then `PATH`, then the platform's usual locations, and a
@@ -681,21 +714,26 @@ miss is a *failure* on CI rather than a skip — the workflow installs Chrome in
 `check` job precisely so the regression cannot go quiet there. It skips only on a
 developer machine with no browser, and prints where it looked when it does.
 
-The test waits for the shell to hydrate before driving it. The page and its
+The test waits for the screen to hydrate before driving it. The page and its
 authorization card are server-rendered, so their presence proves nothing about whether
 React is holding the form yet; clicking Send before `hydrateRoot()` installs React's
 root listener submits the composer natively as `GET /?`, which replaces the document
 and loses the turn. That was the flake PR154's reviewer measured. `CG_HYDRATION_DELAY_MS`
 holds the client chunks back so the race can be reproduced on demand.
 
-What it waits for is `.cg-split[data-hydrated="true"]` — one inert attribute
-`components/shell/SplitScreen.tsx` sets on mount and never reads. A parent's mount
-effect runs after its children have committed, so the shell saying so means the
+What it waits for is `.bank[data-hydrated="true"]` — one inert attribute
+`components/bank/BankPane.tsx` sets on mount and never reads. A parent's mount
+effect runs after its children have committed, so the screen saying so means the
 composer and the loan cards beneath it are hydrated with their handlers attached.
-The server never emits it (`test/split-screen.test.tsx`), which is what makes it
+The server never emits it (`test/home-screen.test.tsx`), which is what makes it
 worth waiting for. Round 1 of #152's review rejected the first version, which read
 React's private `__reactProps$…` DOM bookkeeping instead — a readiness proof resting
 on internals is one minor upgrade away from passing without checking anything.
+
+It was `.cg-split`, on the split screen's shell, until #155 deleted that shell; the
+marker moved to the container that inherited the job, and the property it proves did
+not move with it. `test/cdp.ts` holds the DevTools client both browser tests drive
+Chrome with; `test/chrome.ts` is only about *finding* a browser.
 
 ### A denial is a decision, not an error state
 
@@ -708,19 +746,20 @@ recorded. Before #22 all four wore the same red.
 
 ### Projected
 
-Wide screens only; mobile is out of scope per #1. Both halves size in `em` off one
-`clamp()` — `.bank` in `components/bank/bank.css` and `.cg-panel` scaled for half width
-in `components/shell/shell.css` — so the whole screen scales from two numbers.
-Measured at 1920x1080: `.bank` 20.2px, `.cg-panel` 18.2px, the borrower line 30px, the
-smallest label 14.5px, every piece of body text at 8:1 or better.
+Wide screens only; mobile is out of scope per #1. Each page sizes in `em` off one
+`clamp()` — `.bank` in `components/bank/bank.css`, `.cg-panel` in `app/globals.css` —
+so each screen scales from one number. Measured at 1920x1080: `.bank` 20.2px, the
+borrower line 30px, the smallest label 14.5px, every piece of body text at 8:1 or
+better. `.cg-panel` is 25.3px now that the panel is never half a screen.
 
 ### The fork seam
 
-A developer restyles the left half and keeps the right entirely. `test/split-screen.test.tsx`
-enforces it rather than trusting it: nothing under `components/bank` or
-`components/chat` imports a governance component or uses a `cg-` class name, `bank.css`
-styles nothing but `.bank-*`, and the shell may use the panel's two public entry points
-(`ControlPlanePanel`, `PanelStreamError`) and none of its parts.
+A developer restyles the bank and keeps the control plane entirely.
+`test/home-screen.test.tsx` enforces it rather than trusting it: nothing under
+`components/bank` or `components/chat` imports a governance component or uses a `cg-`
+class name, `bank.css` styles nothing but `.bank-*`, `app/page.tsx` imports nothing from
+`components/governance`, and `app/panel/page.tsx` may use the panel's two public entry
+points (`ControlPlanePanel`, `PanelStreamError`) and none of its parts.
 
 ## Fonts
 

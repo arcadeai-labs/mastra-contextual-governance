@@ -80,9 +80,10 @@ body {
  * The control-plane panel (#21)
  *
  * Sized in `em` off `.cg-panel`'s own font-size, which is a `clamp()` on the
- * viewport. The panel is half a screen in the split-screen shell (#22) and a
- * whole one on its own page, and both are read from across a room; scaling one
- * root rather than every rule is what lets it do both.
+ * viewport. The panel was half a screen in #22's split-screen shell and a whole
+ * one on its own page; since #155 it is only ever the whole of `/panel`. The
+ * clamp stays — it is read from across a room, and scaling one root rather than
+ * every rule is what let it do both and is what keeps it legible at any width.
  *
  * The structure the eye should find, in order: three lanes, then within a lane
  * a card, then within a card which tool call, what happened, and which rule.

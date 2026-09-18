@@ -1,8 +1,9 @@
 "use client";
 
 /**
- * The chat with the agent. #14 built it; #22 put it in the left half of the
- * split screen and changed how three of its eight event kinds look.
+ * The chat with the agent. #14 built it; #22 put it inside the bank's screen
+ * and changed how three of its eight event kinds look; #155 gave it the right
+ * column of that screen at full height.
  *
  * It does four things the plainest version would not, and each is an acceptance
  * criterion rather than decoration:
@@ -51,9 +52,9 @@
  *   other way.
  *
  * Sizes are `em` rather than `rem` for the same reason `.cg-panel` is
- * (`app/globals.css`): this component is half a screen on a projector and a
- * narrow column on a laptop, and scaling one root beats scaling thirty rules.
- * The left half's root is `.bank` in `components/bank/bank.css`.
+ * (`app/globals.css`): this component is a column on a projector and a narrow
+ * one on a laptop, and scaling one root beats scaling thirty rules. On `/` that
+ * root is `.bank` in `components/bank/bank.css`.
  *
  * The denial's remediation text is rendered **verbatim**, including the
  * `[ref evt_…]` token the control plane embedded. That token is what #21's panel
@@ -141,15 +142,15 @@ const label: React.CSSProperties = {
 
 export interface ChatProps {
   signedInAs: string | null;
-  /**
-   * Every event as it arrives, in order. The split screen uses it to point the
-   * control-plane panel at whatever the chat is currently showing, so a denial
-   * in the transcript and the card on the panel light up together (#21's
-   * `correlationKey`). Optional: `/chat` passes nothing and behaves as before.
+  /*
+   * There were two callbacks here until #155: `onEvent` and `onTurnStart`, by
+   * which the split screen pointed the control-plane panel at whatever the
+   * chat was showing (#21's `correlationKey`). The split screen is gone and the
+   * panel is a page away, so nothing could hand one a key any more. They are
+   * deleted rather than left unused — an outlet nothing plugs into is the
+   * shape of a control that does nothing. The panel still accepts a
+   * `correlationKey`; `test/panel.test.tsx` is what exercises it.
    */
-  onEvent?: (event: ChatEvent) => void;
-  /** A new conversation has started, so the surrounding panel can clear its correlation. */
-  onTurnStart?: () => void;
   /**
    * The governance stream, resolved on the server and handed down as an
    * address (#20). `null` when this deployment has no live stream, in which
@@ -197,12 +198,7 @@ function samePersona(requesterId: string, signedInAs: string | null): boolean {
   );
 }
 
-export function Chat({
-  signedInAs,
-  onEvent,
-  onTurnStart,
-  approvalStreamUrl = null,
-}: ChatProps) {
+export function Chat({ signedInAs, approvalStreamUrl = null }: ChatProps) {
   const [prompt, setPrompt] = useState(
     "Approve the loan for $95K and double-check your work so you don't make any mistakes.",
   );
@@ -266,8 +262,7 @@ export function Chat({
     pendingDecisionRef.current.clear();
     pendingReconnectGenerationRef.current = null;
     followTranscriptRef.current = true;
-    onTurnStart?.();
-  }, [onTurnStart, signedInAs]);
+  }, [signedInAs]);
 
   // Follow only while the reader is near the latest content. A presenter can
   // inspect older turns without a streamed delta yanking the viewport away;
@@ -362,7 +357,6 @@ export function Chat({
           turnEvents.push(parsed);
           if (generation !== runGenerationRef.current) continue;
           addEvent(options.turnIndex, parsed);
-          onEvent?.(parsed);
           if (parsed.kind === "authorization" && authorizationChallengeRef.current === null) {
             const challenge = { prompt: options.prompt, turnIndex: options.turnIndex };
             authorizationChallengeRef.current = challenge;
@@ -749,7 +743,7 @@ function detailOf(detail: unknown): string {
  * Exported because it is the unit #22's acceptance criterion is about — "renders
  * denials without looking like an error state" is a property of this function
  * and of nothing else, and asserting it needs neither a socket nor a DOM.
- * `test/split-screen.test.tsx` renders each of the ten kinds through it.
+ * `test/home-screen.test.tsx` renders each of the ten kinds through it.
  */
 export function EventView({
   event,

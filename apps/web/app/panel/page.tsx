@@ -1,10 +1,13 @@
 /**
- * The control-plane panel on its own page.
+ * The control-plane panel, full-screen, and since #155 the only place it is
+ * rendered at all.
  *
- * The panel's home is the right half of the split screen, which is #22's to
- * build. This page exists so the surface can be opened, rehearsed and reviewed
- * before that lands, and so a presenter can throw it onto a second screen on
- * its own — which is how it gets used at a booth.
+ * It was built for the right half of #22's split screen and this page was the
+ * spare: somewhere the surface could be opened and rehearsed on its own, which
+ * is also how it gets used at a booth. The 2026-09-18 rehearsal reversed which
+ * of the two was the exception — two panes moving in lockstep could not be
+ * narrated — so the split is gone, `/` is the bank alone, and this is the
+ * control plane alone. The presenter switches between them deliberately.
  *
  * A **server** component, and that is the point: it reads the environment here
  * and hands the stream's address down as a prop. `.env.example` explains at

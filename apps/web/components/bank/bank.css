@@ -1,13 +1,19 @@
 /*
- * The left half: the bank's loan origination system.
+ * The bank's loan origination system — since #155, the whole of `/`.
  *
- * **This file is the fork seam.** Everything the enterprise side of the split
- * screen looks like is here, and nothing here names a `cg-` class or a
- * governance component. Replacing the left half with a real product's UI is
- * replacing this file and `components/bank/*` — the control plane on the right
- * keeps working, because the two halves share nothing but the grid in
- * `components/shell/shell.css` and the brand tokens in `app/globals.css`.
- * `test/split-screen.test.tsx` fails if that stops being true.
+ * **This file is the fork seam.** Everything the enterprise application looks
+ * like is here, and nothing here names a `cg-` class or a governance
+ * component. Replacing the bank with a real product's UI is replacing this
+ * file and `components/bank/*` — the control plane at `/panel` keeps working,
+ * because the two surfaces now share nothing at all but the brand tokens in
+ * `app/globals.css`. `test/home-screen.test.tsx` fails if that stops being
+ * true.
+ *
+ * #22 sized this pane as half of a 1920 screen. #155 gave it the whole
+ * viewport, so the layout rules below own the full height (`.bank`) and split
+ * the body into two columns rather than one (`.bank-body`, `.bank-column`).
+ * The type scale did not move: it is a `clamp()` on `vw`, which never knew how
+ * wide the pane was.
  *
  * ## Boring on purpose
  *
@@ -15,14 +21,14 @@
  * navy chrome bar, a release number nobody has bumped in a while. It is meant
  * to read as a system of record that predates the agent by fifteen years,
  * because the claim the demo is making is that *this* is what agents are being
- * connected to. A pretty left half argues against the thesis: it makes the
- * governed system look like part of the same product as the thing governing it.
+ * connected to. A pretty bank argues against the thesis: it makes the governed
+ * system look like part of the same product as the thing governing it.
  *
  * The one thing it is not allowed to be is illegible. Type is sized in `em` off
  * `.bank`'s own `clamp()`, exactly as `.cg-panel` is (`app/globals.css`), so a
- * half-width column on a projector scales from one root rather than from thirty
- * rules. Measured at 1920x1080: base 20px, the borrower line 30px, the smallest
- * label 15px.
+ * column on a projector scales from one root rather than from thirty rules.
+ * Measured at 1920x1080: base 20px, the borrower line 30px, the smallest label
+ * 15px.
  *
  * ## Colour
  *
@@ -50,7 +56,7 @@
   --bank-chrome: #1b3a5c;
   --bank-chrome-ink: #ffffff;
 
-  /* The only decision colours the left half owns: a denial in the chat, and a
+  /* The only decision colours the bank owns: a denial in the chat, and a
      masked-out field. Both deliberately unlike the panel's bright status
      palette — the bank's software has never heard of Arcade. */
   --bank-decision: #8a2733;
@@ -59,7 +65,7 @@
   /* `--line` and `--muted` are the scaffold aliases `components/chat` and
      `components/identity` size their inline styles with. Overridden here rather
      than edited there: a hairline tuned for white-on-black is invisible on
-     paper, and this is how the left half restyles components it does not own
+     paper, and this is how the bank restyles components it does not own
      without touching them. */
   --line: var(--bank-rule);
   --muted: var(--bank-ink-soft);
@@ -67,13 +73,17 @@
   /* Light, explicitly. `:root` declares `color-scheme: dark` for the panel, and
      a browser honours that by drawing every native control dark — so the chat's
      textarea and the sign-in buttons came out as dark slabs on paper-coloured
-     chrome. The left half is a light application and says so. */
+     chrome. The bank is a light application and says so. */
   color-scheme: light;
 
+  /* The whole viewport since #155: this screen is no longer inside a shell that
+     gives it a height, so it takes one. `dvh` rather than `vh` because a mobile
+     browser's chrome would otherwise crop the composer — out of scope to
+     support, but not a reason to be wrong about it. */
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
+  height: 100dvh;
   background: var(--bank-desk);
   color: var(--bank-ink);
   font-family: Arial, Helvetica, "Helvetica Neue", sans-serif;
@@ -176,22 +186,80 @@
 
 /* --- the scrolling body --------------------------------------------------- */
 
+/* Two columns since #155: the applications, the user's access and the user's
+   session on the left, the conversation on the right at the full height of the
+   viewport.
+
+   **Two thirds to the conversation**, decided by the human at the 2026-09-18
+   gate: the chat is the thing the demo is about and the thing the room is asked
+   to read, and at even widths it looked like one of two equal panels. The
+   records column keeps the remaining third, which is more than the loan cards
+   need — they are a 15em-minimum auto-fit grid, so at a third of 1920 they
+   stack into one column and grow taller rather than emptier.
+
+   The measure is still set by the grid rather than by the projector. Measured
+   at 1920x1080: columns 622px and 1244px, exactly 1:2, and the composer 1214px
+   — against 1892px if this were one column across the whole screen. At
+   1440x900: 466px, 933px and a 910px composer.
+
+   The grid itself does not scroll; each column does. A single scroller would
+   move the conversation when the reader scrolled the loan file, which is the
+   two-things-at-once problem #155 exists to remove, one level down. */
 .bank-body {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 0.7em 0.9em 1.2em;
+  overflow: hidden;
+  padding: 0.7em 0.9em 1em;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 0.9em;
+}
+
+.bank-column {
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.7em;
+  overflow-y: auto;
 }
 
-/* Nothing in here shrinks. This column is the one that scrolls, and a flex
-   child that gives way instead collapses to nothing — which is what happened
-   to the chat on the first run of the projector check: the transcript became a
+/* Nothing in a column shrinks. The column is what scrolls, and a flex child
+   that gives way instead collapses to nothing — which is what happened to the
+   chat on the first run of the projector check: the transcript became a
    two-pixel sliver between the tool list and the sign-in panel. */
-.bank-body > * {
+.bank-column > * {
   flex: none;
+}
+
+/* The conversation takes the height it is given rather than a fixed slice of
+   the viewport. `components/chat/chat.css` sizes `.chat-shell` at
+   `min(48dvh, 34em)` because on `/chat` it sits in a page that scrolls; here it
+   is the whole of a column that does not. Overridden from this side rather than
+   edited there — the same arrangement as `--line` and `--muted` above: the bank
+   restyles components it does not own without touching them. */
+.bank-column-assistant {
+  overflow: hidden;
+}
+
+.bank-column-assistant > .bank-chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bank-column-assistant > .bank-chat > .bank-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bank-column-assistant .chat-shell {
+  flex: 1;
+  height: auto;
+  min-height: 0;
 }
 
 .bank-panel {
@@ -217,9 +285,20 @@
 
 /* --- loan files ----------------------------------------------------------- */
 
+/* `13.5em` rather than `15em` since #155 gave the conversation two thirds of
+   the screen. The records column is 622px at 1920x1080 and its panel body 592px
+   of that: at a 15em minimum two cards needed 616px, so they stacked, the
+   column grew, and the tool list — act 1's whole surface — went below the fold.
+   At 13.5em they sit side by side at both 1920x1080 and 1440x900 (the root is a
+   `vw` clamp, so the minimum shrinks with the screen), and the tool list is
+   back above it.
+
+   The sign-in panel below the tool list still needs a scroll, at both sizes.
+   That is the price of the two thirds and it is the right thing to pay: it is
+   used once per browser profile, before the demo starts, and act 1 is not. */
 .bank-files {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15em, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(13.5em, 1fr));
   gap: 0.6em;
 }
 
@@ -412,7 +491,7 @@
 /* --- the chat ------------------------------------------------------------- */
 
 /* `components/chat/Chat.tsx` is #14's and carries its own inline styles. What
-   the left half sets is the frame it sits in and the two variables above. */
+   the bank sets is the frame it sits in and the two variables above. */
 .bank-chat {
   display: flex;
   flex-direction: column;

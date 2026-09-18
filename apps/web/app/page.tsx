@@ -1,10 +1,18 @@
 /**
- * `/` — the demo.
+ * `/` — the bank's loan origination system, full-screen.
  *
- * The split screen #22 asks for: the bank's loan origination system on the
- * left, Arcade's control plane on the right. It replaces the #4 scaffold's list
- * of services, which said "every service is a stub that serves a health
- * endpoint" and had not been true for some weeks.
+ * **No split view (#155, reversing #22).** Until the 2026-09-18 rehearsal this
+ * page was two halves: the bank on the left, the control plane on the right.
+ * Every action on the left moved the right at the same moment, so the audience
+ * watched two surfaces animate while the presenter explained a third. The
+ * control plane now lives on its own full-screen page at `/panel`, and the
+ * presenter switches between the two deliberately. `DESIGN.md` → Decisions →
+ * Design.
+ *
+ * What went with the split: the `correlationKey` join. #6's token still rides
+ * in every denial's text and the panel still outlines what it is given — but
+ * nothing on this page hands it one, because the card and the sentence are no
+ * longer on the same screen. It is not reconstructed across tabs.
  *
  * A **server** component, and it does three things a client one could not:
  *
@@ -14,7 +22,7 @@
  * 2. It opens **one** gateway session and asks it everything this screen needs:
  *    one real `tools/list` with the session's bearer (#15,
  *    `lib/agent/tool-list.ts`), and, on that same listing, the two governed
- *    `Loan_GetLoan` reads the left column shows (#22). Both answers are handed
+ *    `Loan_GetLoan` reads the loan cards show (#22). Both answers are handed
  *    down as data. They belong on the server for the same reason: the bearer
  *    never leaves this process.
  *
@@ -23,30 +31,40 @@
  *    `Loan_GetLoan` — so a page load cost two `tools/list` calls and, against
  *    the real gateway, twice the `/access` fan-out. That second path is gone.
  *    `test/home-surface.test.ts` asserts the count.
- * 3. It resolves the panel's stream from the environment at request time.
- *    `next build` inlines `NEXT_PUBLIC_*` into the client bundle while Render
- *    supplies service variables at runtime, so a public variable would be
- *    `undefined` in the deployed browser and perfectly fine under `next dev` —
- *    see `lib/governance/stream-url.ts`.
+ * 3. It resolves **one** address from the environment at request time: where
+ *    #20's chat watches for an approval decision. `next build` inlines
+ *    `NEXT_PUBLIC_*` into the client bundle while Render supplies service
+ *    variables at runtime, so a public variable would be `undefined` in the
+ *    deployed browser and perfectly fine under `next dev` — see
+ *    `lib/governance/stream-url.ts`.
+ *
+ *    This is the **only** stream this page touches, and it is an
+ *    approval-notice listener, not the governance timeline: it reads
+ *    `event: approval` and drops every `event: governance` frame by name
+ *    (`lib/governance/approval-stream.ts`). The panel's subscription is gone
+ *    from here with the panel. `null` when this deployment has no live control
+ *    plane, in which case the page renders exactly as it does now and a turn
+ *    that ends waiting stays ended — this page does not depend on
+ *    `panel_stream`, which `/health` still reports for `/panel`.
  *
  * ## Where #15's widget sits
  *
- * In the shell's tool-list slot, which is what that slot was cut for. #15's
- * `PersonaToolList` says so from its own side — *"#22 owns the split-screen
- * shell and hosts this widget inside it, so everything this component needs
- * arrives as data"* — and this is the line where the two halves of that
+ * In the bank pane's tool-list slot, which is what that slot was cut for. #15's
+ * `PersonaToolList` says so from its own side — *"everything this component
+ * needs arrives as data"* — and this is the line where the two halves of that
  * sentence meet. Act 1 is an absence: as Bob, `Loan_ApproveLoan` is missing
  * from a list the **gateway** answered, not struck through by anything here.
  */
+import type { CSSProperties } from "react";
 import { cookies } from "next/headers";
 
 import { configurationProblems, readIdentitySurface } from "../lib/config.ts";
 import { readSessionFromCookies } from "../lib/identity/session.ts";
-import { resolvePanelStream } from "../lib/governance/stream-url.ts";
+import { approvalStreamUrl } from "../lib/governance/stream-url.ts";
 import { homeSurface } from "../lib/home/surface.ts";
 import { PersonaToolList } from "../components/identity/PersonaToolList.tsx";
 import { SignInPanel } from "../components/identity/SignInPanel.tsx";
-import { SplitScreen } from "../components/shell/SplitScreen.tsx";
+import { BankPane } from "../components/bank/BankPane.tsx";
 import { HomeRefreshBoundary } from "../components/shell/HomeRefreshBoundary.tsx";
 
 /**
@@ -58,34 +76,52 @@ import { HomeRefreshBoundary } from "../components/shell/HomeRefreshBoundary.tsx
  */
 export const dynamic = "force-dynamic";
 
-export default async function Home({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
+/**
+ * The presenter's way across, and the only mention of the other surface on this
+ * page (#155). Deliberately small, in the corner, and styled inline rather than
+ * with a class: `components/bank/bank.css` owns the bank's chrome and this is
+ * not part of it, and a `cg-` class here would put the panel's namespace on a
+ * page that must not carry one.
+ */
+const PANEL_LINK: CSSProperties = {
+  position: "fixed",
+  right: "0.5rem",
+  bottom: "0.4rem",
+  zIndex: 1,
+  font: "inherit",
+  fontSize: "0.7rem",
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "#6d6a62",
+  textDecoration: "none",
+  opacity: 0.75,
+};
+
+export default async function Home() {
   const jar = await cookies();
   const config = readIdentitySurface();
   const session = await readSessionFromCookies(
     new Map(jar.getAll().map((cookie) => [cookie.name, cookie.value])),
     config,
   );
-  // No session means no network call: `homeSurface` answers without asking, on
-  // both halves at once.
+  // No session means no network call: `homeSurface` answers without asking.
   const { tools, files } = await homeSurface(session, { config });
-  // `?fixture=1` and the replay's tuning parameters work here exactly as they do
-  // on `/panel`, which is what lets the whole screen be rehearsed with no
-  // control plane running. The badge on the panel says which it is, always.
-  const stream = resolvePanelStream(process.env, await searchParams);
 
   return (
     <HomeRefreshBoundary>
-      <SplitScreen
-        stream={stream}
+      <BankPane
         signedInAs={session?.email ?? null}
         identity={<SignInPanel session={session} problems={configurationProblems(config)} />}
         loanFiles={files}
         toolList={<PersonaToolList session={session} tools={tools} />}
+        // #20: the chat watches the control plane for the one frame that
+        // resumes a turn a human was asked about. `null` unless there is a live
+        // control plane — a fixture replay has no approval frames in it.
+        approvalStreamUrl={approvalStreamUrl(process.env)}
       />
+      <a href="/panel" style={PANEL_LINK}>
+        Control plane ↗
+      </a>
     </HomeRefreshBoundary>
   );
 }

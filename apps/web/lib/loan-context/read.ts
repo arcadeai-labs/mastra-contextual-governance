@@ -1,5 +1,5 @@
 /**
- * The two loan files the left half puts on screen, read the same way the agent
+ * The two loan files `/` puts on screen, read the same way the agent
  * reads them.
  *
  * A pure function of one gateway listing: it is handed the governed tools that
@@ -17,7 +17,7 @@
  * would work, both would be faster, and both would make the screen a liar.
  *
  * The claim this demo makes is that **every** read of the bank's system of
- * record passes the control plane, keyed on who is asking. A left half that
+ * record passes the control plane, keyed on who is asking. A bank screen that
  * reached past the hooks would be a second, ungoverned path into the same data
  * sitting inches from a panel asserting there is only one — and with `/post`
  * redaction live (#16), the chat would show a masked account number beside a
@@ -77,7 +77,7 @@ export interface ReadLoanFilesOptions {
  *
  * Total: nothing here throws, because the caller is a server component
  * rendering a page that has a tool list, a chat and a control-plane panel on it
- * too. A gateway that cannot be read from loses the left column, not the page.
+ * too. A gateway that cannot be read from loses the loan cards, not the page.
  */
 export async function readLoanFiles(
   listing: GovernedListing,

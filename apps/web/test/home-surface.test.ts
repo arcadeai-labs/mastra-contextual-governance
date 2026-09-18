@@ -3,10 +3,10 @@
  *
  * Two claims, and the file is organised around both:
  *
- * 1. **The enterprise half of the split screen is a client of the control plane
- *    like everything else.** It is easy to build a demo where the pretty panel
- *    on the right watches governed calls while the business app on the left
- *    quietly reads the database, and impossible to tell from a screenshot. So
+ * 1. **The enterprise screen is a client of the control plane like everything
+ *    else.** It is easy to build a demo where a pretty panel watches governed
+ *    calls while the business app quietly reads the database, and impossible to
+ *    tell from a screenshot. So
  *    these tests assert the path, not just the pixels: every loan file on
  *    screen came out of a real `tools/call` made as the signed-in person,
  *    through the real `/pre`, and is in the audit log.
@@ -96,7 +96,7 @@ function refused(surface: HomeSurface): LoanContextRefusal {
 /** Everything that crossed to the browser. A value in the props is a value in the page source. */
 const crossed = (surface: HomeSurface) => JSON.stringify(surface.files);
 
-describe("the files on the left half", () => {
+describe("the files on the bank's screen", () => {
   test("both applications come back, read as the person signed in on this browser", async () => {
     const body = loaded(await load(sessionFor(DANA)));
 
@@ -122,7 +122,7 @@ describe("the files on the left half", () => {
    *
    * `harness.calls` is what the gateway saw. Two `tools/call`s, both
    * `Loan_GetLoan`, both as Alice, both of which ran only because the real `/pre`
-   * said `OK` — that is the claim the left half is making by putting a loan
+   * said `OK` — that is the claim the bank's screen is making by putting a loan
    * file on screen at all.
    */
   test("every file went through the gateway as that person, not round it", async () => {
@@ -144,8 +144,8 @@ describe("the files on the left half", () => {
    *
    * Since #15 the gateway stand-in asks `/access` before it answers
    * `tools/list`, so a page load leaves `access` rows for `Loan.GetLoan`
-   * as well as the `pre` rows the calls themselves produce. That is the left
-   * half's read passing layer 1 and layer 3, and the two are counted apart
+   * as well as the `pre` rows the calls themselves produce. That is the bank
+   * screen's read passing layer 1 and layer 3, and the two are counted apart
    * rather than together: a filter that accepted either would keep passing if
    * the `/pre` rows stopped being written, which is the row that says the call
    * was allowed to happen at all.
@@ -259,7 +259,7 @@ describe("when there is nobody to read as", () => {
    * The tool list and the loan files come out of one session now, so a session
    * that never opened has to leave both columns saying something. A page that
    * named the problem under "User access" and drew an empty column under
-   * "Applications under review" would be the left half looking like a control
+   * "Applications under review" would be the bank's screen looking like a control
    * plane that refused everything.
    */
   test("a missing gateway token is named on both halves, not just the tool list", async () => {

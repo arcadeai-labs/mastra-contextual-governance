@@ -18,6 +18,9 @@ import { SESSION_COOKIE } from "../lib/identity/session.ts";
 import { encodeEvent } from "../lib/agent/events.ts";
 import { DANA, SESSION_SECRET, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
 import { browserRequired, missingBrowserMessage, resolveChrome } from "./chrome.ts";
+// The CDP client moved to `cdp.ts` on #155 so `home-full-screen-browser.test.ts`
+// could drive the same browser. Lifted unchanged; nothing about it is new.
+import { browserTarget, Cdp, evaluate, freePort, stopProcess, waitFor, waitForHttp } from "./cdp.ts";
 
 const WEB = join(import.meta.dir, "..");
 const chromeResolution = resolveChrome();
@@ -47,124 +50,6 @@ const VIEWPORT = { width: 1440, height: 900 } as const;
  * with it. With the gate, the same delay passes.
  */
 const HYDRATION_DELAY_MS = Number(process.env.CG_HYDRATION_DELAY_MS ?? "0");
-
-interface CdpResponse<T = unknown> {
-  id: number;
-  result?: T;
-  error?: { code: number; message: string };
-}
-
-type CdpListener = (params: Record<string, unknown>) => void;
-
-/** Small Chrome DevTools Protocol client; no browser automation package is needed. */
-class Cdp {
-  private nextId = 0;
-  private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (cause: unknown) => void }>();
-  private readonly listeners = new Map<string, Set<CdpListener>>();
-  private readonly socket: WebSocket;
-  readonly opened: Promise<void>;
-
-  constructor(url: string) {
-    this.socket = new WebSocket(url);
-    this.opened = new Promise((resolve, reject) => {
-      this.socket.addEventListener("open", () => resolve());
-      this.socket.addEventListener("error", (event) => reject(event));
-    });
-    this.socket.addEventListener("message", (event) => {
-      const message = JSON.parse(String(event.data)) as CdpResponse & { method?: string; params?: Record<string, unknown> };
-      if (message.method !== undefined) {
-        for (const listener of this.listeners.get(message.method) ?? []) listener(message.params ?? {});
-        return;
-      }
-      const waiter = this.pending.get(message.id);
-      if (waiter === undefined) return;
-      this.pending.delete(message.id);
-      if (message.error !== undefined) waiter.reject(new Error(`${message.error.code}: ${message.error.message}`));
-      else waiter.resolve(message.result);
-    });
-    this.socket.addEventListener("close", () => {
-      for (const waiter of this.pending.values()) waiter.reject(new Error("Chrome CDP socket closed"));
-      this.pending.clear();
-    });
-  }
-
-  on(method: string, listener: CdpListener): void {
-    const listeners = this.listeners.get(method) ?? new Set<CdpListener>();
-    listeners.add(listener);
-    this.listeners.set(method, listeners);
-  }
-
-  async command<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    await this.opened;
-    const id = ++this.nextId;
-    const response = new Promise<unknown>((resolve, reject) => this.pending.set(id, { resolve, reject }));
-    this.socket.send(JSON.stringify({ id, method, params }));
-    return (await response) as T;
-  }
-
-  close(): void {
-    this.socket.close();
-  }
-}
-
-function freePort(): number {
-  const server = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
-  const port = server.port;
-  server.stop(true);
-  if (typeof port !== "number") throw new Error("OS did not assign a port");
-  return port;
-}
-
-async function waitFor(description: string, predicate: () => Promise<boolean>, timeoutMs = 30_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      if (await predicate()) return;
-    } catch (cause) {
-      lastError = cause;
-    }
-    await Bun.sleep(50);
-  }
-  throw new Error(`timed out waiting for ${description}${lastError ? `: ${String(lastError)}` : ""}`);
-}
-
-async function waitForHttp(url: string, timeoutMs = 60_000): Promise<void> {
-  await waitFor(`HTTP ${url}`, async () => {
-    try {
-      const response = await fetch(url);
-      return response.status < 500;
-    } catch {
-      return false;
-    }
-  }, timeoutMs);
-}
-
-async function stopProcess(child: Subprocess | undefined): Promise<void> {
-  if (child === undefined) return;
-  child.kill();
-  await child.exited.catch(() => undefined);
-}
-
-async function browserTarget(debugPort: number): Promise<{ webSocketDebuggerUrl: string }> {
-  const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
-  const targets = (await response.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
-  const target = targets.find((entry) => entry.type === "page" && entry.webSocketDebuggerUrl !== undefined);
-  if (target?.webSocketDebuggerUrl === undefined) throw new Error("Chrome exposed no page target");
-  return { webSocketDebuggerUrl: target.webSocketDebuggerUrl };
-}
-
-async function evaluate<T>(cdp: Cdp, expression: string): Promise<T> {
-  const response = await cdp.command<{ result?: { value?: T }; exceptionDetails?: { text?: string } }>("Runtime.evaluate", {
-    expression,
-    returnByValue: true,
-    awaitPromise: true,
-  });
-  if (response.exceptionDetails !== undefined) {
-    throw new Error(response.exceptionDetails.text ?? "browser evaluation failed");
-  }
-  return response.result?.value as T;
-}
 
 /**
  * Has React taken ownership of the controls this test drives?
@@ -196,7 +81,7 @@ async function evaluate<T>(cdp: Cdp, expression: string): Promise<T> {
  * client chunks back makes that certain; the failure state is exact:
  *
  *     {"prompt":"Approve the loan for $95K and double-check your work…",
- *      "documentReplaced":true,"shellHydrated":true,
+ *      "documentReplaced":true,"screenHydrated":true,
  *      "navigationEntries":["http://127.0.0.1:51472/?"]}
  *
  * The document marker set immediately before the click is gone while the window
@@ -208,10 +93,17 @@ async function evaluate<T>(cdp: Cdp, expression: string): Promise<T> {
  * ## What is checked
  *
  * Not a timeout, and not a weaker assertion: the precondition itself, through
- * the shell's own `data-hydrated` attribute (`components/shell/SplitScreen.tsx`).
- * A parent's mount effect runs after its children have committed, so the shell
- * saying it is hydrated means the composer and the loan cards under it are
- * hydrated too, with their handlers attached.
+ * the screen's own `data-hydrated` attribute. A parent's mount effect runs
+ * after its children have committed, so the container saying it is hydrated
+ * means the composer and the loan cards under it are hydrated too, with their
+ * handlers attached.
+ *
+ * It was `.cg-split`, set by `components/shell/SplitScreen.tsx`. #155 deleted
+ * that shell along with the split view, and the marker moved to the container
+ * that inherited the job: `.bank`, set by `components/bank/BankPane.tsx`, now
+ * the outermost element on `/`. The property being proved is unchanged, and
+ * `test/home-screen.test.tsx` still holds the other half of it — that the
+ * server never emits the attribute itself.
  *
  * Round 1 of this review rejected an earlier version that read React's private
  * `__reactProps$…` properties off the DOM nodes, and was right to: those are
@@ -225,12 +117,12 @@ async function evaluate<T>(cdp: Cdp, expression: string): Promise<T> {
  */
 async function waitForHydration(cdp: Cdp): Promise<void> {
   await waitFor(
-    "the shell to report itself hydrated, with the composer and the authorization card present",
+    "the screen to report itself hydrated, with the composer and the authorization card present",
     async () =>
       evaluate<boolean>(
         cdp,
         `(() => {
-          if (document.querySelector('.cg-split[data-hydrated="true"]') === null) return false;
+          if (document.querySelector('.bank[data-hydrated="true"]') === null) return false;
           return document.querySelector('textarea[aria-label="Message the assistant"]') !== null
             && document.querySelector('form.chat-composer') !== null
             && document.querySelector('[data-action="continue-loan-authorization"]') !== null;
@@ -458,7 +350,14 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
       );
       // The local response creates one completed turn without touching an
       // external model, giving the refresh assertion real chat history.
-      await evaluate<void>(cdp, `document.querySelector('button[type="submit"]')?.click()`);
+      // Scoped to the Assistant, not the first submit button on the page. Since
+      // #155 gave `/` two columns the sign-in panel's "Sign out" precedes Send
+      // in document order, and a bare selector signed the browser out instead
+      // of sending — which then looked exactly like a chat that never answered.
+      await evaluate<void>(
+        cdp,
+        `document.querySelector('[aria-label="Assistant"] button[type="submit"]')?.click()`,
+      );
       try {
         await waitFor("completed chat history", async () =>
           evaluate<boolean>(cdp as Cdp, `document.querySelectorAll('[data-role="assistant"]').length === 1`),
@@ -469,7 +368,7 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
           `(() => {
             return {
               prompt: document.querySelector('textarea')?.value,
-              sendDisabled: document.querySelector('button[type="submit"]')?.hasAttribute('disabled'),
+              sendDisabled: document.querySelector('[aria-label="Assistant"] button[type="submit"]')?.hasAttribute('disabled'),
               failures: document.querySelector('[role="alert"]')?.textContent,
               fetchStatus: document.readyState,
               // Marker gone while the window name survives means the document
@@ -477,7 +376,7 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
               // was not holding it when the click landed.
               documentReplaced: document.documentElement.dataset.cgDocMarker === undefined && window.name === 'cg-window-marker',
               navigationEntries: performance.getEntriesByType('navigation').map((entry) => entry.name),
-              shellHydrated: document.querySelector('.cg-split[data-hydrated="true"]') !== null,
+              screenHydrated: document.querySelector('.bank[data-hydrated="true"]') !== null,
             };
           })()`,
         );
