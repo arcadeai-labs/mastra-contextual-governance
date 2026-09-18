@@ -79,6 +79,7 @@ export function LoanBoard({
 
               <h2 className="bank-board-card-borrower">{text(loan.borrower_name)}</h2>
               <p className="bank-board-card-amount">{dollars(loan.amount)}</p>
+              <p className="bank-board-card-purpose">{text(loan.purpose)}</p>
 
               <p className="bank-board-card-decision" data-decision={loan.decided_at === null ? "none" : "decided"}>
                 {loan.decided_at === null && loan.decided_by === null ? (

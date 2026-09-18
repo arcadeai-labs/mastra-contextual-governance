@@ -539,11 +539,14 @@
   font-size: 0.6em;
 }
 
+/* Fills the screen rather than sitting in the top third of it. `1fr` rows with
+   a floor, so eight applications become eight tall cards on a projector and a
+   longer book still gets readable ones instead of slivers. */
 .bank-board-grid {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(13em, 1fr));
-  align-content: start;
+  grid-auto-rows: minmax(7em, 1fr);
   gap: 0.6em;
   padding: 0.7em 0.9em 1em;
 }
@@ -601,6 +604,13 @@
   font-size: 1.35em;
   font-variant-numeric: tabular-nums;
   line-height: 1.05;
+}
+
+.bank-board-card-purpose {
+  margin: 0;
+  font-size: 0.62em;
+  line-height: 1.35;
+  color: var(--bank-ink-soft);
 }
 
 .bank-board-card-decision {
