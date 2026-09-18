@@ -271,10 +271,13 @@ describe("the access lane draws one card per run of decisions", () => {
     expect(lane(markup, "access")).toContain('<span class="cg-lane-count-value">5</span>');
   });
 
-  test("so does the panel's tally — grouping is presentation, not arithmetic", () => {
-    expect(markup).toContain(
-      '<span class="cg-stat-value">5</span><span class="cg-stat-label">Allowed</span>',
-    );
+  test("and no other lane was charged for them — grouping is presentation, not arithmetic", () => {
+    // Asserted against the global tally row until #158 cut it. The claim is
+    // unchanged: five decisions drawn as two cards are still five decisions,
+    // counted once, in the lane that made them.
+    expect(lane(markup, "access")).toContain('<span class="cg-lane-count-value">5</span>');
+    expect(lane(markup, "pre")).not.toContain("cg-lane-count-value");
+    expect(lane(markup, "post")).not.toContain("cg-lane-count-value");
   });
 
   test("nothing is counted as an earlier decision: all five are on screen", () => {

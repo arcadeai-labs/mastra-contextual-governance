@@ -13,6 +13,23 @@
  * `apps/web/README.md`. A paragraph of it on a projector was read as noise in
  * design review, which is a fair reading: nobody at the back of a room reads a
  * footnote, and the space it took belonged to the lanes.
+ *
+ * ## What #158 took out, and why the lanes keep everything
+ *
+ * The 2026-09-18 rehearsal verdict was *too noisy*, so this file now draws
+ * **one row of chrome** — title, stream badge, connection, and the health strip
+ * when there is one — and then the lanes. The **global tally row is gone**: it
+ * repeated, in the largest numerals on the screen, a total the three lane
+ * headers already carry between them, and it did it in the band of the
+ * projector where the first card should be.
+ *
+ * Nothing stopped being counted. `timeline.counts` is untouched and still totals
+ * every decision received; `timeline.laneCounts` is what the headers render,
+ * `timeline.test.ts` still asserts the three lanes sum to the global tally, and
+ * `panel.test.tsx` asserts the per-lane counters over the same events the tally
+ * row used to be asserted over. A number that left the screen but stayed in the
+ * model is a presentation cut. A number that stopped being *computed* would be
+ * this project's own failure mode, and is not what happened here.
  */
 import type { ReactNode } from "react";
 
@@ -22,7 +39,6 @@ import { correlate, isCorrelated, type CorrelationKey } from "../../lib/governan
 import type { StreamStatus } from "../../lib/governance/subscribe.ts";
 import type { PanelSource } from "../../lib/governance/stream-url.ts";
 import { allEvents, HOOK_POINTS, type Timeline } from "../../lib/governance/timeline.ts";
-import { DECISION_ORDER, DECISIONS } from "./decisions.ts";
 import { Lane } from "./Lane.tsx";
 
 /** Cards drawn per lane. Beyond this a lane counts rather than draws. */
@@ -74,25 +90,19 @@ export function ControlPlanePanelView({
 
   return (
     <div className="cg-panel">
+      {/* One row, and everything in it is chrome. The lanes start immediately
+          under it, at the top of the screen, which is the whole point of the
+          cut: three headings and a tally used to push the first card a third
+          of the way down a projector. */}
       <header className="cg-header">
         <h2 className="cg-title">Control plane</h2>
+        {controlPlane}
         <div className="cg-connection" data-status={status}>
           <StreamBadge source={source} />
           <span className="cg-dot" aria-hidden="true" />
           <span>{CONNECTION[status]}</span>
         </div>
       </header>
-
-      {controlPlane}
-
-      <div className="cg-tally">
-        {DECISION_ORDER.map((decision) => (
-          <p className="cg-stat" data-decision={decision} key={decision}>
-            <span className="cg-stat-value">{timeline.counts[decision]}</span>
-            <span className="cg-stat-label">{DECISIONS[decision].tally}</span>
-          </p>
-        ))}
-      </div>
 
       <div className="cg-lanes">
         {HOOK_POINTS.map((hook) => (

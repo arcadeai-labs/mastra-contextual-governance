@@ -102,7 +102,15 @@ export function AccessListingCard({
         <div className="cg-listing-hidden" key={tool.tool}>
           <p className="cg-listing-hidden-tool">{tool.tool}</p>
           {tool.rule_id !== null && <p className="cg-rule">{tool.rule_id}</p>}
-          {tool.reason !== "" && <p className="cg-reason">{tool.reason}</p>}
+          {/* Folded exactly as an ordinary card folds its reason (#158): the
+              tool and the rule that hid it are the act-1 facts and stay on the
+              face; the rule's own sentence about itself is one click away. */}
+          {tool.reason !== "" && (
+            <details className="cg-why">
+              <summary>Why</summary>
+              <p className="cg-reason">{tool.reason}</p>
+            </details>
+          )}
         </div>
       ))}
 
@@ -116,8 +124,21 @@ export function AccessListingCard({
       {/* The #107 summary row stands for every tool outside this control
           plane's catalogue. It is a member of this card rather than a card of
           its own, and it is shown in the hook's own words rather than as a
-          tool called `*`. */}
-      {facts.summary !== null && <p className="cg-listing-rest">{facts.summary.reason}</p>}
+          tool called `*` — this card never paraphrases a count the hook
+          reported.
+
+          Folded on #158 for the reason every other reason on this panel is: it
+          is five lines of prose, it was the tallest thing on the tallest card,
+          and it is about the 8,000-odd tools this demo is not about. The
+          summary names what is behind it without asserting a number of its
+          own, so opening it is the only place a figure appears and the figure
+          is still the hook's. */}
+      {facts.summary !== null && (
+        <details className="cg-why">
+          <summary>The rest of the catalogue</summary>
+          <p className="cg-listing-rest">{facts.summary.reason}</p>
+        </details>
+      )}
 
       {facts.enabled.length > 0 && (
         <details className="cg-event-members">
@@ -130,10 +151,25 @@ export function AccessListingCard({
         </details>
       )}
 
+      {/* The accounting, and the sentence explaining it, in one disclosure
+          (#158). The FACT that this card stands for several decisions is on the
+          face of the card, in the meta line, where it has been since #64 — what
+          moved behind the click is the paragraph explaining why Arcade produced
+          them, which is three lines of prose on a projector and was the tallest
+          thing on the card. Open it and every member event id is still there,
+          which is what makes "the audit log holds every one of them" checkable
+          rather than asserted. */}
       <details className="cg-event-members">
         <summary>
           {plural(facts.decisions, "decision", "decisions")}, grouped for display
         </summary>
+
+        <p className="cg-listing-note">
+          One card, {plural(facts.decisions, "decision", "decisions")} recorded separately. Arcade
+          asks <code>/access</code> more than once for one <code>tools/list</code>; the panel
+          groups this person&rsquo;s answers, and the audit log still holds every one of them.
+        </p>
+
         <ul className="cg-event-ids">
           {row.events.map((member: GovernanceEvent) => (
             <li key={member.id}>
@@ -143,12 +179,6 @@ export function AccessListingCard({
           ))}
         </ul>
       </details>
-
-      <p className="cg-listing-note">
-        One card, {plural(facts.decisions, "decision", "decisions")} recorded separately. Arcade
-        asks <code>/access</code> more than once for one <code>tools/list</code>; the panel
-        groups this person&rsquo;s answers, and the audit log still holds every one of them.
-      </p>
     </article>
   );
 }

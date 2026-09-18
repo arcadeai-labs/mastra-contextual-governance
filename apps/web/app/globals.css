@@ -34,26 +34,44 @@
      they are installed on the machine that presents this, and falls back to
      the brand kit's own documented websafe fallback everywhere else.
 
-       display  GT Sectra        lane titles, decision labels, the tally
-       ui       GT Cinetype      reasons, glosses, prose
+       display  GT Sectra        lane titles, and nothing else
+       ui       GT Cinetype      every other word on this panel
        mono     GT Cinetype Mono identifiers only — tool, rule, user, time
 
      Three roles, three faces, and nothing borrows another's job. That is what
      makes a card's hierarchy readable before any of it has been read: the
-     shape of the type says which kind of thing each line is. */
+     shape of the type says which kind of thing each line is.
+
+     #158 narrowed the display face to **one** selector. It used to also set
+     the decision label, the global tally and the per-lane counters, which is a
+     serif at four sizes competing with itself — and the rehearsal verdict on
+     the whole surface was "too noisy". It now marks the three lane titles,
+     which are the structure the eye is meant to find first, and marks nothing
+     else. `test/panel-type-roles.test.ts` fails if a second selector claims
+     it, because "one display face" is the kind of rule that decays one
+     reasonable-looking rule at a time. */
   --font-display: "GT Sectra", Cambria, Georgia, "Times New Roman", serif;
   --font-ui: "GT Cinetype", Helvetica, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "GT Cinetype Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Each decision tints its whole card, not just its edge. Alpha over pure
      black, so the tint deepens the hue rather than greying it, and white body
-     text keeps well over 15:1 on every one of them. */
-  --allow-tint: rgba(0, 255, 103, 0.14);
-  --deny-tint: rgba(255, 0, 55, 0.16);
-  --modify-tint: rgba(255, 183, 0, 0.15);
-  --allow-edge: rgba(0, 255, 103, 0.42);
+     text keeps well over 15:1 on every one of them.
+
+     Halved on #158, from 0.14–0.16. The left accent bar is the ONE strong
+     accent a card is allowed; at the old strength the tint competed with it and
+     a lane of six cards read as six blocks of colour rather than as a list. A
+     lane full of denials still reads red from the back of a room — that is what
+     the tint is for — and the inset 1px coloured border that used to sit over
+     it is gone entirely. Lightening the background also bought contrast: the
+     decision label is the tightest pair on this panel and `--deny` on
+     `--deny-tint` went from 4.83:1 to 5.11:1. */
+  --allow-tint: rgba(0, 255, 103, 0.08);
+  --deny-tint: rgba(255, 0, 55, 0.09);
+  --modify-tint: rgba(255, 183, 0, 0.08);
+  /* The one edge that survived the cut, and it is not on a card: the badge for
+     a panel watching nothing. */
   --deny-edge: rgba(255, 0, 55, 0.45);
-  --modify-edge: rgba(255, 183, 0, 0.44);
 
   /* Legacy aliases from the #4 scaffold, kept so the placeholder page and the
      health route styling do not break. */
@@ -92,7 +110,10 @@ body {
  * ------------------------------------------------------------------------- */
 
 .cg-panel {
-  font-size: clamp(17px, 1.32vw, 26px);
+  /* Larger than #21's clamp(17px, 1.32vw, 26px). #158's instruction was that
+     larger type beats more rows, and the chrome this file no longer draws is
+     what paid for it: 21.7px at 1440×900 and 28.8px at 1920×1080. */
+  font-size: clamp(18px, 1.5vw, 30px);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -127,30 +148,45 @@ body {
 
 /* --- header --------------------------------------------------------------- */
 
+/* One row, and the only chrome on the panel (#158): what this surface is, what
+   the control plane behind it is doing, and which stream these lanes are. Three
+   things that were three stacked bands before, in the top strip of a projector
+   where the first card belongs. The lane titles are now the largest type on
+   screen, which is what the nine-item baseline asked for and what the old
+   serif title and 2.3em tally numerals argued against. */
 .cg-header {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1em;
+  align-items: center;
+  gap: 0.6em 1em;
   flex-wrap: wrap;
-  padding: 0.85em 1.1em 0.7em;
-  border-bottom: 3px solid var(--chartreuse);
+  padding: 0.45em 1em;
+  border-bottom: 2px solid var(--chartreuse);
 }
 
+/* Deliberately quiet, and deliberately not the display face. The page says what
+   it is once; the lanes are what the room reads. */
 .cg-title {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: 1.75em;
-  font-weight: 400;
-  letter-spacing: -0.01em;
+  flex: none;
+  font-family: var(--font-ui);
+  font-size: 0.92em;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
   line-height: 1;
+  color: var(--neutral);
 }
 
 .cg-connection {
   display: flex;
   align-items: center;
   gap: 0.5em;
-  font-size: 0.85em;
+  /* Pinned to the trailing edge whether or not a health strip sits between it
+     and the title — a fixture replay has no strip, and the badge must not
+     wander to the middle of the row when it does not. */
+  margin-left: auto;
+  flex: none;
+  font-size: 0.8em;
   color: var(--neutral);
 }
 
@@ -162,19 +198,17 @@ body {
   flex: none;
 }
 
+/* Lit, not pulsing. #158: no attention pulses. A dot that breathes forever is
+   motion carrying no information — it says the same thing on the frame an event
+   lands as on the frame before it — and on a projector it is the thing in the
+   corner of the eye that never stops. The one-shot lane flash is the motion
+   that means something, and it is still here. */
 .cg-connection[data-status="live"] .cg-dot {
   background: var(--chartreuse);
-  animation: cg-pulse 2.4s ease-in-out infinite;
 }
 
 .cg-connection[data-status="reconnecting"] .cg-dot {
   background: var(--modify);
-}
-
-@keyframes cg-pulse {
-  50% {
-    opacity: 0.35;
-  }
 }
 
 /* The badge that names which stream this is. Always present, in every mode —
@@ -219,9 +253,9 @@ body {
 
 .cg-stream-error-title {
   margin: 0 0 0.5em;
-  font-family: var(--font-display);
+  font-family: var(--font-ui);
+  font-weight: 700;
   font-size: 1.35em;
-  font-weight: 400;
   color: var(--white);
 }
 
@@ -257,11 +291,23 @@ body {
    refusal by it. Unreachable is the exception and gets red: at that point the
    lanes are not a live record of anything, which IS the `.cg-stream-error`
    case arriving late. */
+/* #158 moved it INTO the header row rather than above the lanes: healthy is
+   one short line beside the badge, which is the state it is in for the whole of
+   a good rehearsal. It still grows — drift names every differing row, and a
+   confirmation is a block — and growing is correct: a warning is allowed to
+   take the space a healthy line does not. */
 .cg-control-plane {
-  margin: 0 0 1.4em;
-  padding: 0.9em 1.1em 1em;
-  border-left: 6px solid var(--line-strong);
+  flex: 1 1 22em;
+  min-width: 0;
+  margin: 0;
+  padding: 0.2em 0.7em;
+  border-left: 0.3em solid var(--line-strong);
   background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15em 0.7em;
+  font-size: 0.78em;
 }
 
 .cg-control-plane[data-state="degraded"] {
@@ -275,12 +321,11 @@ body {
 }
 
 .cg-control-plane-badge {
-  display: inline-block;
+  flex: none;
   font-family: var(--font-mono);
-  font-size: 0.72em;
+  font-size: 0.92em;
   letter-spacing: 0.06em;
   color: var(--neutral);
-  margin-bottom: 0.5em;
 }
 
 .cg-control-plane[data-state="degraded"] .cg-control-plane-badge {
@@ -292,9 +337,10 @@ body {
 }
 
 .cg-control-plane-line {
-  margin: 0 0 0.5em;
-  font-size: 0.85em;
-  line-height: 1.5;
+  margin: 0;
+  min-width: 0;
+  font-size: 1em;
+  line-height: 1.45;
   color: var(--white);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -310,26 +356,39 @@ body {
   color: var(--chartreuse);
 }
 
+/* Everything past the healthy one-liner takes the full width of the strip, so
+   the row stays a row until there is something wrong to read. */
+.cg-control-plane-drift,
+.cg-control-plane-confirm,
+.cg-control-plane-outcome {
+  flex-basis: 100%;
+}
+
 .cg-control-plane-ids {
-  margin: 0 0 0.6em;
+  margin: 0.3em 0 0.4em;
   padding-left: 1.2em;
-  font-size: 0.82em;
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
 
 .cg-control-plane-actions {
   display: flex;
-  gap: 0.6em;
+  gap: 0.5em;
   flex-wrap: wrap;
-  margin-top: 0.6em;
+  margin-top: 0.35em;
 }
 
+/* Presenter-only, by #158's instruction, and that is a visual weight rather
+   than a permission: the control is exactly as reachable as it was, and it no
+   longer reads as something the audience is being shown. A filled chartreuse
+   slab in the top strip of a projector is the brightest object on the screen,
+   competing with three lanes of decisions for a button nobody watching will
+   ever press. Outlined, in the same small type as the line beside it. */
 .cg-control-plane-button {
   font-family: var(--font-ui);
-  font-size: 0.8em;
+  font-size: 0.95em;
   letter-spacing: 0.03em;
-  padding: 0.45em 1em;
+  padding: 0.2em 0.8em;
   color: var(--white);
   background: transparent;
   border: 1px solid var(--line-strong);
@@ -340,9 +399,16 @@ body {
   border-color: var(--chartreuse);
 }
 
+.cg-control-plane-button:focus-visible {
+  outline: 2px solid var(--chartreuse);
+  outline-offset: 2px;
+}
+
+/* The one that acts, in the chrome colour — as an edge and a word, not a
+   field. Chartreuse on black is 17.6:1; chartreuse as a background made the
+   button itself the loudest thing on the panel. */
 .cg-control-plane-button[data-emphasis="primary"] {
-  color: var(--ink);
-  background: var(--chartreuse);
+  color: var(--chartreuse);
   border-color: var(--chartreuse);
 }
 
@@ -355,50 +421,17 @@ body {
    projector hides the lanes it is about, and this control is pressed by the
    person standing in front of them. */
 .cg-control-plane-confirm {
-  margin-top: 0.8em;
-  padding: 0.8em 0.9em;
+  margin-top: 0.5em;
+  padding: 0.6em 0.7em;
   background: rgba(0, 0, 0, 0.45);
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
-/* --- the global tally ----------------------------------------------------- */
-
-.cg-tally {
-  display: flex;
-  gap: 2.2em;
-  padding: 0.7em 1.1em 0.8em;
-  border-bottom: 1px solid var(--line);
-}
-
-.cg-stat {
-  display: flex;
-  align-items: baseline;
-  gap: 0.4em;
-  margin: 0;
-}
-
-.cg-stat-value {
-  font-family: var(--font-display);
-  font-size: 2.3em;
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.cg-stat-label {
-  font-size: 0.92em;
-  color: var(--neutral);
-}
-
-.cg-stat[data-decision="allow"] .cg-stat-value {
-  color: var(--allow);
-}
-.cg-stat[data-decision="deny"] .cg-stat-value {
-  color: var(--deny);
-}
-.cg-stat[data-decision="modify"] .cg-stat-value {
-  color: var(--modify);
-}
+/* The global tally row that stood here until #158 is gone. Three 2.3em serif
+   numerals, in the band of a projector where the first card belongs, restating
+   a total the three lane headers already carry between them. Nothing stopped
+   being counted — `timeline.counts` is untouched and `timeline.test.ts` still
+   asserts the lanes sum to it. See ControlPlanePanelView.tsx. */
 
 /* --- lanes ---------------------------------------------------------------- */
 
@@ -423,36 +456,39 @@ body {
 }
 
 .cg-lane-head {
-  padding: 0.85em 0.9em 0.75em;
+  padding: 0.5em 0.8em 0.45em;
   border-bottom: 1px solid var(--line);
 }
 
-/* The largest and heaviest thing on the panel after the title. The three
-   control points are the structure; a card is a detail inside one of them. */
+/* The largest thing on the panel, and since #158 the only selector in this file
+   that claims the display face. The three control points are the structure; a
+   card is a detail inside one of them. */
 .cg-lane-name {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 1.95em;
+  font-size: 2.05em;
   font-weight: 400;
   line-height: 1;
   color: var(--chartreuse);
 }
 
 .cg-lane-gloss {
-  margin: 0.3em 0 0;
-  font-size: 0.9em;
+  margin: 0.2em 0 0;
+  font-size: 0.82em;
   color: var(--neutral);
 }
 
 /* Per-lane counts, in the decision colours, beside the lane they belong to.
    Only non-zero ones are drawn: a lane that has denied nothing should not
    carry a zero for it. */
+/* The only decision counters on the panel since #158 dropped the global row.
+   They count every decision a lane ever received, drawn or not. */
 .cg-lane-counts {
   display: flex;
   flex-wrap: wrap;
   gap: 0.9em;
-  margin: 0.5em 0 0;
-  font-size: 0.85em;
+  margin: 0.35em 0 0;
+  font-size: 0.82em;
   color: var(--neutral);
 }
 
@@ -463,8 +499,9 @@ body {
 }
 
 .cg-lane-count-value {
-  font-family: var(--font-display);
-  font-size: 1.35em;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 1.25em;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -491,10 +528,10 @@ body {
   overflow-y: auto;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
-  padding: 0.7em 0.9em 1em;
+  padding: 0.6em 0.8em 1em;
   display: flex;
   flex-direction: column;
-  gap: 0.55em;
+  gap: 0.5em;
   /* A card clipped by the bottom of the lane should read as "there is more",
      not as a rendering fault. The lane's header already says how many more. */
   mask-image: linear-gradient(to bottom, #000 calc(100% - 3em), transparent 100%);
@@ -511,7 +548,7 @@ body {
 }
 
 .cg-lane-behind {
-  margin: 0.45em 0 0;
+  margin: 0.35em 0 0;
   font-family: var(--font-mono);
   font-size: 0.78em;
   color: var(--neutral);
@@ -556,31 +593,46 @@ body {
 /* --- a card --------------------------------------------------------------- */
 
 /*
- * The decision tints the whole card, not just its edge. From across a room the
- * block of colour is what carries; the left bar is the accent that sharpens it
- * and the word inside it is what removes any doubt.
+ * **One accent per card, and it is the left bar** (#158). The tint is still
+ * there at half strength — a lane of denials has to read red from the back of a
+ * room — but the 1px inset coloured border that used to trace the whole card is
+ * gone, and with it the last thing arguing with the bar for the eye.
+ *
+ * A card lands with a 250ms settle rather than appearing hard: opacity and a
+ * quarter-em of travel, no scale and no overshoot. Keyed by React on the event
+ * id, so it runs once when a card mounts and never again on a re-render, and
+ * `prefers-reduced-motion` takes it away at the bottom of this file.
  */
 .cg-event {
   border-left: 0.4em solid var(--line-strong);
-  background: rgba(255, 255, 255, 0.04);
-  padding: 0.55em 0.75em 0.65em;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0.5em 0.7em 0.6em;
   flex: none;
+  animation: cg-settle 250ms ease-out both;
 }
 
 .cg-event[data-decision="allow"] {
   border-left-color: var(--allow);
   background: var(--allow-tint);
-  box-shadow: inset 0 0 0 1px var(--allow-edge);
 }
 .cg-event[data-decision="deny"] {
   border-left-color: var(--deny);
   background: var(--deny-tint);
-  box-shadow: inset 0 0 0 1px var(--deny-edge);
 }
 .cg-event[data-decision="modify"] {
   border-left-color: var(--modify);
   background: var(--modify-tint);
-  box-shadow: inset 0 0 0 1px var(--modify-edge);
+}
+
+@keyframes cg-settle {
+  from {
+    opacity: 0;
+    transform: translateY(-0.25em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* The event the chat is talking about. Outlined in the chrome colour, so the
@@ -598,9 +650,9 @@ body {
   align-items: baseline;
   justify-content: space-between;
   gap: 0.75em;
-  margin: 0 0 0.2em;
+  margin: 0 0 0.15em;
   font-family: var(--font-mono);
-  font-size: 0.76em;
+  font-size: 0.72em;
   color: var(--neutral);
 }
 
@@ -653,24 +705,27 @@ body {
 .cg-tool {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 1.24em;
+  font-size: 1.28em;
   font-weight: 700;
   line-height: 1.15;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
 
-/* Question two: what happened. Display face, so it is a different kind of
-   thing from the identifier above it at a glance. */
+/* Question two: what happened. The sans at full weight, so it is a different
+   kind of thing from the monospace identifier above it at a glance — it used to
+   be the display face, which #158 narrowed to the lane titles alone. Weight and
+   colour carry the distinction the serif used to. */
 .cg-decision {
   display: flex;
   align-items: baseline;
   gap: 0.35em;
-  margin: 0.22em 0 0;
-  font-family: var(--font-display);
-  font-size: 1.32em;
-  font-weight: 400;
-  line-height: 1;
+  margin: 0.2em 0 0;
+  font-family: var(--font-ui);
+  font-size: 1.12em;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
 }
 
 .cg-event[data-decision="allow"] .cg-decision {
@@ -699,7 +754,7 @@ body {
  */
 .cg-rule {
   display: inline-block;
-  margin: 0.4em 0 0;
+  margin: 0.35em 0 0;
   padding: 0.12em 0.5em;
   font-family: var(--font-mono);
   font-size: 0.82em;
@@ -712,9 +767,37 @@ body {
   overflow-wrap: anywhere;
 }
 
+/*
+ * The rule's own sentence, folded (#158).
+ *
+ * It is the line that made these cards tall and, in a column, *different
+ * heights* — so a lane read as a ragged stack rather than as a list. The
+ * summary is a real button: in the tab order in every browser, opened by Enter
+ * or Space, and given the panel's focus ring below. Nothing here is a hover.
+ */
+.cg-why {
+  margin: 0.35em 0 0;
+  font-size: 0.88em;
+  color: var(--neutral);
+}
+
+.cg-why > summary {
+  width: max-content;
+  max-width: 100%;
+  cursor: pointer;
+  color: var(--neutral);
+  letter-spacing: 0.02em;
+}
+
+.cg-why > summary:focus-visible,
+.cg-event-members > summary:focus-visible {
+  outline: 2px solid var(--chartreuse);
+  outline-offset: 2px;
+}
+
 .cg-reason {
-  margin: 0.4em 0 0;
-  font-size: 0.94em;
+  margin: 0.3em 0 0;
+  font-size: 1em;
   line-height: 1.4;
   color: var(--white);
   /* Reasons are rule-authored evidence. Preserve every character, including
@@ -745,9 +828,10 @@ body {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.2em 1em;
-  margin: 0.22em 0 0;
-  font-family: var(--font-display);
-  font-size: 1.18em;
+  margin: 0.2em 0 0;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 1.05em;
   line-height: 1.1;
 }
 
@@ -768,7 +852,7 @@ body {
    monospace like every other identifier on the panel, and sits above its rule
    chip rather than beside it so a long tool name never pushes the chip off. */
 .cg-listing-hidden {
-  margin: 0.45em 0 0;
+  margin: 0.4em 0 0;
   border-left: 0.2em solid var(--deny);
   padding-left: 0.5em;
 }
@@ -785,7 +869,7 @@ body {
 /* A listing that hid nothing says so out loud: silence would read exactly like
    a rule that matched nothing. */
 .cg-listing-none {
-  margin: 0.45em 0 0;
+  margin: 0.4em 0 0;
   font-size: 0.94em;
   line-height: 1.4;
   color: var(--white);
@@ -794,19 +878,21 @@ body {
 /* The #107 summary row, in the hook's own words. Quieter than a rule's reason:
    it accounts for the catalogue, it is not the decision anybody came to see. */
 .cg-listing-rest {
-  margin: 0.45em 0 0;
-  font-size: 0.86em;
-  line-height: 1.4;
+  margin: 0.3em 0 0;
+  font-size: 1em;
+  line-height: 1.45;
   color: var(--neutral);
   overflow-wrap: anywhere;
 }
 
-/* What the card is. Last, smallest, and never omitted — the card stands for
-   several decisions and must not be read as one. */
+/* What the card is. Never omitted, and since #158 inside the disclosure whose
+   summary already states the count — the FACT that this card stands for several
+   decisions is on the face of the card, in the meta line; this paragraph is the
+   explanation of why there are several, which is three lines of prose the back
+   of a room does not read. */
 .cg-listing-note {
-  margin: 0.5em 0 0;
-  font-size: 0.78em;
-  line-height: 1.4;
+  margin: 0.3em 0 0.4em;
+  line-height: 1.45;
   color: var(--neutral);
 }
 
@@ -870,7 +956,13 @@ body {
 .cg-mask {
   display: inline-block;
   padding: 0.1em 0.5em;
-  color: var(--deny);
+  /* White, not `--deny`. Red on the red hatch measured 3.08:1 against the
+     darkest stripe — under #158's 4.5:1 floor, and the worst place on the panel
+     to be hard to read, because act 3's whole claim is that this says *withheld*
+     rather than showing a value. White on the same field is 12.2:1 and the
+     redaction language is carried by the hatch and the box, which is where it
+     belonged. */
+  color: var(--white);
   font-family: var(--font-mono);
   font-size: 0.95em;
   background-color: rgba(255, 0, 55, 0.14);
@@ -912,7 +1004,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .cg-flash,
-  .cg-connection[data-status="live"] .cg-dot {
+  .cg-event {
     animation: none;
   }
   .cg-flash {

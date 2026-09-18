@@ -102,15 +102,24 @@ describe("allow, deny and modify are distinguishable without colour", () => {
     expect(markup).toContain('data-decision="modify"');
   });
 
-  test("the tally counts each decision", () => {
+  /**
+   * The same three events the global tally row was asserted over until #158,
+   * asserted over the counters that replaced it. The row is gone from the
+   * panel; the arithmetic is not, and this is where that is now checked.
+   */
+  test("each decision is counted, in the lane that made it", () => {
     const markup = render([
-      aGovernanceEvent({ id: "evt_1", decision: "deny" }),
-      aGovernanceEvent({ id: "evt_2", decision: "deny" }),
-      aGovernanceEvent({ id: "evt_3", decision: "allow" }),
+      aGovernanceEvent({ id: "evt_1", hook: "pre", decision: "deny" }),
+      aGovernanceEvent({ id: "evt_2", hook: "pre", decision: "deny" }),
+      aGovernanceEvent({ id: "evt_3", hook: "pre", decision: "allow" }),
     ]);
 
-    expect(markup).toContain('<span class="cg-stat-value">2</span><span class="cg-stat-label">Denied</span>');
-    expect(markup).toContain('<span class="cg-stat-value">1</span><span class="cg-stat-label">Allowed</span>');
+    expect(markup).toContain(
+      'data-decision="deny"><span class="cg-lane-count-value">2</span>',
+    );
+    expect(markup).toContain(
+      'data-decision="allow"><span class="cg-lane-count-value">1</span>',
+    );
   });
 });
 
@@ -522,12 +531,15 @@ describe("a lane past what it can draw counts the rest", () => {
     expect(render(events)).toContain("1 earlier decision");
   });
 
-  test("the tally still reports everything received, not just what is drawn", () => {
+  test("the counters still report everything received, not just what is drawn", () => {
     const events = Array.from({ length: 300 }, (_, index) =>
       aGovernanceEvent({ id: `evt_${index}`, hook: "access", decision: "deny" }),
     );
 
-    expect(render(events)).toContain('<span class="cg-stat-value">300</span>');
+    // Fifty held, six rows drawn, three hundred counted. A counter that only
+    // ever reached what fits on screen would be the failure this project keeps
+    // naming: a number that looks like a measurement and is a rendering budget.
+    expect(render(events)).toContain('<span class="cg-lane-count-value">300</span>');
   });
 });
 
@@ -724,12 +736,32 @@ describe("each lane header carries its own counts", () => {
     expect(header).not.toContain(">0<");
   });
 
-  test("the global tally still totals every lane", () => {
+  /**
+   * #158 cut the global tally row. This is the test that used to assert it,
+   * pointed at what replaced it: the row is gone from the markup, and the three
+   * lane headers between them still account for all six decisions — two of each
+   * — which is exactly what the row said.
+   */
+  test("the global tally row is gone, and the lane headers still add up to it", () => {
     const markup = render(events);
 
-    expect(markup).toContain('<span class="cg-stat-value">2</span><span class="cg-stat-label">Allowed</span>');
-    expect(markup).toContain('<span class="cg-stat-value">2</span><span class="cg-stat-label">Denied</span>');
-    expect(markup).toContain('<span class="cg-stat-value">2</span><span class="cg-stat-label">Modified</span>');
+    expect(markup).not.toContain("cg-tally");
+    expect(markup).not.toContain("cg-stat");
+
+    const counted = (["access", "pre", "post"] as const).flatMap((hook) =>
+      [...laneHeader(markup, hook).matchAll(
+        /data-decision="(\w+)"><span class="cg-lane-count-value">(\d+)<\/span>/g,
+      )].map(([, decision, value]) => [decision, Number(value)] as const),
+    );
+
+    const total = (decision: string): number =>
+      counted.filter(([each]) => each === decision).reduce((sum, [, value]) => sum + value, 0);
+
+    expect(total("allow")).toBe(2);
+    expect(total("deny")).toBe(2);
+    expect(total("modify")).toBe(2);
+    // And every decision received is in one of them: six events, six counted.
+    expect(counted.reduce((sum, [, value]) => sum + value, 0)).toBe(events.length);
   });
 
   test("lane counts keep counting past what the lane can draw", () => {
@@ -782,5 +814,89 @@ describe("the type hierarchy the card is read through", () => {
     expect(card).toContain(
       '<p class="cg-reason">Exceeds your approval authority of 50000.</p>',
     );
+  });
+
+  /**
+   * #158: the card carries four things on its face — which tool, what
+   * happened, which rule, and whose call — and the rule's own sentence is
+   * folded behind `Why`. The order is the order a presenter says them in and
+   * the fold is the last thing in the stack, so nothing the audience is meant
+   * to read is below something they are not.
+   */
+  test("the four answers are on the face, in order, and the reason is not", () => {
+    const card = cards(render([event]))[0] ?? "";
+    const at = (marker: string): number => card.indexOf(marker);
+
+    expect(at('class="cg-event-meta"')).toBeGreaterThan(-1);
+    expect(at('class="cg-event-user"')).toBeGreaterThan(-1);
+    expect(at('class="cg-tool"')).toBeLessThan(at('class="cg-decision"'));
+    expect(at('class="cg-decision"')).toBeLessThan(at('class="cg-rule"'));
+    expect(at('class="cg-rule"')).toBeLessThan(at('class="cg-why"'));
+
+    // Folded, and the fold is a real disclosure rather than a truncation: the
+    // sentence is in the markup in full, inside a closed `<details>`.
+    expect(card).toContain('<details class="cg-why"><summary>Why</summary>');
+    expect(card).not.toContain("<details open");
+    expect(card).toContain("Exceeds your approval authority of 50000.");
+  });
+
+  test("a card with nothing to explain draws no fold at all", () => {
+    const card = cards(render([aGovernanceEvent({ id: "evt_quiet", reason: "" })]))[0] ?? "";
+
+    expect(card).not.toContain("cg-why");
+  });
+});
+
+/**
+ * One row of chrome, and then the lanes (#158).
+ *
+ * The rehearsal verdict was that the panel was too noisy, and the three stacked
+ * bands at the top — title, health strip, tally — were a third of a projector
+ * before a single decision. What the audience is here to see now starts at the
+ * top of the screen.
+ */
+describe("the chrome is one row", () => {
+  test("the header is the first element and the lanes come straight after it", () => {
+    const markup = render([]);
+
+    expect(markup.indexOf('<header class="cg-header">')).toBeLessThan(
+      markup.indexOf('<div class="cg-lanes">'),
+    );
+    // Nothing between them. A band that crept back in would land here.
+    const between = markup.slice(
+      markup.indexOf("</header>") + "</header>".length,
+      markup.indexOf('<div class="cg-lanes">'),
+    );
+    expect(between).toBe("");
+  });
+
+  test("the stream badge and the connection are inside that row", () => {
+    const markup = render([], { source: { mode: "hooks", host: "cg-hooks.onrender.com" } });
+    const header = markup.slice(markup.indexOf("<header"), markup.indexOf("</header>"));
+
+    expect(header).toContain("LIVE · cg-hooks.onrender.com");
+    expect(header).toContain("Live");
+    expect(header).toContain("Control plane");
+  });
+
+  /**
+   * The strip is a slot, so this is the only place its position is decided.
+   * Before #158 it was a block between the header and the lanes; it is now in
+   * the row, which is what "stream badge and the health strip on the same row"
+   * means and what keeps a healthy deployment down to one line of chrome.
+   */
+  test("the health strip renders inside the row, not between it and the lanes", () => {
+    const markup = renderToStaticMarkup(
+      <ControlPlanePanelView
+        timeline={appendEvents(emptyTimeline(), [])}
+        status="live"
+        source={{ mode: "hooks", host: "cg-hooks.onrender.com" }}
+        controlPlane={<section className="cg-control-plane">HEALTHY</section>}
+      />,
+    );
+    const header = markup.slice(markup.indexOf("<header"), markup.indexOf("</header>"));
+
+    expect(header).toContain("cg-control-plane");
+    expect(markup.indexOf("cg-control-plane")).toBeLessThan(markup.indexOf('class="cg-lanes"'));
   });
 });

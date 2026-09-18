@@ -144,7 +144,10 @@ describe("a deployed panel that was never told which stream to watch", () => {
     // The panel is not rendered at all, so there is no subscription to open and
     // no lane for a fixture event to land in. A banner above a running replay
     // would leave the rows on screen, and the rows are the lie.
-    expect(markup).not.toContain("cg-tally");
+    // Was `cg-tally` until #158 cut that row; the counters it stood for are the
+    // lane headers' now, and the claim is the same one — no count of anything
+    // is drawn, because there is nothing to count.
+    expect(markup).not.toContain("cg-lane-count");
     expect(markup).not.toContain("cg-lanes");
     expect(markup).not.toContain("<article");
     expect(markup).not.toContain("/api/governance/fixture-stream");

@@ -21,6 +21,23 @@
  * who cannot reach the trackpad, and half of them are looking at a photograph
  * of it.
  *
+ * ## The fourth answer, and why it is folded (#158)
+ *
+ * `reason` is a whole sentence of rule-authored prose, and it is the line that
+ * made these cards tall and — worse for a column of them — **different
+ * heights**, so a lane read as a ragged stack rather than as a list. It is now
+ * a `<details>` labelled *Why*, closed by default.
+ *
+ * That is a fold, not a hover and not a truncation, and the difference is the
+ * whole of it: the text is in the markup in full, `<summary>` is a button every
+ * browser puts in the tab order and opens on Enter or Space, and the three
+ * things the audience is asked to believe — which tool, what happened, which
+ * rule — are still on the face of the card where they always were. The only
+ * claim that moved behind a click is the rule's own explanation of itself,
+ * which is read by the presenter narrating it rather than from the back of the
+ * room. A `/post` redaction's diff does **not** fold: the mask is the evidence
+ * for act 3 and evidence that has to be opened is evidence nobody saw.
+ *
  * One card can stand for several decisions. `/access` fans out — one
  * `tools/call` produced three access decisions for one tool when it was
  * measured (#64) — so the access lane hands this a whole run of them. The
@@ -93,7 +110,12 @@ export function EventCard({
 
       {event.rule_id !== null && <p className="cg-rule">{event.rule_id}</p>}
 
-      {event.reason !== "" && <p className="cg-reason">{event.reason}</p>}
+      {event.reason !== "" && (
+        <details className="cg-why">
+          <summary>Why</summary>
+          <p className="cg-reason">{event.reason}</p>
+        </details>
+      )}
 
       {showDiff && <MaskedDiff rows={rows} />}
 

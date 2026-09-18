@@ -18,21 +18,19 @@ export interface DecisionStyle {
   readonly label: string;
   /** Legible without a webfont, in any font, at any size. */
   readonly glyph: string;
-  /** For the global tally at the top of the panel. */
-  readonly tally: string;
   /** For a lane's own counter, where it reads as "2 allowed" in a sentence. */
   readonly lane: string;
 }
 
 export const DECISIONS: Readonly<Record<Effect, DecisionStyle>> = {
-  allow: { label: "Allowed", glyph: "✓", tally: "Allowed", lane: "allowed" },
-  deny: { label: "Denied", glyph: "✕", tally: "Denied", lane: "denied" },
+  allow: { label: "Allowed", glyph: "✓", lane: "allowed" },
+  deny: { label: "Denied", glyph: "✕", lane: "denied" },
   // "Not equal" is what a modification is, and it is what the diff underneath
   // shows — the glyph and the evidence say the same thing.
-  modify: { label: "Modified", glyph: "≠", tally: "Modified", lane: "modified" },
+  modify: { label: "Modified", glyph: "≠", lane: "modified" },
 };
 
-/** The order the tally reads in. Allow first: most calls are allowed. */
+/** The order a lane's counters read in. Allow first: most calls are allowed. */
 export const DECISION_ORDER = ["allow", "deny", "modify"] as const;
 
 export interface LaneStyle {
