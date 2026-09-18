@@ -38,7 +38,7 @@ import { clearLeg, clearSession, GATEWAY_COOKIE, PENDING_FLOW_COOKIE, readLeg, r
   SIGNIN_COOKIE, withGatewayToken, writeLeg, writeSession, type GatewayLeg, type PendingFlow,
   type Session, type SigninLeg } from "./session.ts";
 import { escapeHtml, notConfigured, page, redirect, verbatim } from "./pages.ts";
-import { authorizeUrl, exchangeCode, fetchUserinfo, nonce, pkce, tokenExpiry } from "./oidc.ts";
+import { authorizeUrl, exchangeCode, fetchUserinfo, nonce, pkce, tokenExpiry, type UserinfoFailure } from "./oidc.ts";
 import { accessTokenOf, exchangeGatewayCode, expiryOf, gatewayAuthorizeUrl, gatewayClient, isExpiring,
   mcpUrl, refreshGatewayToken } from "./gateway.ts";
 import { knownPersona } from "./personas.ts";
@@ -148,6 +148,62 @@ export async function signin(request: Request, config: IdentitySurface = readIde
 }
 
 /**
+ * What to tell someone whose sign-in got as far as a token and no further.
+ *
+ * This page used to say "The identity provider returned no email" whatever had
+ * happened — including the live 429 that made #166, where the provider said
+ * nothing whatsoever about email and the token exchange one step earlier had
+ * succeeded. A fault surface that asserts something that did not occur sends
+ * whoever reads it to look at the wrong thing: #151 was the same mistake, and
+ * the body underneath was carrying the real answer the whole time.
+ *
+ * `fetchUserinfo` already knows which of the three things happened. This turns
+ * that into the sentence at the top of the page.
+ */
+function userinfoFailurePage(userinfo: {
+  failure: UserinfoFailure;
+  status: number;
+}): { title: string; explanation: string } {
+  if (userinfo.failure === "no-email-claim") {
+    return {
+      title: "The identity provider returned no email",
+      explanation:
+        "<p>The provider answered, and the account it described carries no <code>email</code>. " +
+        "Sign-in needs one: the email is the identity every other part of this demo joins on.</p>",
+    };
+  }
+
+  if (userinfo.failure === "unreadable") {
+    return {
+      title: "The identity provider's answer could not be read",
+      explanation:
+        `<p><code>/oauth2/userinfo</code> answered ${userinfo.status}, and the body was not JSON. ` +
+        "It is shown below exactly as it arrived.</p>",
+    };
+  }
+
+  if (userinfo.status === 429) {
+    return {
+      title: "The identity provider is refusing requests for now",
+      explanation:
+        "<p>Your password was accepted and the token exchange succeeded — the last step, reading " +
+        "your email back from <code>/oauth2/userinfo</code>, was turned away with <strong>429 Too " +
+        "Many Requests</strong>. That is the provider throttling this application, not anything " +
+        "about your account.</p>" +
+        "<p>It clears on its own. Closing any open loan screens makes it clear sooner, because " +
+        "they are what fills the quota (#166). Then sign in again.</p>",
+    };
+  }
+
+  return {
+    title: `The identity provider refused to say who you are (HTTP ${userinfo.status})`,
+    explanation:
+      "<p>Your password was accepted and the token exchange succeeded; the request that reads your " +
+      "email back from <code>/oauth2/userinfo</code> was refused. What it answered is below.</p>",
+  };
+}
+
+/**
  * `GET /api/auth/callback?code&state`
  *
  * Establishes the session, then does one of three things: completes a parked
@@ -210,7 +266,8 @@ export async function signinCallback(request: Request, config: IdentitySurface =
 
   const userinfo = await fetchUserinfo(config.identity.idpIssuer, exchanged.token.access_token);
   if (!userinfo.ok) {
-    return page("The identity provider returned no email", verbatim(`${userinfo.status} ${userinfo.body}`), 502, headers);
+    const { title, explanation } = userinfoFailurePage(userinfo);
+    return page(title, explanation + verbatim(`${userinfo.status} ${userinfo.body}`), 502, headers);
   }
 
   // The bearer is kept, not dropped (#157). `apps/loan-app` derives the actor
