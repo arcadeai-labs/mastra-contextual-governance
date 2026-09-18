@@ -619,9 +619,31 @@ challenge pauses again, while a successful refresh replaces the server-provided
 loan-file state; the stable client shell keeps the Chat component and its in-memory
 conversation history mounted. `test/home-surface.test.ts` covers the real local MCP
 transport, `test/home-loan-browser.test.tsx` covers the isolated rendered component,
-and `test/home-loan-next-browser.test.ts` drives a real Next page in local headless
-Chrome: a delayed synthetic gateway response, rapid clicks, a re-challenge, and a
-successful Continue are measured through the production refresh/context path.
+and `test/home-loan-next-browser.test.ts` drives a real Next page in headless
+Chrome at 1440x900: a delayed synthetic gateway response, rapid clicks, a re-challenge,
+and a successful Continue are measured through the production refresh/context path.
+
+That last one runs on CI as well as on a laptop (#152). `test/chrome.ts` resolves the
+browser from `CG_CHROME_BIN`, then `PATH`, then the platform's usual locations, and a
+miss is a *failure* on CI rather than a skip — the workflow installs Chrome in the
+`check` job precisely so the regression cannot go quiet there. It skips only on a
+developer machine with no browser, and prints where it looked when it does.
+
+The test waits for the shell to hydrate before driving it. The page and its
+authorization card are server-rendered, so their presence proves nothing about whether
+React is holding the form yet; clicking Send before `hydrateRoot()` installs React's
+root listener submits the composer natively as `GET /?`, which replaces the document
+and loses the turn. That was the flake PR154's reviewer measured. `CG_HYDRATION_DELAY_MS`
+holds the client chunks back so the race can be reproduced on demand.
+
+What it waits for is `.cg-split[data-hydrated="true"]` — one inert attribute
+`components/shell/SplitScreen.tsx` sets on mount and never reads. A parent's mount
+effect runs after its children have committed, so the shell saying so means the
+composer and the loan cards beneath it are hydrated with their handlers attached.
+The server never emits it (`test/split-screen.test.tsx`), which is what makes it
+worth waiting for. Round 1 of #152's review rejected the first version, which read
+React's private `__reactProps$…` DOM bookkeeping instead — a readiness proof resting
+on internals is one minor upgrade away from passing without checking anything.
 
 ### A denial is a decision, not an error state
 

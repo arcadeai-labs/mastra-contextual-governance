@@ -41,8 +41,24 @@
  *
  * Out of scope, per #1 and the issue. A stacked version of this screen would
  * not make the argument the screen exists to make.
+ *
+ * ## `data-hydrated`
+ *
+ * The one thing this shell says about itself: whether it is live in a browser
+ * yet. The screen is server-rendered, so its HTML — including the composer and
+ * an authorization card — exists and is inert before React reaches it, and
+ * nothing else on the page distinguishes the two states.
+ *
+ * It is a plain attribute, set once on mount and never read by this code. No
+ * style, no behaviour and no branch depends on it; removing it changes what
+ * this screen does not at all. What it gives anything driving a real browser is
+ * a stable answer to *"can I click yet?"* — a parent's mount effect runs after
+ * its children have committed, so this attribute appearing means the chat
+ * composer and the loan cards beneath it are hydrated, with their handlers
+ * attached. #152 added it because the alternative was reading React's private
+ * DOM bookkeeping, which is a promise React never made.
  */
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { BankPane } from "../bank/BankPane.tsx";
 import type { ChatEvent } from "../../lib/agent/events.ts";
@@ -82,6 +98,8 @@ export function SplitScreen({
   onContinueAuthorization,
 }: SplitScreenProps) {
   const [correlationKey, setCorrelationKey] = useState<CorrelationKey | undefined>(undefined);
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
 
   const onChatEvent = useCallback((event: ChatEvent) => {
     // Denials only. An allow correlates on `execution_id`, which does not cross
@@ -95,7 +113,7 @@ export function SplitScreen({
   const onTurnStart = useCallback(() => setCorrelationKey(undefined), []);
 
   return (
-    <div className="cg-split">
+    <div className="cg-split" data-hydrated={hydrated ? "true" : undefined}>
       <div className="cg-split-left">
         <BankPane
           signedInAs={signedInAs}

@@ -123,6 +123,22 @@ describe("the split", () => {
     expect(markup.indexOf("Control plane")).toBeGreaterThan(right);
   });
 
+  /**
+   * The other half of this contract — that the attribute *appears* once the
+   * shell mounts — is measured on the real thing, by
+   * `test/home-loan-next-browser.test.ts`, whose readiness gate waits for it
+   * and would time out if it never arrived. What matters here is that the
+   * server does not claim it: an attribute present in the server's own HTML
+   * would answer "yes, hydrated" to a page that is nothing of the kind, which
+   * is the failure #152 exists to close.
+   */
+  test("the server never claims the shell is hydrated", () => {
+    const markup = shell();
+
+    expect(markup).toContain(`class="cg-split"`);
+    expect(markup).not.toContain("data-hydrated");
+  });
+
   test("the left half reads as an internal banking tool rather than a demo", () => {
     const markup = shell();
 
