@@ -619,9 +619,22 @@ challenge pauses again, while a successful refresh replaces the server-provided
 loan-file state; the stable client shell keeps the Chat component and its in-memory
 conversation history mounted. `test/home-surface.test.ts` covers the real local MCP
 transport, `test/home-loan-browser.test.tsx` covers the isolated rendered component,
-and `test/home-loan-next-browser.test.ts` drives a real Next page in local headless
-Chrome: a delayed synthetic gateway response, rapid clicks, a re-challenge, and a
-successful Continue are measured through the production refresh/context path.
+and `test/home-loan-next-browser.test.ts` drives a real Next page in headless
+Chrome at 1440x900: a delayed synthetic gateway response, rapid clicks, a re-challenge,
+and a successful Continue are measured through the production refresh/context path.
+
+That last one runs on CI as well as on a laptop (#152). `test/chrome.ts` resolves the
+browser from `CG_CHROME_BIN`, then `PATH`, then the platform's usual locations, and a
+miss is a *failure* on CI rather than a skip — the workflow installs Chrome in the
+`check` job precisely so the regression cannot go quiet there. It skips only on a
+developer machine with no browser, and prints where it looked when it does.
+
+The test waits for React to hydrate the composer before driving it. The page and its
+authorization card are server-rendered, so their presence proves nothing about whether
+React is holding the form yet; clicking Send before `hydrateRoot()` installs React's
+root listener submits the composer natively as `GET /?`, which replaces the document
+and loses the turn. That was the flake PR154's reviewer measured. `CG_HYDRATION_DELAY_MS`
+holds the client chunks back so the race can be reproduced on demand.
 
 ### A denial is a decision, not an error state
 

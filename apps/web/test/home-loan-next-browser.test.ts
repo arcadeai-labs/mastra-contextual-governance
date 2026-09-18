@@ -8,7 +8,7 @@
  * browser never receives an injected refresh callback.
  */
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Subprocess } from "bun";
@@ -17,9 +17,36 @@ import { chunk, chunkName, seal } from "../lib/identity/seal.ts";
 import { SESSION_COOKIE } from "../lib/identity/session.ts";
 import { encodeEvent } from "../lib/agent/events.ts";
 import { DANA, SESSION_SECRET, startAgentHarness, type AgentHarness } from "./agent-harness.ts";
+import { browserRequired, missingBrowserMessage, resolveChrome } from "./chrome.ts";
 
 const WEB = join(import.meta.dir, "..");
-const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const chromeResolution = resolveChrome();
+const REQUIRED = browserRequired();
+// A skip that says nothing is the failure mode #152 was opened about. If this
+// machine has no browser and is allowed to skip, it prints where it looked.
+if (chromeResolution.path === null && !REQUIRED) console.warn(missingBrowserMessage(chromeResolution));
+
+/**
+ * The laptop the demo is given on (#152). Set through CDP rather than inferred
+ * from the headless default, and read back below, so the evidence this test
+ * produces is the evidence a reviewer captured by hand on #150.
+ */
+const VIEWPORT = { width: 1440, height: 900 } as const;
+
+/**
+ * Optional, and 0 by default: hold `/_next/static/chunks/*` back by this many
+ * milliseconds so hydration lands well after the server-rendered HTML.
+ *
+ * This is the knob that makes #152's fix falsifiable. The flake it diagnoses is
+ * a race — the test drives a page that has been *rendered* but not yet
+ * *hydrated* — and a race that reproduces on a loaded CI runner two times in
+ * six will not reproduce on an idle laptop however many times it is run. With
+ * `CG_HYDRATION_DELAY_MS=4000` the race becomes certain: without the hydration
+ * gate below, the submit click escapes React and the browser natively submits
+ * the composer's form as `GET /?`, replacing the document and taking the turn
+ * with it. With the gate, the same delay passes.
+ */
+const HYDRATION_DELAY_MS = Number(process.env.CG_HYDRATION_DELAY_MS ?? "0");
 
 interface CdpResponse<T = unknown> {
   id: number;
@@ -139,6 +166,73 @@ async function evaluate<T>(cdp: Cdp, expression: string): Promise<T> {
   return response.result?.value as T;
 }
 
+/**
+ * Has React taken ownership of the controls this test drives?
+ *
+ * ## Why this exists (#152)
+ *
+ * Everything this test clicks and types into is in the server-rendered HTML
+ * before any JavaScript runs: the page is a server component, and the
+ * authorization card the test waits for is rendered by the *server* when the
+ * gateway challenges `Loan_GetLoan`. So `waitFor("initial authorization card")`
+ * proves the HTML arrived and proves nothing about React.
+ *
+ * Measured, on a passing run, at the moment the old test clicked Send:
+ *
+ *     {"docKeys":["__reactContainer$…"],"bodyKeys":[],"announcer":false,
+ *      "formHydrated":false,"textareaHydrated":false}
+ *
+ * `__reactContainer$` on `document` but no fiber on any node: `hydrateRoot()`
+ * had been *called* — so React's root listener was installed — but hydration
+ * had not committed. The click therefore worked only because React captures
+ * discrete events on the root container before hydration and replays them
+ * afterwards. That replay is the entire reason the test usually passed.
+ *
+ * The flake is the window *before* `hydrateRoot()`. There is no root listener
+ * then, so the click reaches the browser instead, and `<form onSubmit={send}>`
+ * — whose `preventDefault` lives in React — submits natively. Holding the
+ * client chunks back makes that certain; the failure state is exact:
+ *
+ *     {"prompt":"Approve the loan for $95K and double-check your work…",
+ *      "docMarker":null,"windowName":"cg-window-marker",
+ *      "navigationEntries":["http://127.0.0.1:55104/?"],"formHydratedNow":true}
+ *
+ * The document marker set immediately before the click is gone while the window
+ * name survives, and the navigation entry ends in `?` — a GET submission of a
+ * form with no `action` and no named fields. The page reloaded, so the composer
+ * holds the default prompt again and no turn ever ran. That is precisely the
+ * state PR154's reviewer reported.
+ *
+ * ## What is checked
+ *
+ * Not a timeout, and not a weaker assertion: the precondition itself. React
+ * attaches its props to each host node as it hydrates it, so a node carrying a
+ * `__reactProps$…` entry whose handler is a function is a node whose handler
+ * will run. The three checked are exactly the three this test drives — the
+ * composer's `onChange`, the form's `onSubmit`, and the authorization card's
+ * `onClick`.
+ */
+async function waitForHydration(cdp: Cdp): Promise<void> {
+  await waitFor(
+    "React to hydrate the composer and the authorization card",
+    async () =>
+      evaluate<boolean>(
+        cdp,
+        `(() => {
+          const handler = (selector, name) => {
+            const node = document.querySelector(selector);
+            if (node === null) return false;
+            const key = Object.getOwnPropertyNames(node).find((entry) => entry.startsWith('__reactProps$'));
+            return key !== undefined && typeof node[key]?.[name] === 'function';
+          };
+          return handler('textarea[aria-label="Message the assistant"]', 'onChange')
+            && handler('form.chat-composer', 'onSubmit')
+            && handler('[data-action="continue-loan-authorization"]', 'onClick');
+        })()`,
+      ),
+  );
+}
+
 async function clickContinue(cdp: Cdp): Promise<void> {
   await evaluate<boolean>(
     cdp,
@@ -154,13 +248,16 @@ async function clickContinue(cdp: Cdp): Promise<void> {
 }
 
 /**
- * The full browser proof is intentionally local-only. On Linux CI without the
- * developer Chrome binary this remains an explicit skipped measurement, while
- * the normal component and MCP suites still run everywhere.
+ * This is a required measurement wherever a browser can be had, which since
+ * #152 includes CI: `.github/workflows/ci.yml` installs Chrome in the `check`
+ * job and `browserRequired()` turns a miss there into a failure. It skips only
+ * on a developer machine with no browser at all, and says so when it does.
  */
-test.skipIf(!existsSync(CHROME))(
+test.skipIf(chromeResolution.path === null && !REQUIRED)(
   "guards one real Next refresh, retries a re-challenge, and preserves chat state",
   async () => {
+    if (chromeResolution.path === null) throw new Error(missingBrowserMessage(chromeResolution));
+    const CHROME = chromeResolution.path;
     let harness: AgentHarness | undefined;
     let next: Subprocess | undefined;
     let chrome: Subprocess | undefined;
@@ -212,6 +309,11 @@ test.skipIf(!existsSync(CHROME))(
           "--disable-dev-shm-usage",
           `--user-data-dir=${profile}`,
           `--remote-debugging-port=${debugPort}`,
+          // The laptop this demo is given on. Asserted below rather than
+          // assumed: headless Chrome's own default is 800x600, and #150's
+          // reviewer had to capture the 1440x900 evidence by hand because this
+          // test never said what size the screen was.
+          `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,
           "about:blank",
         ],
         stdout: "pipe",
@@ -251,6 +353,14 @@ test.skipIf(!existsSync(CHROME))(
       await cdp.command("Page.enable");
       await cdp.command("Runtime.enable");
       await cdp.command("Network.enable");
+      // `--window-size` sizes the window; this sizes the *page*, and does it
+      // identically on macOS and on a Linux runner with no window manager.
+      await cdp.command("Emulation.setDeviceMetricsOverride", {
+        width: VIEWPORT.width,
+        height: VIEWPORT.height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
       await cdp.command("Network.setCookies", { cookies });
 
       // Keep the Chat component on its actual production path without an
@@ -262,7 +372,13 @@ test.skipIf(!existsSync(CHROME))(
         const requestId = String(params.requestId ?? "");
         const request = (params.request ?? {}) as { url?: string };
         if (!request.url?.includes("/api/chat")) {
-          void cdp?.command("Fetch.continueRequest", { requestId });
+          if (HYDRATION_DELAY_MS > 0 && request.url?.includes("/_next/static/chunks/")) {
+            void Bun.sleep(HYDRATION_DELAY_MS).then(() =>
+              cdp?.command("Fetch.continueRequest", { requestId }).catch(() => undefined),
+            );
+            return;
+          }
+          void cdp?.command("Fetch.continueRequest", { requestId }).catch(() => undefined);
           return;
         }
         const body =
@@ -281,6 +397,15 @@ test.skipIf(!existsSync(CHROME))(
       await cdp.command("Page.navigate", { url: origin });
       await waitFor("initial authorization card", async () =>
         evaluate<boolean>(cdp as Cdp, `document.querySelector('[data-action="continue-loan-authorization"]') !== null`),
+      );
+      // That card is server-rendered, so it says nothing about React. Every
+      // interaction below — typing, submitting, clicking Continue — needs
+      // React's handlers to exist, so wait for the handlers themselves.
+      await waitForHydration(cdp);
+      // The screen this evidence was measured on, read back from the page
+      // rather than assumed from the launch flag.
+      expect(await evaluate<{ width: number; height: number }>(cdp, `({ width: window.innerWidth, height: window.innerHeight })`)).toEqual(
+        { width: VIEWPORT.width, height: VIEWPORT.height },
       );
 
       const initialCounts = { lists: harness.lists.length, calls: harness.calls.length };
@@ -313,6 +438,18 @@ test.skipIf(!existsSync(CHROME))(
       await Bun.sleep(100);
       expect(await evaluate<string>(cdp, `document.querySelector('textarea')?.value ?? ''`)).toContain("REVIEWER-DRAFT-150");
 
+      // Stamp the document immediately before submitting. `window.name`
+      // survives a same-origin navigation and a `documentElement` dataset entry
+      // does not, so if this turn ever goes missing again the diagnostic below
+      // can say whether the page was replaced underneath it — which is exactly
+      // how #152's flake was identified.
+      await evaluate<void>(
+        cdp,
+        `(() => {
+          window.name = 'cg-window-marker';
+          document.documentElement.dataset.cgDocMarker = 'pre-submit';
+        })()`,
+      );
       // The local response creates one completed turn without touching an
       // external model, giving the refresh assertion real chat history.
       await evaluate<void>(cdp, `document.querySelector('button[type="submit"]')?.click()`);
@@ -323,12 +460,26 @@ test.skipIf(!existsSync(CHROME))(
       } catch (cause) {
         const state = await evaluate<Record<string, unknown>>(
           cdp,
-          `(() => ({
-            prompt: document.querySelector('textarea')?.value,
-            sendDisabled: document.querySelector('button[type="submit"]')?.hasAttribute('disabled'),
-            failures: document.querySelector('[role="alert"]')?.textContent,
-            fetchStatus: document.readyState,
-          }))()`,
+          `(() => {
+            const handler = (selector, name) => {
+              const node = document.querySelector(selector);
+              if (node === null) return null;
+              const key = Object.getOwnPropertyNames(node).find((entry) => entry.startsWith('__reactProps$'));
+              return key !== undefined && typeof node[key]?.[name] === 'function';
+            };
+            return {
+              prompt: document.querySelector('textarea')?.value,
+              sendDisabled: document.querySelector('button[type="submit"]')?.hasAttribute('disabled'),
+              failures: document.querySelector('[role="alert"]')?.textContent,
+              fetchStatus: document.readyState,
+              // Marker gone while the window name survives means the document
+              // was replaced: the composer's form submitted natively, so React
+              // was not holding it when the click landed.
+              documentReplaced: document.documentElement.dataset.cgDocMarker === undefined && window.name === 'cg-window-marker',
+              navigationEntries: performance.getEntriesByType('navigation').map((entry) => entry.name),
+              composerHydrated: handler('form.chat-composer', 'onSubmit'),
+            };
+          })()`,
         );
         throw new Error(`${String(cause)}; browser chat state: ${JSON.stringify(state)}`);
       }
