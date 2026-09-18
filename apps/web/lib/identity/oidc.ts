@@ -202,25 +202,39 @@ function basic({ clientId, clientSecret }: ClientCredentials): string {
   return Buffer.from(`${half(clientId)}:${half(clientSecret)}`).toString("base64");
 }
 
-/** The signed-in person's email, lowercase, or `null` with the reason. */
-export async function fetchUserinfo(
-  issuer: string,
-  accessToken: string,
-): Promise<{ ok: true; email: string } | { ok: false; status: number; body: string }> {
+/**
+ * Why a userinfo call did not yield an email. Three different things, and the
+ * page that reports them has to be able to tell them apart: only one of them
+ * is the provider saying anything at all about an email.
+ *
+ * - `request-failed` — the provider refused the request. A 401, a 403, a 429,
+ *   a 500. It said nothing about email, and a page that claims it did is
+ *   asserting something that did not happen (#166, same family as #151).
+ * - `unreadable` — it answered, and the answer was not JSON.
+ * - `no-email-claim` — it answered with a user, and that user has no `email`.
+ */
+export type UserinfoFailure = "request-failed" | "unreadable" | "no-email-claim";
+
+export type UserinfoResult =
+  | { ok: true; email: string }
+  | { ok: false; failure: UserinfoFailure; status: number; body: string };
+
+/** The signed-in person's email, lowercase, or the reason there is none. */
+export async function fetchUserinfo(issuer: string, accessToken: string): Promise<UserinfoResult> {
   const response = await fetch(`${issuer}/oauth2/userinfo`, {
     headers: { authorization: `Bearer ${accessToken}` },
   });
   const body = await response.text();
-  if (!response.ok) return { ok: false, status: response.status, body };
+  if (!response.ok) return { ok: false, failure: "request-failed", status: response.status, body };
 
   let userinfo: Userinfo;
   try {
     userinfo = JSON.parse(body) as Userinfo;
   } catch {
-    return { ok: false, status: response.status, body };
+    return { ok: false, failure: "unreadable", status: response.status, body };
   }
   if (!userinfo.email) {
-    return { ok: false, status: response.status, body: "the IdP returned no email claim" };
+    return { ok: false, failure: "no-email-claim", status: response.status, body };
   }
   // DESIGN.md rule 3: the Arcade user_id, the OAuth subject and the loan book's
   // actor column are one string. Lowercased here as well as at the IdP, because
