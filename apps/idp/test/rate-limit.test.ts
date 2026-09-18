@@ -256,3 +256,53 @@ describe("measured over the wire, booted with NODE_ENV=production", () => {
     30_000,
   );
 });
+
+/**
+ * What the person in front of the login form sees when the ceiling above
+ * refuses them (#170).
+ *
+ * The form posts to `/login`, which hands the credentials to `/sign-in/email`
+ * — so it spends the same bucket, and a refusal arrives as a 429 that no
+ * branch in `handleLogin` used to name. It fell through to the redirect a
+ * *successful* sign-in with no OAuth flow gets, so the persona was bounced to
+ * the provider's home page with no session and nothing said. A control that
+ * refuses and reads as a success is the failure this repo exists to remove.
+ */
+describe("a sign-in the limiter refused", () => {
+  const login = (nonce: string) =>
+    fetch(`${baseUrl}/login`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ email: `probe-${nonce}@example.invalid`, password: "not-the-password" }).toString(),
+      redirect: "manual",
+    });
+
+  test(
+    "says so, and does not redirect as though it worked",
+    async () => {
+      // Start from a cleared bucket: the measurements above spend this one.
+      await Bun.sleep(RATE_LIMIT.signIn.window * 1_000 + 300);
+
+      // The path that already works, asserted here so that making the refusal
+      // honest cannot quietly take the credential message with it.
+      const wrong = await login("first");
+      expect(wrong.status).toBe(401);
+      expect(await wrong.text()).toContain("did not match");
+
+      let refused: Response | undefined;
+      for (let attempt = 0; attempt < RATE_LIMIT.signIn.max + 5 && refused === undefined; attempt++) {
+        const response = await login(String(attempt));
+        if (response.status !== 401) refused = response;
+      }
+
+      expect(refused?.status).toBe(429);
+      expect(refused?.headers.get("location")).toBeNull();
+      const body = await refused!.text();
+      expect(body).toMatch(/too many sign-in attempts/i);
+      // The refusal is windowed, so "try again" is only useful with the number
+      // of seconds on it — read off the limiter's own `X-Retry-After`.
+      expect(body).toMatch(/\d+ seconds/);
+    },
+    30_000,
+  );
+});

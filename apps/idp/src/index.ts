@@ -110,7 +110,10 @@ async function redirectFrom(response: Response): Promise<Response | null> {
   return new Response(null, { status: 303, headers });
 }
 
-async function loginPage(url: URL, extra: { error?: string; email?: string } = {}): Promise<Response> {
+async function loginPage(
+  url: URL,
+  extra: { error?: string; email?: string; status?: number } = {},
+): Promise<Response> {
   const clientId = url.searchParams.get("client_id");
   return html(
     renderLoginPage({
@@ -119,7 +122,7 @@ async function loginPage(url: URL, extra: { error?: string; email?: string } = {
       error: extra.error,
       email: extra.email,
     }),
-    extra.error ? 401 : 200,
+    extra.status ?? (extra.error ? 401 : 200),
   );
 }
 
@@ -137,6 +140,23 @@ async function handleLogin(request: Request): Promise<Response> {
   if (oauthQuery) body.oauth_query = oauthQuery;
 
   const response = await callAuth("/sign-in/email", body, request);
+
+  if (response.status === 429) {
+    // Refused at the rate limiter, before any password was read (the ceiling
+    // is `RATE_LIMIT.signIn`). Every branch below is about a credential, and
+    // falling past them lands on the 303 a *successful* sign-in gets — so
+    // until #170 a refusal bounced the persona to the provider's home page
+    // with no session and nothing said, which reads exactly like having
+    // signed in. The limiter says how long it will keep saying no; pass that
+    // on rather than inviting an immediate retry that slides the window.
+    const retryAfter = Number(response.headers.get("X-Retry-After"));
+    const seconds = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : 10;
+    return loginPage(pageUrl, {
+      error: `Too many sign-in attempts from this network. Try again in ${seconds} seconds.`,
+      email,
+      status: 429,
+    });
+  }
 
   if (response.status === 401 || response.status === 403 || response.status === 400) {
     // The plugin checks the signed query *before* the password, in a
