@@ -18,8 +18,10 @@
  *
  * It also does not resolve identity. `session` is #82's sealed session, already
  * unsealed on the server; the role and authority beside it are a *label* looked
- * up from an address the IdP asserted (`lib/identity/roster.ts`). The switcher
- * is `SignInPanel`, and there is no second one.
+ * up from an address the IdP asserted (`lib/identity/roster.ts`). #176 deleted
+ * the switcher outright — one Chrome profile per persona is the real demo shape
+ * — so the only way a `user_id` changes is a fresh sign-in at cg-idp from
+ * `SessionChrome`, and there is nothing client-side that could change one.
  *
  * ## Props
  *

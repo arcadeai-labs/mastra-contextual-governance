@@ -4,8 +4,8 @@
  * The bank's loan origination system, and since #155 the whole of `/`.
  *
  * Deliberately dull. Square corners, hairline rules, uppercase field labels, a
- * navy chrome bar, five tabs of which four go nowhere, and a release number
- * nobody has bumped since 2009. The argument this screen is making is that
+ * navy chrome bar, a tab strip, and a release number nobody has bumped since
+ * 2009. The argument this screen is making is that
  * *this* — a fifteen-year-old system of record with a real loan book behind it —
  * is what agents are being connected to, and a beautiful version quietly undoes
  * it: it makes the governed system look like part of the same product as the
@@ -19,15 +19,25 @@
  * at `/panel` and the presenter switches to it. Nothing here knows that page
  * exists — no governance pane, no timeline subscription, no `cg-` class — and
  * the one link across is drawn by `app/page.tsx`, outside this component, for
- * exactly that reason.
+ * exactly that reason. #176 left it there deliberately: the loan board is the
+ * bank's own second screen and belongs in this strip, the control plane is not
+ * and does not.
  *
  * ## What is real here
  *
- * Everything. The loan cards are read from `apps/loan-app` — the bank's own
- * HTTP API, over HTTP, as the signed-in person, and polled (#157) — the sign-in
- * panel is #82's real OIDC sign-in against `apps/idp`, and the chat is #14's
- * real agent. Nothing on this screen is a mock, and the one region that is not
- * built yet says so ({@link ToolListSlot}).
+ * Everything, and since #176 that includes the chrome. The loan cards are read
+ * from `apps/loan-app` — the bank's own HTTP API, over HTTP, as the signed-in
+ * person, and polled (#157) — the session controls in the top chrome are #82's
+ * real OIDC sign-in against `apps/idp`, the two tabs both navigate, and the chat
+ * is #14's real agent. Nothing on this screen is a mock, and the one region that
+ * is not built yet says so ({@link ToolListSlot}).
+ *
+ * What #176 removed was the last of the furniture that was: four "Sign in as …"
+ * persona buttons in a card below the loan files, and four tabs that were
+ * `<span>`s because there was nothing behind them. The old comment defended the
+ * dead tabs — *"a tab that navigates nowhere is worse on a projector than one
+ * that plainly cannot be pressed"* — and the human's answer, looking at the
+ * screen on 2026-09-19, was that five tabs where none navigate is worse still.
  *
  * ## The fork seam
  *
@@ -37,6 +47,22 @@
  * imports anything from `components/governance`, and no `cg-` class name
  * appears on this screen. `test/home-screen.test.tsx` fails if any of that
  * stops holding.
+ *
+ * The session controls arrive as an element for the same reason they always
+ * did: they are `components/identity`'s, they know about the gateway, and this
+ * component may not. Moving them from a card in the records column into the
+ * chrome bar did not change which side of the seam they are on.
+ *
+ * ## Who holds the loan book
+ *
+ * This component, since #176, rather than `LoanFilesView`. One poll
+ * (`use-loan-book.ts`) feeding three surfaces, because two of them have to
+ * agree with the third: when the read comes back `expired`, the chrome may not
+ * go on saying the session is good and the assistant may not go on saying every
+ * tool call is made as that person. The human's screenshot on 2026-09-19 had
+ * all three claims on screen at once, two of them true and the loudest of them
+ * false. A second poll would have let them drift apart again on the very next
+ * tick.
  *
  * ## `data-hydrated`
  *
@@ -66,26 +92,42 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Chat } from "../chat/Chat.tsx";
-import { LoanFilesView } from "./LoanFiles.tsx";
+import { LoanFilesView, SIGN_IN } from "./LoanFiles.tsx";
 import type { LoanBookState } from "../../lib/loan-context/loans.ts";
 import { ToolListSlot } from "./ToolListSlot.tsx";
+import { useLoanBook } from "./use-loan-book.ts";
 import "./bank.css";
 
-/** The tab strip. Four of them are chrome; this is the screen you are on. */
-const TABS = ["Pipeline", "Applications", "Decisions", "Reports", "Admin"] as const;
-const CURRENT_TAB = "Applications";
+/**
+ * The tab strip: two entries, both real.
+ *
+ * `Applications` is this page and carries `aria-current="page"`; the board is
+ * `/loans`, the bank's own full-screen decision board on the presenter's second
+ * display. Both are links — the current one to `/`, so the strip behaves the
+ * way a strip does and a reader is never guessing which of two shapes means
+ * what.
+ *
+ * The control plane is deliberately not in here. It is not one of the bank's
+ * screens, `components/bank` may not name it, and `app/page.tsx` draws its link
+ * from outside this component (#155, reaffirmed by the human at the #176 gate).
+ */
+const TABS: ReadonlyArray<{ label: string; href: string; current?: true }> = [
+  { label: "Applications", href: "/", current: true },
+  { label: "Decision board", href: "/loans" },
+] as const;
 
 export interface BankPaneProps {
   /** The persona this browser is signed in as, or `null`. Read from the sealed session. */
   signedInAs: string | null;
   /**
-   * #82's sign-in panel, rendered on the server and handed down as an element.
+   * #82's session controls, rendered on the server and handed down as an
+   * element: the gateway token's expiry, and `Sign out` or `Sign in`.
    *
    * An element rather than a `Session`, so the sealed cookie is unsealed in the
-   * server component that owns it and only what the panel prints crosses to the
-   * browser. It is also the persona switcher: `DESIGN.md` → Identity, switching
-   * persona is signing out and in, and there is no client-side control that
-   * changes a `user_id`.
+   * server component that owns it and only what it prints crosses to the
+   * browser. There is still no client-side control here that changes a
+   * `user_id`: signing in is an OIDC authorization against `apps/idp` and the
+   * person who comes back is whoever typed a password there.
    */
   identity: ReactNode;
   /**
@@ -93,9 +135,9 @@ export interface BankPaneProps {
    *
    * Data rather than an element, and required rather than optional: a screen
    * that silently drew no applications would look exactly like a loan book with
-   * nothing in it. `LoanFilesView` takes it as the first paint and polls
-   * `GET /api/loans` from there (#157), so this is a starting value rather than
-   * the state.
+   * nothing in it. This is the **first paint**; this component polls
+   * `GET /api/loans` from there (#157) and hands the answer to everything that
+   * needs it.
    */
   loans: LoanBookState;
   /** #15's tool list, when there is one. */
@@ -124,6 +166,23 @@ export function BankPane({
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
 
+  const book = useLoanBook(loans);
+
+  /**
+   * The bank has an intact session cookie and will not accept it.
+   *
+   * `expired` is `lib/loan-context/read.ts`'s name for a real 401 from
+   * `apps/loan-app` on this browser's own IdP bearer. It is **not** a policy
+   * decision — no hook runs on this path — so nothing keyed on it may reach for
+   * the control plane's words. What it is is a sign-in to do again, and the
+   * reason the whole screen has to know is #176's third complaint: the cookie
+   * is intact, so `signedInAs` is perfectly true, and a chrome bar reading
+   * `SIGNED IN AS bob@…` in 30px navy while the loan book underneath says the
+   * bank just refused that person is the screen contradicting itself in favour
+   * of the half the audience reads first.
+   */
+  const stale = book.status === "expired";
+
   return (
     <div className="bank" data-hydrated={hydrated ? "true" : undefined}>
       <header className="bank-chrome">
@@ -134,37 +193,58 @@ export function BankPane({
 
       <nav className="bank-tabs" aria-label="Sections">
         {TABS.map((tab) => (
-          // Not links. There is nothing behind four of them, and a tab that
-          // navigates nowhere is worse on a projector than one that plainly
-          // cannot be pressed.
-          <span key={tab} className="bank-tab" {...(tab === CURRENT_TAB ? { "aria-current": "page" as const } : {})}>
-            {tab}
-          </span>
+          <a
+            key={tab.label}
+            className="bank-tab"
+            href={tab.href}
+            {...(tab.current ? { "aria-current": "page" as const } : {})}
+          >
+            {tab.label}
+          </a>
         ))}
       </nav>
 
       {/* The one line the back of the room has to be able to read: who the
-          system thinks is using it. Every tool call this screen makes is made
-          as this person, so when the control plane on the other page shows a
-          refusal the first question — refused for whom — is already answered
-          here, where the call was made. */}
-      <div className="bank-user">
-        <span className="bank-user-label">Signed in as</span>
-        <span className="bank-user-value" data-signed-in={signedInAs !== null}>
+          system thinks is using it, and — since #176 — whether it still thinks
+          so. Every tool call this screen makes is made as this person, so when
+          the control plane on the other page shows a refusal the first question
+          — refused for whom — is already answered here, where the call was
+          made.
+
+          Beside it, the session controls: the gateway token's expiry, which the
+          human reads during rehearsals, and the one button that changes who
+          this browser is. */}
+      <div className="bank-user" data-session={stale ? "stale" : signedInAs === null ? "none" : "active"}>
+        <span className="bank-user-label">{stale ? "Sign-in stale" : "Signed in as"}</span>
+        <span className="bank-user-value" data-signed-in={signedInAs !== null} data-stale={stale || undefined}>
           {signedInAs ?? "no user"}
         </span>
+
+        {stale ? (
+          // Careful about every word. `expiredFor` in `lib/loan-context/read.ts`
+          // says "Nothing was refused by policy" and that distinction is
+          // load-bearing for the demo: a stale bearer that looked like
+          // governance working would be this project arguing against itself on
+          // its own screen.
+          <span className="bank-user-note" role="status">
+            The loan system is not accepting this browser&rsquo;s sign-in. Nothing was refused by
+            policy — <a href={SIGN_IN.href}>{SIGN_IN.label} again</a> to keep working.
+          </span>
+        ) : null}
+
+        <div className="bank-user-session">{identity}</div>
       </div>
 
       {/* Reading order is still the order of the demo — the file being decided,
           then the conversation deciding it — but since #155 it runs left to
           right rather than top to bottom. On half a 1920 screen one column was
           right; on the whole of it, a single column gives the transcript and
-          its composer the full 1920px and pushes the tool list and the sign-in
-          panel under the fold. Two columns put the conversation beside the file
-          instead, at a readable measure and at the full height of the viewport.
-          Two thirds of the width go to the conversation — the human's call at
-          the 2026-09-18 gate: the chat is what the room is asked to read, and
-          at even widths it looked like one of two equal panels.
+          its composer the full 1920px and pushes the tool list under the fold.
+          Two columns put the conversation beside the file instead, at a
+          readable measure and at the full height of the viewport. Two thirds of
+          the width go to the conversation — the human's call at the 2026-09-18
+          gate: the chat is what the room is asked to read, and at even widths
+          it looked like one of two equal panels.
 
           Both columns are the bank's own application. This is not the split
           #155 removed: that one put a *second system* — the control plane —
@@ -173,21 +253,20 @@ export function BankPane({
           its own effect (#157). */}
       <div className="bank-body">
         <div className="bank-column bank-column-records">
-          <LoanFilesView initial={loans} />
+          <LoanFilesView state={book} />
 
           <ToolListSlot>{toolList}</ToolListSlot>
-
-          <section className="bank-panel" aria-label="User session">
-            <h2 className="bank-panel-title">User session</h2>
-            <div className="bank-panel-body">{identity}</div>
-          </section>
         </div>
 
         <div className="bank-column bank-column-assistant">
           <section className="bank-panel bank-chat" aria-label="Assistant">
             <h2 className="bank-panel-title">Assistant</h2>
             <div className="bank-panel-body">
-              <Chat signedInAs={signedInAs} approvalStreamUrl={approvalStreamUrl} />
+              <Chat
+                signedInAs={signedInAs}
+                sessionStale={stale}
+                approvalStreamUrl={approvalStreamUrl}
+              />
             </div>
           </section>
         </div>

@@ -13,17 +13,22 @@
  * class and opens no governance-timeline socket — are measured in a real
  * browser against the real Next server in `test/home-full-screen-browser.test.ts`.
  *
- * Four groups, and the last is the one worth reading:
+ * Five groups, and the last is the one worth reading:
  *
  * 1. **The screen.** The bank's chrome, the persona, the loan files, the chat
  *    and the tool list, with no control-plane column anywhere near them.
- * 2. **What the split took with it.** The panel, its stream badge, and the
+ * 2. **The chrome.** #176: a tab strip where both tabs navigate, and a top bar
+ *    that carries the session rather than a card of persona buttons below the
+ *    loan files. The screen's third claim about a stale sign-in is driven
+ *    against a real 401 in `test/home-stale-session.test.tsx`, because a
+ *    hand-written `expired` fixture proves the render and not the path.
+ * 3. **What the split took with it.** The panel, its stream badge, and the
  *    `correlationKey` join. Absence is the assertion, so it is stated rather
  *    than implied.
- * 3. **A denial is not an error state.** The trap #22's issue names. A red
+ * 4. **A denial is not an error state.** The trap #22's issue names. A red
  *    crash banner reads to a room as "the demo broke", when what happened is the
  *    system working exactly as designed, and the two must not look alike.
- * 4. **The fork seam.** A developer restyles the bank and keeps the control
+ * 5. **The fork seam.** A developer restyles the bank and keeps the control
  *    plane entirely. That is a claim about imports and class names, so it is
  *    checked against the source rather than asserted in a comment.
  */
@@ -50,13 +55,15 @@ const WEB = join(HERE, "..");
 /**
  * The whole of `/`, as `app/page.tsx` composes it.
  *
- * One component now, where it used to be a shell wrapping two. The sign-in
- * panel is stubbed for the same reason it always was: it arrives as an element
- * from the server component that unseals the session, and this file is about
- * the screen rather than about #82.
+ * One component now, where it used to be a shell wrapping two. The session
+ * controls are stubbed for the same reason the sign-in panel always was: they
+ * arrive as an element from the server component that unseals the session, and
+ * this file is about the screen rather than about #82. Since #176 that element
+ * is in the chrome bar; `test/configuration-banner.test.tsx` is what renders
+ * the real one.
  *
  * `loans` is the loan book's **first paint** since #157, not the screen's
- * state: `LoanFilesView` polls `GET /api/loans` from there. A
+ * state: `BankPane` polls `GET /api/loans` from there. A
  * `renderToStaticMarkup` never runs an effect, so what this helper produces is
  * exactly the server-rendered HTML — which is the half worth asserting on here.
  */
@@ -70,7 +77,7 @@ function screen(
   return renderToStaticMarkup(
     <BankPane
       signedInAs={options.signedInAs === undefined ? "alice@bank.example" : options.signedInAs}
-      identity={<p>the sign-in panel, server-rendered</p>}
+      identity={<p>the session controls, server-rendered</p>}
       loans={options.loans ?? BOOK}
       approvalStreamUrl={options.approvalStreamUrl ?? null}
     />,
@@ -149,7 +156,7 @@ describe("the screen", () => {
     expect(markup).toContain("Loan Origination System");
   });
 
-  test("the four regions are all on the screen, in two columns", () => {
+  test("the regions are all on the screen, in two columns", () => {
     const markup = screen();
 
     const records = markup.indexOf(`class="bank-column bank-column-records"`);
@@ -157,11 +164,12 @@ describe("the screen", () => {
     expect(records).toBeGreaterThan(-1);
     expect(assistant).toBeGreaterThan(records);
 
-    // The applications, the user's access and the user's session read down the
-    // first column; the conversation is the whole of the second.
+    // The applications and the user's access read down the first column; the
+    // conversation is the whole of the second. The user's session used to be a
+    // third card here and is in the chrome bar since #176.
+    expect(markup.indexOf("Applications under review")).toBeGreaterThan(records);
     expect(markup.indexOf(`data-slot="${TOOL_LIST_SLOT}"`)).toBeGreaterThan(records);
     expect(markup.indexOf(`data-slot="${TOOL_LIST_SLOT}"`)).toBeLessThan(assistant);
-    expect(markup.indexOf("User session")).toBeLessThan(assistant);
     expect(markup.indexOf("Assistant")).toBeGreaterThan(assistant);
   });
 
@@ -191,18 +199,15 @@ describe("the screen", () => {
     expect(markup).toContain("Loan Origination System");
     expect(markup).toContain("Commercial Lending Division");
     expect(markup).toContain("Rel. 7.2.1");
-    for (const tab of ["Pipeline", "Applications", "Decisions", "Reports", "Admin"]) {
-      expect(markup).toContain(tab);
-    }
+    expect(markup).toContain("Applications");
     // It does not call itself a demo, a scaffold or a governance anything. The
     // bank's software has never heard of Arcade.
     //
     // Scoped to the bank's **own** chrome, which is what `screen()` renders:
-    // both demo fixtures it hosts — #82's sign-in panel and #15's tool list —
-    // arrive as props and are stubbed here. Those two do name the gateway, and
-    // should: they are the demo's own furniture standing inside the bank's
-    // screen, in the same category as the persona switcher. What must not creep
-    // in is this file's chrome announcing itself.
+    // both demo fixtures it hosts — #82's session controls and #15's tool list
+    // — arrive as props and are stubbed here. Those two do name the gateway,
+    // and should: they are the demo's own furniture standing inside the bank's
+    // screen. What must not creep in is this file's chrome announcing itself.
     expect(markup).not.toMatch(/demo|scaffold|Arcade/i);
   });
 
@@ -221,11 +226,20 @@ describe("the screen", () => {
     expect(markup).toContain(`data-signed-in="false"`);
   });
 
-  test("the persona switcher is on the screen, rendered by whoever owns it", () => {
+  test("the session controls are on the screen, rendered by whoever owns them", () => {
     // Handed down as an element from the server component, so the sealed
     // session is unsealed on the server. This asserts the slot, not #82's
-    // markup: the switcher is `components/identity`'s and stays there.
-    expect(screen()).toContain("the sign-in panel, server-rendered");
+    // markup: the controls are `components/identity`'s and stay there. Since
+    // #176 the slot is in the chrome bar rather than a card in the records
+    // column, which is a re-parent and not a change of owner.
+    const markup = screen();
+    const chrome = markup.indexOf(`class="bank-user"`);
+    const body = markup.indexOf(`class="bank-body"`);
+
+    expect(markup).toContain("the session controls, server-rendered");
+    expect(chrome).toBeGreaterThan(-1);
+    expect(markup.indexOf("the session controls, server-rendered")).toBeGreaterThan(chrome);
+    expect(markup.indexOf("the session controls, server-rendered")).toBeLessThan(body);
   });
 
   test("the chat is on the screen, and says who it is acting as", () => {
@@ -293,6 +307,118 @@ describe("the screen", () => {
     expect(markup).toContain("tools/list");
     // And the built-in it filtered, named rather than quietly dropped.
     expect(markup).toContain("System_ManageAuthorization");
+  });
+});
+
+/**
+ * The chrome, after #176.
+ *
+ * The human looked at `/` on 2026-09-19 and named two things here. Both are
+ * absences of a kind this repo insists on stating rather than implying: a
+ * control that quietly stops being rendered looks exactly like one rendering
+ * nothing because there is nothing to render.
+ *
+ * 1. The four "Sign in as …" persona buttons are gone, and with them the
+ *    `User session` card that held them. One Chrome profile per persona is the
+ *    real demo shape, so the switcher read as the most demo-looking thing on a
+ *    screen whose whole argument is that nothing here is a mock. What survives
+ *    is what a real application's chrome carries: who you are, whether your
+ *    gateway token is still good, and one button.
+ * 2. Four of the five tabs were `<span>`s. The old code defended them — *"a tab
+ *    that navigates nowhere is worse on a projector than one that plainly
+ *    cannot be pressed"* — and the answer was that five tabs where none
+ *    navigate is worse still.
+ *
+ * The third thing the human named is the contradiction between the chrome and
+ * the loan book, and it is driven against a real 401 in
+ * `test/home-stale-session.test.tsx` rather than asserted here. A fixture that
+ * spells out an `expired` state proves the render; it does not prove the state
+ * is ever reached, which is the failure mode #167, #170 and #151 all were.
+ */
+describe("the chrome", () => {
+  test("the tab strip is two entries, and both of them navigate", () => {
+    const markup = screen();
+    const strip = markup.slice(
+      markup.indexOf(`class="bank-tabs"`),
+      markup.indexOf("</nav>"),
+    );
+
+    expect([...strip.matchAll(/class="bank-tab"/g)]).toHaveLength(2);
+    expect(strip).toContain(`href="/"`);
+    expect(strip).toContain(`href="/loans"`);
+    expect(strip).toContain("Applications");
+    expect(strip).toContain("Decision board");
+  });
+
+  test("the page you are on is marked, and it is the only one", () => {
+    const markup = screen();
+    const strip = markup.slice(markup.indexOf(`class="bank-tabs"`), markup.indexOf("</nav>"));
+    const tabs = [...strip.matchAll(/<a\b[^>]*>([^<]*)<\/a>/g)].map((tab) => ({
+      label: tab[1],
+      current: (tab[0] as string).includes(`aria-current="page"`),
+    }));
+
+    // `aria-current` on the link to somewhere else would be the strip lying to
+    // a screen reader about where its reader is.
+    expect(tabs).toEqual([
+      { label: "Applications", current: true },
+      { label: "Decision board", current: false },
+    ]);
+  });
+
+  test("no inert tab survives anywhere in the strip", () => {
+    const markup = screen();
+    const strip = markup.slice(markup.indexOf(`class="bank-tabs"`), markup.indexOf("</nav>"));
+
+    // The exact shape that was there: a `<span>` wearing the tab class. A tab
+    // that cannot be pressed is the thing this criterion removed, so its
+    // element is what the assertion is about.
+    expect(strip).not.toMatch(/<span[^>]*class="bank-tab"/);
+    for (const dead of ["Pipeline", "Decisions", "Reports", "Admin"]) {
+      expect(strip).not.toContain(dead);
+    }
+    // And nowhere else on the screen either — moving a dead label out of the
+    // strip would satisfy the letter of it and nothing else.
+    expect(markup).not.toContain("Pipeline");
+    expect(markup).not.toContain("Reports");
+  });
+
+  test("the control plane is not in the strip, and the bank still cannot name it", () => {
+    // The human's decision at the #176 gate: the loans link goes in the tab
+    // strip, the control-plane link stays where `app/page.tsx` draws it. This
+    // component may not name the other surface at all — that is the fork seam,
+    // one group down.
+    const markup = screen();
+
+    expect(markup).not.toContain("/panel");
+    expect(markup).not.toContain("Control plane");
+  });
+
+  test("a signed-in browser reads its person and its session controls on one line", () => {
+    const markup = screen({ signedInAs: "alice@bank.example" });
+    const bar = markup.slice(markup.indexOf(`class="bank-user"`), markup.indexOf(`class="bank-body"`));
+
+    expect(bar).toContain("Signed in as");
+    expect(bar).toContain("alice@bank.example");
+    expect(bar).toContain("the session controls, server-rendered");
+    expect(bar).toContain(`data-session="active"`);
+  });
+
+  test("there is no User session card left below the loan files", () => {
+    const markup = screen();
+
+    expect(markup).not.toContain("User session");
+    expect(markup).not.toContain(`aria-label="User session"`);
+    // And the panel title with it: the card is gone, not emptied.
+    expect(markup).not.toContain("Sign in as");
+  });
+
+  test("nobody signed in is still said plainly in the chrome", () => {
+    const markup = screen({ signedInAs: null });
+
+    expect(markup).toContain("no user");
+    expect(markup).toContain(`data-signed-in="false"`);
+    expect(markup).toContain(`data-session="none"`);
   });
 });
 
@@ -491,7 +617,7 @@ describe("the loan cards", () => {
   test("a signed-out reader is told where to go rather than shown an empty table", () => {
     const markup = renderToStaticMarkup(
       <LoanFilesView
-        initial={{ status: "signed-out", message: "Nobody is signed in on this browser." }}
+        state={{ status: "signed-out", message: "Nobody is signed in on this browser." }}
       />,
     );
 
@@ -509,7 +635,7 @@ describe("the loan cards", () => {
   test("an expired sign-in asks for a sign-in, and never claims a refusal", () => {
     const markup = renderToStaticMarkup(
       <LoanFilesView
-        initial={{
+        state={{
           status: "expired",
           message:
             "The loan system did not accept this browser's sign-in as alice@bank.example. " +
@@ -527,7 +653,7 @@ describe("the loan cards", () => {
   test("an unreachable loan book is plumbing, and says nothing was decided", () => {
     const markup = renderToStaticMarkup(
       <LoanFilesView
-        initial={{ status: "unavailable", message: "The loan book at http://localhost:1 could not be reached." }}
+        state={{ status: "unavailable", message: "The loan book at http://localhost:1 could not be reached." }}
       />,
     );
 
@@ -539,7 +665,7 @@ describe("the loan cards", () => {
   });
 
   test("the cards say who they were read as", () => {
-    const markup = renderToStaticMarkup(<LoanFilesView initial={BOOK} />);
+    const markup = renderToStaticMarkup(<LoanFilesView state={BOOK} />);
 
     expect(markup).toContain("alice@bank.example");
   });

@@ -33,9 +33,16 @@ fixed in #55). A real environment variable still wins, which is what
 hops with two different mechanisms, and this service owns its side of both. Nothing
 here is the agent; #14 puts the agent on top.
 
+Since #176 there is **one** `Sign in`, in the bank's top chrome, with no persona
+preselected — one Chrome profile per persona is the real demo shape, so a row of
+four "Sign in as …" buttons was demo furniture on a screen arguing that nothing
+here is a mock. The route is unchanged: `?persona=` was always a label for the page
+the browser came back to and never an identity, it is still accepted, and
+`test/identity-flow.test.ts` still drives it.
+
 ```
 Alice, in her own Chrome profile
-  → "Sign in as Alice"        GET /api/auth/signin?persona=dana
+  → "Sign in"                 GET /api/auth/signin      (?persona=dana optional)
       OIDC code + PKCE against apps/idp as client C, prompt=login
     → cg-idp's login page, cg-idp's consent page
   → GET /api/auth/callback   code → token → /oauth2/userinfo → email
@@ -173,7 +180,7 @@ instruction rather than a gesture.
 | **what it returns** | `Session { email, gateway?, signed_in_at }`, or `null` |
 | **who calls it** | every route handler and every server component that needs to know who is acting: `lib/agent/handlers.ts`, `lib/agent/tool-list.ts`, `app/chat/page.tsx`, `app/page.tsx`, `lib/identity/verifier.ts` |
 | **what a forker keeps** | the two functions, their signatures, and `email` being the join key |
-| **what a forker deletes** | `apps/idp`, `lib/identity/oidc.ts`, `lib/identity/personas.ts`, `lib/identity/roster.ts`, `components/identity/SignInPanel.tsx` |
+| **what a forker deletes** | `apps/idp`, `lib/identity/oidc.ts`, `lib/identity/personas.ts`, `lib/identity/roster.ts`, `components/identity/SessionChrome.tsx` |
 
 Point `readSession` at your own session store — Okta, Auth0, a NextAuth cookie,
 an enterprise header a trusted proxy sets — and return a `Session` whose `email`
@@ -228,11 +235,14 @@ never comes up is an instance whose `/health` nobody can read. CI asks the same
 question with `curl -fsS` and keeps passing.
 
 The home page carries the same news for whoever is not curling anything: a red
-`role="alert"` banner above the persona buttons, listing the same sentences the 503
-pages render, and the persona buttons go inert while sign-in itself is unconfigured.
-Inert rather than hidden — hiding them would leave a visitor wondering whether this
-demo has personas at all. `test/configuration-banner.test.tsx` pins the banner, the
-disabled buttons, and the fully-configured case where neither appears.
+`role="alert"` banner in front of the bank's chrome, listing the same sentences the
+503 pages render, and the `Sign in` control goes inert while sign-in itself is
+unconfigured. Inert rather than hidden — hiding it would leave a visitor wondering
+whether this deployment has a sign-in at all. It is
+`components/identity/ConfigurationBanner.tsx`, in its own file since #176 so that
+deleting the persona switcher could not take it along;
+`test/configuration-banner.test.tsx` pins the banner, the disabled control, and the
+fully-configured case where neither appears.
 
 | variable | what it is |
 |---|---|
@@ -604,16 +614,42 @@ one file where they meet:
 
 | region | component | slice |
 |---|---|---|
-| chrome, tabs, the signed-in email | `components/bank/BankPane.tsx` | #22, #155 |
+| chrome, tabs, the signed-in email | `components/bank/BankPane.tsx` | #22, #155, #176 |
+| chrome · gateway token, `Sign in` / `Sign out` | `components/identity/SessionChrome.tsx` | #82, #176 |
+| in front of everything · the misconfiguration banner | `components/identity/ConfigurationBanner.tsx` | #84, #176 |
 | left column · applications under review | `components/bank/LoanFiles.tsx` | #22, #109 |
 | left column · user access (`data-slot="tool-list"`) | `components/identity/PersonaToolList.tsx` | #15 |
-| left column · user session | `components/identity/SignInPanel.tsx` | #82 |
 | right column · assistant | `components/chat/Chat.tsx` | #14 |
 | the corner link to `/panel` | `app/page.tsx` | #155 |
 
+The tab strip carries **two** entries since #176, `Applications` and a link to the
+`/loans` board, and both of them navigate. It carried five until then, of which four
+were `<span>`s with nothing behind them. The control-plane link is deliberately not
+one of them: it is not one of the bank's screens, `components/bank` may not name it,
+and `app/page.tsx` draws it from outside that component.
+
+### When the bank stops accepting this browser's sign-in
+
+`readLoanBook` answers `expired` on a real 401 from `apps/loan-app` — the sealed
+cookie is intact, so `Session.email` is still perfectly true, and the bank is still
+refusing that person's bearer. Until #176 the screen said all three things at once:
+`SIGNED IN AS bob@…` in the chrome, *"every tool call is made as this person"* in the
+assistant, and *"the loan system did not accept this browser's sign-in"* on the card
+between them.
+
+`BankPane` now holds the poll for the whole screen, so the chrome reads `Sign-in
+stale`, the assistant says a tool call would not land as that person, and both link
+back to `/api/auth/signin`. **None of it is a policy decision**, and all three
+surfaces repeat `Nothing was refused by policy` — no hook runs on this path, and a
+stale bearer that looked like governance working would be the demo arguing against
+its own thesis. `test/home-stale-session.test.tsx` drives the state out of
+`readLoanBook` against a real 401 rather than writing the fixture by hand, and
+`test/home-full-screen-browser.test.ts` measures the same thing on the served page in
+a real browser.
+
 Two columns, both the bank's own application, because one column across 1920px gives
-the transcript and its composer the full width and pushes the tool list and the sign-in
-panel under the fold. **Two thirds of the width go to the conversation**, decided by the
+the transcript and its composer the full width and pushes the tool list under the
+fold. **Two thirds of the width go to the conversation**, decided by the
 human at the 2026-09-18 gate: the chat is what the room is asked to read, and at even
 widths it looked like one of two equal panels.
 
@@ -621,8 +657,9 @@ Measured at 1920x1080: columns 622px and 1244px, exactly 1:2, with a 1214px comp
 against 1892px if this were one column. At 1440x900: 466px, 933px and a 910px composer.
 `test/home-full-screen-browser.test.ts` asserts the ratio rather than the pixel counts,
 which depend on the padding and the gap. The loan cards' `auto-fit` minimum came down to
-`13.5em` so two still sit side by side in the narrower column; the sign-in panel below
-the tool list needs a scroll at both sizes, which is what the two thirds cost.
+`13.5em` so two still sit side by side in the narrower column. The sign-in panel that
+used to sit below the tool list and needed a scroll at both sizes is gone with #176;
+its two surviving facts are on one line in the chrome bar.
 
 The tool list is #15's, hosted rather than reimplemented, and the slot exists so that it
 can be: a client-side list that merely hid a tool would look exactly like one the access

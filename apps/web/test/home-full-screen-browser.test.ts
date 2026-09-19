@@ -198,6 +198,17 @@ interface Measured {
 async function measureHome(options: {
   governanceStream: string | null;
   hooksHost?: string;
+  /**
+   * The bank's own API, HOST-form.
+   *
+   * Defaults to a port this process bound and released, so the read is refused
+   * by the kernel and the loan book comes back `unavailable`. It may **not**
+   * default to `LOAN_APP_PUBLIC_HOST`'s own `localhost:8082`: this worktree
+   * owns a block of ten ports and 8082 belongs to whichever sibling worktree
+   * happens to be running, so a page load here would read another reviewer's
+   * loan book.
+   */
+  loanAppHost?: string;
   /** Run once per page load, after the client tree has settled. */
   afterLoad?: (cdp: Cdp) => Promise<void>;
 }): Promise<Measured> {
@@ -228,6 +239,7 @@ async function measureHome(options: {
       IDP_CLIENT_ID: "web",
       IDP_CLIENT_SECRET: "not-used-by-this-test",
       APPROVALS_STORE_TOKEN: "store-token-for-agent-tests",
+      LOAN_APP_PUBLIC_HOST: options.loanAppHost ?? `localhost:${freePort()}`,
     };
     if (options.hooksHost !== undefined) env["HOOKS_PUBLIC_HOST"] = options.hooksHost;
     else delete env["HOOKS_PUBLIC_HOST"];
@@ -270,6 +282,13 @@ async function measureHome(options: {
       }
     }, 30_000);
 
+    // A real post-#157 browser: the gateway bearer for hop 1, and the IdP
+    // access token the bank's own screens are read with. Before #176 this
+    // fixture carried only the first, which is the shape of a cookie sealed
+    // before #157 shipped — so every page load in this file went down
+    // `readLoanBook`'s "carries no loan-system token" branch and the served
+    // page was, unremarked, in exactly the self-contradicting state #176 is
+    // about. It is measured deliberately below instead.
     const session = {
       email: DANA,
       signed_in_at: Date.now(),
@@ -277,6 +296,10 @@ async function measureHome(options: {
         access_token: harness.gateway.issueToken(DANA),
         expires_at: Date.now() + 3_600_000,
         client_id: "full-screen-browser",
+      },
+      idp: {
+        access_token: "idp-token-for-full-screen-browser",
+        expires_at: Date.now() + 3_600_000,
       },
     };
     const sealed = await seal(session, SESSION_SECRET);
@@ -385,6 +408,11 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
     expect(measured.html).toContain("Loan Origination System");
     expect(measured.html).toContain("Signed in as");
     expect(measured.html).toContain(DANA);
+    // And the strip #176 cut down to two entries, both of which navigate, in
+    // the served document rather than in a render this file chose.
+    expect(measured.html).toContain(`href="/loans"`);
+    expect(measured.html).not.toMatch(/<span[^>]*class="bank-tab"/);
+    expect(measured.html).not.toContain("Sign in as");
 
     // Two columns, and the conversation is not 1920px wide.
     expect(measured.html).toContain("bank-column-records");
@@ -502,6 +530,79 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
       ]);
     } finally {
       hooks.stop();
+    }
+  },
+  240_000,
+);
+
+/**
+ * #176's third complaint, measured on the served page rather than on a render.
+ *
+ * The human photographed `/` on 2026-09-19 with three claims on it at once: the
+ * chrome said `SIGNED IN AS bob@megaforce.tech`, the assistant said every tool
+ * call is made as that person, and the loan book between them said the bank had
+ * not accepted that sign-in. Two of the three were true.
+ *
+ * `test/home-stale-session.test.tsx` drives the same state through
+ * `readLoanBook` against a real 401 and asserts on the components. This is the
+ * other half of that claim and the one a component render cannot make: the
+ * *page* — App Router, server component, client bundle, hydrated — in front of a
+ * real browser, with a loan book that really refuses a real bearer. A page that
+ * agreed with itself in a test file and not in Chrome would be the shape of
+ * every failure surface this repo has had to fix twice.
+ *
+ * The loan book is a stand-in only at the socket: the half that says
+ * `apps/loan-app` really answers 401 to a bearer its IdP refuses is measured
+ * against the real subprocess in `test/api-loans.test.ts`.
+ */
+test.skipIf(chromeResolution.path === null && !REQUIRED)(
+  "with the loan book refusing this browser's bearer, the whole page says so once",
+  async () => {
+    if (chromeResolution.path === null) throw new Error(missingBrowserMessage(chromeResolution));
+
+    const refusing = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(JSON.stringify({ error: "invalid_token" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+
+    try {
+      const measured = await measureHome({
+        governanceStream: null,
+        loanAppHost: `localhost:${refusing.port}`,
+      });
+
+      // The chrome. Not "Signed in as" anywhere on the document — the line the
+      // audience reads first may not be the one that is wrong.
+      expect(measured.html).toContain(`data-session="stale"`);
+      expect(measured.html).toContain("Sign-in stale");
+      expect(measured.html).not.toContain("Signed in as");
+
+      // The assistant, which was the second of the three claims.
+      expect(measured.html).toContain(`data-acting-as="stale"`);
+      expect(measured.html).not.toContain("every tool call is made as this person");
+
+      // Who it is about is still named — the email is the join key, and a
+      // screen that hid it would trade one kind of unhelpful for another.
+      expect(measured.html).toContain(DANA);
+
+      // And none of it became a refusal. A stale bearer that looked like
+      // governance working is the one mistake this page may not make.
+      expect(measured.html).toContain("Nothing was refused by policy");
+      expect(measured.html).not.toMatch(/\bdenied\b|CHECK_FAILED|\[ref evt_/i);
+
+      // Still whole: the bank fills the viewport and the columns are the ones
+      // the 2026-09-18 gate asked for. A stale sign-in is not an outage.
+      expect(measured.html).toContain("Loan Origination System");
+      expect(measured.viewports).toEqual([
+        { width: 1920, height: 1080, bank: { width: 1920, height: 1080 } },
+        { width: 1440, height: 900, bank: { width: 1440, height: 900 } },
+      ]);
+    } finally {
+      refusing.stop(true);
     }
   },
   240_000,

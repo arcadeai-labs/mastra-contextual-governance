@@ -10,6 +10,12 @@
  * it directly rather than through the gateway (#157), and
  * `components/bank/use-loan-book.ts` has the polling.
  *
+ * The poll itself moved up to {@link BankPane} on #176. This view takes the
+ * book it is given, because the chrome and the assistant now have to say the
+ * same thing about it: a sign-in the bank has stopped accepting is a fact about
+ * the whole screen, not about this card, and two independent polls would let
+ * the three surfaces disagree one tick at a time.
+ *
  * **Nothing here is a governance surface.** No hook runs on this path, so this
  * component has no `denied` state and must never grow one: the words it can put
  * on screen are the loan book's own, a request to sign in again, and an
@@ -17,7 +23,6 @@
  */
 import { DEMO_LOAN_IDS, type LoanBookState } from "../../lib/loan-context/loans.ts";
 import { LoanFileCard } from "./LoanFileCard.tsx";
-import { useLoanBook } from "./use-loan-book.ts";
 
 /**
  * Where a reader with no usable sign-in is sent.
@@ -26,14 +31,15 @@ import { useLoanBook } from "./use-loan-book.ts";
  * server module: importing it into this component drags the OIDC client and the
  * sealing code into the browser bundle — `BankPane` is `"use client"`, so
  * everything under it is client code. The cost of a duplicated literal is
- * drift, so `test/split-screen.test.tsx` reads the other file and fails if the
+ * drift, so `test/home-screen.test.tsx` reads the other file and fails if the
  * two ever disagree.
+ *
+ * Exported since #176, because the chrome needs the same address for the same
+ * reason and the point of writing it once was that it is written once.
  */
-const SIGN_IN = { href: "/api/auth/signin", label: "Sign in" } as const;
+export const SIGN_IN = { href: "/api/auth/signin", label: "Sign in" } as const;
 
-export function LoanFilesView({ initial }: { initial: LoanBookState }) {
-  const state = useLoanBook(initial);
-
+export function LoanFilesView({ state }: { state: LoanBookState }) {
   return (
     <section className="bank-panel" aria-label="Applications under review">
       <h2 className="bank-panel-title">Applications under review</h2>

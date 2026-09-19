@@ -123,10 +123,18 @@
   opacity: 0.85;
 }
 
-/* Five tabs, four of them dead. A real internal tool has more screens than the
-   one you are looking at, and an audience reads a single-screen app as a demo
-   toy. They are not links and are not focusable — there is nothing behind them,
-   and a tab that navigates nowhere is worse than one that plainly cannot. */
+/* Two tabs, both real (#176). This strip carried five until 2026-09-19, of
+   which four were `<span>`s with nothing behind them; the comment here argued
+   that a tab which navigates nowhere is worse on a projector than one that
+   plainly cannot be pressed, and the human's answer was that five tabs where
+   none navigate is worse still. What is left is the two screens the bank
+   actually has: the applications beside the chat, and the decision board on the
+   presenter's second display.
+
+   Both are anchors, so both are focusable and both take a real click. The
+   current one is not a different element from the other — it is the same
+   element carrying `aria-current`, which is what a screen reader reads and what
+   this rule colours. */
 .bank-tabs {
   display: flex;
   gap: 0.15em;
@@ -141,12 +149,25 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: #c8d3df;
+  text-decoration: none;
+}
+
+.bank-tab:hover,
+.bank-tab:focus-visible {
+  color: #ffffff;
+  background: #1b3a5c;
 }
 
 .bank-tab[aria-current="page"] {
   background: var(--bank-desk);
   color: var(--bank-ink);
   font-weight: 700;
+}
+
+.bank-tab[aria-current="page"]:hover,
+.bank-tab[aria-current="page"]:focus-visible {
+  background: var(--bank-desk);
+  color: var(--bank-ink);
 }
 
 /* --- the signed-in person ------------------------------------------------- */
@@ -184,11 +205,50 @@
   font-style: italic;
 }
 
+/* The bank holds an intact session cookie and will not accept it (#176). The
+   email stays — it is still who this browser signed in as, and it is still the
+   join key — but it stops being drawn as a working sign-in, because the loudest
+   line on the screen saying `SIGNED IN AS bob@…` over a loan book that has just
+   refused bob is the screen contradicting itself in favour of the half read
+   first.
+
+   Amber, not the decision maroon. Nothing was refused by policy and a stale
+   bearer that wore a denial's colour would be this application arguing against
+   the thing the demo exists to show. */
+.bank-user[data-session="stale"] {
+  background: #fdf4e3;
+  border-bottom-color: #b99b3f;
+}
+
+.bank-user-value[data-stale="true"] {
+  color: #6b4d02;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.bank-user-note {
+  font-size: 0.8em;
+  color: #6b4d02;
+}
+
+.bank-user-note a {
+  color: inherit;
+}
+
+/* The session controls, pushed to the far end of the same line: the gateway
+   token's expiry and the one button that changes who this browser is. They are
+   `components/identity`'s, not the bank's, and arrive as an element — this rule
+   places it and the `--line`/`--muted` aliases above restyle it. */
+.bank-user-session {
+  margin-left: auto;
+}
+
 /* --- the scrolling body --------------------------------------------------- */
 
-/* Two columns since #155: the applications, the user's access and the user's
-   session on the left, the conversation on the right at the full height of the
-   viewport.
+/* Two columns since #155: the applications and the user's access on the left,
+   the conversation on the right at the full height of the viewport. The user's
+   session used to be a third card under them and is in the chrome bar since
+   #176.
 
    **Two thirds to the conversation**, decided by the human at the 2026-09-18
    gate: the chat is the thing the demo is about and the thing the room is asked
@@ -293,9 +353,9 @@
    `vw` clamp, so the minimum shrinks with the screen), and the tool list is
    back above it.
 
-   The sign-in panel below the tool list still needs a scroll, at both sizes.
-   That is the price of the two thirds and it is the right thing to pay: it is
-   used once per browser profile, before the demo starts, and act 1 is not. */
+   #176 took the sign-in panel out of this column and put its two surviving
+   facts — the gateway token and one button — in the chrome bar, so the two
+   cards left here fit without a scroll at both sizes. */
 .bank-files {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(13.5em, 1fr));
