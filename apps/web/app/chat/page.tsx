@@ -21,7 +21,7 @@ import { cookies } from "next/headers";
 
 import { Chat } from "../../components/chat/Chat.tsx";
 import { configurationProblems, readIdentitySurface } from "../../lib/config.ts";
-import { ConfigurationBanner } from "../../components/identity/SignInPanel.tsx";
+import { ConfigurationBanner } from "../../components/identity/ConfigurationBanner.tsx";
 import { PersonaToolList } from "../../components/identity/PersonaToolList.tsx";
 import { approvalStreamUrl } from "../../lib/governance/stream-url.ts";
 import { sessionTools } from "../../lib/agent/tool-list.ts";

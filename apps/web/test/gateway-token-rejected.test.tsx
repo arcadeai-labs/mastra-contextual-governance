@@ -29,7 +29,7 @@ import { configurationProblems, readIdentitySurface, type IdentitySurface } from
 import { forgetGatewayClients, probeGatewayToken } from "../lib/identity/gateway.ts";
 import { GATEWAY_START_PATH, liveGatewayToken } from "../lib/identity/handlers.ts";
 import { readSessionFromCookies, writeSession, type Session } from "../lib/identity/session.ts";
-import { SignInPanel } from "../components/identity/SignInPanel.tsx";
+import { SessionChrome } from "../components/identity/SessionChrome.tsx";
 
 const SESSION_SECRET = "gateway-rejection-suite-session-secret-0123456789";
 const GATEWAY_ID = "cg-demo-us";
@@ -462,20 +462,20 @@ describe("POST /api/chat, when the gateway rejects this browser's token", () => 
       const after = await sessionAfter(turn, config);
 
       const html = renderToStaticMarkup(
-        <SignInPanel session={after} problems={configurationProblems(config)} />,
+        <SessionChrome session={after} problems={configurationProblems(config)} />,
       );
       const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 
       expect(text).toContain("Gateway token rejected");
       expect(text).not.toContain("Gateway token none");
-      // And the way back is on the same card.
+      // And the way back is on the same line of chrome.
       expect(html).toContain(GATEWAY_START_PATH);
       expect(html).not.toContain(TOKEN);
 
       // The other direction, so "none" stays reserved for a browser that never
       // ran hop 1 rather than drifting into meaning both.
       const never = renderToStaticMarkup(
-        <SignInPanel
+        <SessionChrome
           session={{ email: DANA, signed_in_at: Date.now() }}
           problems={configurationProblems(config)}
         />,
