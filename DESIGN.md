@@ -54,7 +54,7 @@ as the wire spells it (#89). No prompt steering is an acceptable fix for either.
 | Model | Claude Sonnet 5 via `@ai-sdk/anthropic`, temperature 0, model id from env |
 | **Tool layer** | **Both toolkits are Python `arcade-mcp`, shipped with `arcade deploy` into one Arcade project and exposed through one gateway. `arcade-mcp` is the tool-authoring framework; it is Python-only, which is why the TS-everywhere rule does not reach the toolkits. Decided on #32, confirmed in session.** |
 | **Business system** | **`apps/loan-app` is a plain HTTP API — the bank's system of record. It is not an MCP server and knows nothing about Arcade. `tools/loan` is a stateless client of it. Decided on #32; splitting them is what makes "governance is outside the business system" literal rather than asserted.** **Loan state shown in the bank UI (`/` cards, `/loans` board) is read from `apps/loan-app` directly, over HTTP, as the signed-in person using the IdP access token from their own sign-in, and polled. It does not go through the gateway. Decided 2026-09-18 (#157), reversing #22/#109: page loads made governed `Loan_GetLoan` calls before the presenter had said anything, so the audience could not tell agent calls from page chrome, and cards never reflected an approval. After #157 every MCP call in the demo originates in the chat. The earlier objection (a second ungoverned path beside a panel claiming one) is answered by scope: the thesis is about the agent's path, the bank's own screen for an authenticated human is not that path, and the cards never show `bank_account_number`, `tax_id` or `underwriter_notes`, so act 3 is not undercut. No service credential: the read is attributable to a person or it does not happen.** |
-| **Identity** | **Every persona is a real person in `apps/idp` with a real email, and `apps/web` is a real sign-in against it (its own OAuth client, "client C"). The persona switcher is "Sign in as …": switching persona forces a fresh IdP login and never reuses the previous session. On stage each persona runs in its own Chrome profile, so switching is rare. `context.user_id` on every hook payload is that email, lowercase. Personas are *not* Arcade project members. Amended 2026-09-11 (#65, #75, #79).** |
+| **Identity** | **Every persona is a real person in `apps/idp` with a real email, and `apps/web` is a real sign-in against it (its own OAuth client, "client C"). On stage each persona runs in its own Chrome profile, so there is no persona switcher: `/`'s chrome carries one `Sign in` with no persona preselected, and one `Sign out`. Signing in is a fresh IdP login and never reuses the previous session. `context.user_id` on every hook payload is that email, lowercase. Personas are *not* Arcade project members. Amended 2026-09-11 (#65, #75, #79) and 2026-09-19 (#176 — the four "Sign in as …" buttons were deleted: one profile per persona is the real demo shape, and the buttons read as a mock on the one screen whose argument is that nothing on it is a mock).** |
 | **Two hops, two mechanisms** | **Hop 1, MCP client → gateway, is governed by the gateway's user mode: the User Source gateway `cg-demo-us` backed by `apps/idp`. Members mode is the fallback only. Arcade Headers is ruled out and is never proposed again. Hop 2, the tool-level OAuth against the `cg-idp` provider, is governed by a custom user verifier route in `apps/web`. Neither mechanism moves the other; measured on #75. Decided 2026-09-11. Hop 2's IdP tolerates Arcade's duplicate code exchange (open risk 9, #100).** |
 | **Gateway token storage** | **`apps/web` drives the gateway OAuth itself (Mastra's `MCPClient.authenticate()` refuses non-loopback redirects) and hands `MCPClient` a static token. The gateway access + refresh token and the persona email live in a sealed, HTTP-only, per-browser cookie (AES-GCM under `SESSION_SECRET`, chunked when over 4KB). One persona per browser. No fourth database. Refresh is server-side. Decided 2026-09-11.** |
 | **Arcade config is read-only** | **The `cg-idp` auth provider's advanced configuration is never edited; its `client_id`/`client_secret` request parameters stay. `apps/idp` adapts instead (#79: Basic header plus identical body credentials accepted). Read provider config back through `GET /v1/admin/auth_providers/<id>`, not off dashboard labels.** |
@@ -78,7 +78,7 @@ as the wire spells it (#89). No prompt steering is an acceptable fix for either.
 
 ## Services
 
-    apps/web         Next.js — chat, persona switcher, approval page, control-plane panel.
+    apps/web         Next.js — chat, sign-in chrome, loan board, approval page, control-plane panel.
                      Mastra agent runs in route handlers. → Render
     apps/hooks       Bun — /access /pre /post, policy engine, audit, SSE. Owns governance.db. → Render
     apps/loan-app    Bun — plain HTTP API, the bank's system of record. Owns loans.db.
@@ -124,7 +124,8 @@ There are **two authentication hops** with two different mechanisms. Conflating 
 cost a day on #75.
 
     Dana, in her own Chrome profile
-      → apps/web  "Sign in as Dana"  (OIDC code + PKCE against apps/idp, client C)
+      → apps/web  "Sign in"  (OIDC code + PKCE against apps/idp, client C; Dana types
+                    her own password at cg-idp — the page never names her)
         → sealed cookie { email, gateway tokens }
       → hop 1: apps/web drives the gateway OAuth against cg-demo-us (User Source,
                HTTPS redirect /api/arcade/callback, PKCE); Arcade renders its own
@@ -169,7 +170,7 @@ Three rules this has to hold to:
 **The provider is its own service: `apps/idp` (#36).** Better Auth
 (`@better-auth/oauth-provider`) on Bun, owning `idp.db`, serving a login page and a consent
 page. It is a demo fixture standing in for the enterprise's real IdP — the same category of
-thing as the persona switcher — and a forker deletes it and points at their Okta.
+thing as the seeded personas — and a forker deletes it and points at their Okta.
 
 Folding it into `apps/web` was cheaper but would make our own demo UI the bank's IdP and
 the agent's host the token issuer; an enterprise audience asks whether `apps/web` could

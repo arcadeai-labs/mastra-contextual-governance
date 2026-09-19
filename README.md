@@ -70,7 +70,7 @@ than derived, and every `/post` pattern is proved to fire against a corpus.
 ## Layout
 
 ```
-apps/web         Next.js — chat, persona switcher, approval page, control-plane panel.
+apps/web         Next.js — chat, sign-in chrome, loan board, approval page, control-plane panel.
                  The Mastra agent runs in route handlers.               → Render
 apps/hooks       Bun — /access /pre /post, policy engine, audit, SSE.
                  Owns governance.db.                                    → Render
