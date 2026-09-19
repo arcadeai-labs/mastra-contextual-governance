@@ -1,0 +1,141 @@
+/*
+ * The co-branded frame (#177). `app/Frame.tsx` has the argument; this file has
+ * the numbers.
+ *
+ * Every constant below was measured off the two SVGs rather than eyeballed —
+ * rasterised at a 1000px box and read off the ink, because the two marks have
+ * different aspect ratios (Arcade 1206:320 ≈ 3.8:1, Mastra 1708:267 ≈ 6.4:1)
+ * and equal boxes are not equal marks.
+ */
+
+.frame {
+  /* --- measured off the files ------------------------------------------- */
+
+  /*
+   * The matched **cap height**: what the eye compares. Arcade's is the "A" and
+   * Mastra's is the glyph, since `mastra-wordmark.svg` is lowercase throughout
+   * and its glyph is the tall element beside Arcade's capital.
+   *
+   * The two are a different fraction of their own box, so the boxes are sized
+   * to make the caps equal rather than the boxes:
+   *
+   *   Arcade  "A"    314.97 of a 320 box  = 0.9843
+   *   Mastra  glyph  266.00 of a 267 box  = 0.9963
+   *
+   * A 1.2% correction. Small, and exactly the kind of thing that is visible
+   * when two marks sit 10px apart and invisible in a spec.
+   */
+  --frame-cap: 18px;
+  --frame-arcade-height: calc(var(--frame-cap) / 0.9843);
+  --frame-mastra-height: calc(var(--frame-cap) / 0.9963);
+
+  /*
+   * The spacing measure, from `brand-kit` → `references/logo.md`: a partner
+   * lockup is spaced by the Arcade **"e"** set at the same scale as the
+   * wordmark. The "e" is the last glyph of the wordmark and it is 180.8 of the
+   * mark's 320 user units wide — 0.565 of the box height — measured by
+   * segmenting the rendered mark into letters above the baseline flourish that
+   * joins them.
+   *
+   * At an 18px cap that is 10.3px, and it is the gap on each side of the
+   * divider.
+   */
+  --frame-e: calc(var(--frame-arcade-height) * 0.565);
+
+  /* --- the height budget -------------------------------------------------- */
+
+  /*
+   * What the frame costs, and the only number the surfaces below feel. 34px is
+   * the 18px cap plus 8px of air above and below: 3.1% of a 1080 projector and
+   * the whole of the frame's expense, because the bar is in flow and the stage
+   * is the viewport minus exactly this.
+   */
+  --frame-bar-height: 34px;
+}
+
+.frame-bar {
+  display: flex;
+  align-items: center;
+  /* Exact, not min: `--frame-bar-height` is subtracted from the stage below and
+     the two have to agree or the composer drifts under the fold. */
+  height: var(--frame-bar-height);
+  /* Brand black, which is also what `:root` gives the panel. The bar has to be
+     dark: every fill in both SVGs is `white` and neither is recolored. */
+  background: var(--ink);
+  /* The frame has to read as a layer rather than as part of whatever it wraps.
+     Over the bank's navy that is obvious without help; over `/panel`, which is
+     the same brand black, the lockup would otherwise look like the panel's own
+     header. Inside the 34px rather than added to it — `globals.css` sets
+     `box-sizing: border-box` — so the hairline costs the surfaces nothing. */
+  border-bottom: 1px solid var(--line);
+  /* Clear space. The "e" measure is the minimum (10.3px); 18px also lands the
+     lockup on the same left inset as the bank's chrome bar, whose 0.9em padding
+     is 18.1px at 1920. */
+  padding: 0 18px;
+}
+
+.frame-lockup {
+  display: flex;
+  align-items: center;
+  gap: var(--frame-e);
+}
+
+.frame-mark {
+  display: block;
+  width: auto;
+}
+
+.frame-mark-arcade {
+  height: var(--frame-arcade-height);
+}
+
+.frame-mark-mastra {
+  height: var(--frame-mastra-height);
+}
+
+.frame-divider {
+  /* The "graphic separator" the lockup guideline calls for, at the height of
+     the marks it separates. White at 40%: a solid white hairline between two
+     white marks competes with them, and the panel's `--line-strong` disappears
+     on black at 1px. */
+  width: 1px;
+  height: var(--frame-cap);
+  background: rgb(255 255 255 / 40%);
+}
+
+.frame-stage {
+  /*
+   * The viewport, less the bar.
+   *
+   * Every surface root under `app/` asks for the whole viewport — `.bank` and
+   * `.cg-page` are both `height: 100dvh` — which inside a frame would be 34px
+   * too tall and would put `/`'s composer under the fold. `max-height` on the
+   * child re-points that at the stage: it wins over `height`, it needs nothing
+   * from the child, and it names no surface, so the bank keeps its 100dvh and
+   * a fork that replaces it inherits the same budget without knowing.
+   *
+   * Content taller than the stage still overflows and the document still
+   * scrolls — which is what a misconfiguration banner does today and should
+   * keep doing.
+   */
+  height: calc(100dvh - var(--frame-bar-height));
+}
+
+/*
+ * Two declarations, because a surface can ask for the viewport twice.
+ *
+ * `max-height` re-points `height: 100dvh` at the stage. `min-height` has to be
+ * answered separately and first: CSS resolves a `min-height` larger than a
+ * `max-height` in favour of the minimum, and `/loans` asks for
+ * `min-height: 100vh` on top of the `height: 100dvh` it inherits from `.bank` —
+ * so `max-height` alone left that page 34px too tall and scrolling, which is
+ * the regression this rule exists to prevent.
+ *
+ * Doubled class on purpose. This has to win against a surface's own rule at
+ * equal specificity, and which stylesheet lands later in the bundle is not
+ * something a component import order should be trusted to decide.
+ */
+.frame .frame-stage > * {
+  min-height: 0;
+  max-height: 100%;
+}

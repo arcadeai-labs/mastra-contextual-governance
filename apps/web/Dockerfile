@@ -28,6 +28,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 # `output: "standalone"` with `outputFileTracingRoot` at the repo root emits a
 # self-contained tree that mirrors the monorepo layout.
+#
+# `public/` is inside that tree rather than a third COPY here: next.config.ts
+# traces it onto `/`, so the tree this line copies is already the whole served
+# artifact and `test/public-assets.test.ts` can boot it without Docker. See the
+# `public/**/*` note in next.config.ts for why (#177). `.next/static` cannot go
+# the same way — it is build output, not a source file tracing can include —
+# so it stays a COPY.
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 

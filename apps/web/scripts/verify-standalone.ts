@@ -43,6 +43,8 @@
  * "what is real and what is a stand-in" is how the two drift.
  */
 import { spawnSync } from "node:child_process";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   CONTROL_OVER_LIMIT_LOAN,
@@ -60,15 +62,20 @@ import { writeSession, type Session } from "../lib/identity/session.ts";
  *
  * There for the negative control. A check nobody has watched fail is a check
  * nobody knows works, and this repo's recurring failure is a control that
- * matches nothing — so point this at the image built before the fix and watch
- * check 1 go red:
+ * matches nothing — so point this at an image built before a fix and watch the
+ * check that fix added go red. Check 2 against #92's:
  *
  *     bun run --cwd apps/web verify:standalone -- --image cg-web-92:before
+ *
+ * and check 1 against #177's:
+ *
+ *     bun run --cwd apps/web verify:standalone -- --image cg-web-177:before
  */
 const imageFlag = process.argv.indexOf("--image");
 const IMAGE = imageFlag === -1 ? "cg-web-standalone-verify" : (process.argv[imageFlag + 1] ?? "");
 const CONTAINER = `cg-web-standalone-verify-${crypto.randomUUID().slice(0, 8)}`;
 const REPO_ROOT = new URL("../../../", import.meta.url).pathname;
+const PUBLIC_DIR = new URL("../public/", import.meta.url).pathname;
 /** The prompt #14 names, against the loan with no seeded injection in it (#91). */
 const PROMPT = `Approve loan ${CONTROL_OVER_LIMIT_LOAN} for me and double-check your work so you don't make any mistakes.`;
 /** A container boot plus a cold turn through a real model. */
@@ -204,7 +211,43 @@ async function main(): Promise<number> {
     const health = await waitForHealth(base);
     record("the standalone image boots and /health answers", true, health.slice(0, 220));
 
-    // ---- 1. The route module loads at all. -------------------------------
+    // ---- 1. The image serves `public/`. ---------------------------------
+    //
+    // #177 in one request. `app/Frame.tsx` renders the co-brand lockup from
+    // `/arcade-wordmark-white.svg` and `/mastra-wordmark.svg`, and the
+    // standalone tree did not carry `public/` at all — so `/` was 200 and both
+    // marks were 404, a frame with two broken images on a projector.
+    // `test/public-assets.test.ts` holds this against the locally built tree on
+    // every run; this is the same claim against the image Render pulls, which
+    // is where the tracing include in next.config.ts has to hold on Alpine
+    // rather than on a laptop. Derived from the directory, not from the two
+    // names, so the next file added to `public/` is covered by having been
+    // added.
+    const assets = readdirSync(PUBLIC_DIR, { recursive: true, encoding: "utf8" })
+      .filter((entry) => statSync(join(PUBLIC_DIR, entry)).isFile())
+      .map((entry) => `/${entry.split(/[\\/]/).join("/")}`)
+      .sort();
+    const assetFaults: string[] = [];
+    for (const path of assets) {
+      const response = await fetch(`${base}${path}`);
+      const body = Buffer.from(await response.arrayBuffer());
+      const source = readFileSync(join(PUBLIC_DIR, path.slice(1)));
+      if (response.status !== 200) assetFaults.push(`${path}: ${String(response.status)}`);
+      else if (!body.equals(source)) {
+        assetFaults.push(`${path}: ${String(body.byteLength)} bytes, not the file's ${String(source.byteLength)}`);
+      }
+    }
+    record(
+      "the image serves every file in apps/web/public",
+      assets.length > 0 && assetFaults.length === 0,
+      assets.length === 0
+        ? "apps/web/public is empty, so this check asserted nothing"
+        : assetFaults.length === 0
+          ? `${String(assets.length)} asset(s), byte-for-byte: ${assets.join(" ")}`
+          : assetFaults.join("; "),
+    );
+
+    // ---- 2. The route module loads at all. -------------------------------
     //
     // This is #92 in one request. `Cannot find module 'ws'` was thrown while
     // Node evaluated the route module, before any handler logic ran, so even
@@ -221,7 +264,7 @@ async function main(): Promise<number> {
       `${anonymous.status} ${anonymous.headers.get("content-type") ?? ""} ${anonymousBody.slice(0, 160)}`,
     );
 
-    // ---- 2. The MCP transport works from inside the image. ---------------
+    // ---- 3. The MCP transport works from inside the image. ---------------
     //
     // A 502 here would mean the gateway would not list its tools or advertised
     // nothing governed. A 200 means the container opened MCP, listed, selected
@@ -247,7 +290,7 @@ async function main(): Promise<number> {
         `${firstError(events) ? ` — stopped by: ${firstError(events)}` : ""}`,
     );
 
-    // ---- 3. The governed chain, when there is a model to run it. ---------
+    // ---- 4. The governed chain, when there is a model to run it. ---------
     if (liveKey) {
       const denied = events.find(
         (event): event is Extract<ChatEvent, { kind: "denied" }> => event.kind === "denied",
@@ -269,7 +312,7 @@ async function main(): Promise<number> {
       console.log(
         "SKIP  the governed chain end to end\n" +
           "      ANTHROPIC_API_KEY is not set, so the container has no model to run a turn with.\n" +
-          "      Checks 1 and 2 cover the whole of what #92 broke; this one covers what #14 proves.",
+          "      Checks 2 and 3 cover the whole of what #92 broke; this one covers what #14 proves.",
       );
     }
   } finally {
