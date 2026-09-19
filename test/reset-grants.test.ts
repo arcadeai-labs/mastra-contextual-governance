@@ -1,37 +1,41 @@
 /**
- * #123 — what a reset does to a grant Arcade is already holding.
+ * #123 — what a reset does to a grant a persona is already holding.
  *
- * The failure this file pins was found in a deployed rehearsal: `bun run reset`
- * cleared `oauthAccessToken` on the IdP, Arcade went on presenting the token it
- * had been issued before, and every persona's first tool call of the next take
- * was a fault card. Nothing tells Arcade; Arcade believes the grant is valid
- * and raises no fresh authorization challenge.
- *
- * So the decision recorded on #123 is two resets, and this file is the test of
+ * The decision recorded on #123 is two resets, and this file is the test of
  * that decision rather than of whatever the code happens to do:
  *
- *   - **between takes** (`bun run reset`) the grant a persona already holds
- *     **still works afterwards** — and the loan book and the control plane are
- *     still put back, so it is a real reset and not a no-op;
- *   - **`--hard`** invalidates it, **on purpose**, because re-authorizing from
- *     clean is the thing that reset exists to make demonstrable (#174) — and
- *     it says so in its own output rather than leaving it to be discovered on
- *     stage.
+ *   - **between takes** (`bun run reset`) a grant a persona already holds
+ *     **still works afterwards**, so nobody is signed out and nobody has to
+ *     authorize again — and the loan book and the control plane are still put
+ *     back, so it is a real reset and not a no-op;
+ *   - **`--hard`** invalidates it, **on purpose**, because signing in and
+ *     authorizing from clean is the thing that reset exists to make
+ *     demonstrable (#174) — and it says so in its own output rather than
+ *     leaving it to be discovered at a login page on stage.
  *
- * ## Why this file joins the real IdP to the real loan book
+ * ## What this file does not claim
+ *
+ * Only `apps/idp` and `apps/loan-app` are in the loop here. Whether **Arcade**
+ * presents a stale token or raises an authorization card instead is Arcade's
+ * decision, it is not measurable without the project credential, and it is not
+ * what is being tested: measured live on 2026-09-19, Arcade raises the card
+ * and Continue clears it. What these tests pin is our own half — which tokens
+ * survive which reset — because that is what `scripts/reset.ts` controls.
+ *
+ * ## Why it joins the real IdP to the real loan book
  *
  * `test/reset.test.ts` deliberately does not: it points `apps/loan-app` at a
  * `/oauth2/userinfo` stand-in, because walking a whole authorize flow to read
  * one loan is `apps/idp/test/flow.test.ts`'s job. But a token minted by a
- * stand-in cannot go stale when the real IdP is reset, which is the entire
- * subject here. So this file spends the authorize flow once, gets a **real**
- * access token, and presents it the way Arcade does.
+ * stand-in cannot be invalidated when the real IdP is reset, which is the
+ * entire subject here. So this file spends the authorize flow once and gets a
+ * **real** access token.
  *
  * Every assertion goes through a **write** (`POST /loans/…/approve`). Reads
  * may be answered from `actorFromRequest`'s 60-second memory (#167) and a read
- * that passed after a reset would prove nothing about the grant; a write
- * re-introspects at the provider every time, by design, which is exactly the
- * measurement this file needs.
+ * that passed after a reset would prove nothing; a write re-introspects at the
+ * provider every time, by design, which is exactly the measurement this file
+ * needs.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Subprocess } from "bun";
@@ -39,7 +43,6 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { staleGrant } from "../apps/web/lib/agent/stale-grant.ts";
 // The fixture itself, not `apps/idp/src/db.ts`'s `loadPeople`: that module
 // imports `./schema.sql`, which only `apps/idp`'s own tsconfig knows how to
 // resolve. The persona-email overrides `loadPeople` applies are deliberately
@@ -363,7 +366,7 @@ describe("a reset between takes leaves every persona's grant alive", () => {
   test("it says out loud that it left the IdP alone", async () => {
     const { out } = await runResetCommand();
     expect(out).toMatch(/idp\s+SKIPPED/);
-    expect(out).toContain("#123");
+    expect(out).toContain("nobody has to log in or authorize again");
     expect(out).toContain("--hard");
     // And no idp line pretending it ran.
     expect(out).not.toMatch(/\[reset\] idp\s+OK/);
@@ -413,7 +416,7 @@ describe("the panel's Reset button leaves the IdP alone too", () => {
 });
 
 describe("--hard invalidates it, deliberately, and says so", () => {
-  test("the same token is refused afterwards, with the signature #123 reported", async () => {
+  test("the same token is refused afterwards", async () => {
     // Alive going in.
     expect((await approveAsArcade()).status).toBe(200);
 
@@ -448,29 +451,21 @@ describe("--hard invalidates it, deliberately, and says so", () => {
     expect(await refused.text()).not.toContain("invalid_token");
   });
 
-  test("the presenter is told the grants are dead and what to do about it", async () => {
+  test("the presenter is told everyone is signed out, and what that costs", async () => {
     const { out } = await runResetCommand(["--hard"]);
-    expect(out).toContain("Arcade-held cg-idp grant is now dead");
-    expect(out).toContain("revoked in the Arcade dashboard");
+    expect(out).toContain("All four personas are signed out");
+    expect(out).toContain("authorize, then Continue");
     // Named as the point of this reset rather than as a malfunction: `--hard`
-    // exists so the authorization flow can be shown again (#174).
-    expect(out).toContain("re-authorization this reset is for");
-  });
+    // exists so the auth flow can be shown again (#174).
+    expect(out).toContain("this reset exists to make demonstrable");
 
-  test("what reaches the screen is the message the honest fault card is keyed on", async () => {
-    expect((await runResetCommand(["--hard"])).code).toBe(0);
-    const refused = await approveAsArcade();
-    const { error } = (await refused.json()) as { error: string };
-
-    // The join between this file and `apps/web`: the string the loan book
-    // actually produces is the string the chat card recognises. A card keyed
-    // on wording that drifted would be a control that silently does nothing,
-    // and no test of either half alone would notice.
-    const explained = staleGrant(
-      `[TOOL_RUNTIME_FATAL] ToolExecutionError during execution of tool 'get_loan': ${error}`,
-    );
-    expect(explained).not.toBeNull();
-    expect(explained!.recovery).toContain("Arcade dashboard");
+    // And it must not send anybody to a dashboard. Live evidence on
+    // 2026-09-19 is that Arcade raises the card by itself and Continue clears
+    // it, so an instruction to go and revoke by hand would describe a failure
+    // that does not happen — the class of lying surface this project has
+    // three of already (#151, #167, #170).
+    expect(out).not.toMatch(/dashboard/i);
+    expect(out).not.toMatch(/revoke/i);
   });
 
   test("the OAuth client Arcade is registered against still does not move", async () => {

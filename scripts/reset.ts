@@ -17,29 +17,33 @@
  *
  * ## Why the IdP is not in the default run (#123)
  *
- * The IdP's reset deletes `oauthAccessToken` and `oauthRefreshToken`, and
- * **Arcade goes on holding the hop-2 access token it was issued before the
- * reset**. Arcade believes that grant is valid, so it raises no new
- * authorization challenge; it simply presents the dead token, cg-idp answers
- * `401 invalid_token`, and the persona's next tool call is a fault card. There
- * is no recovery the demo can perform for itself: measured on #123, nothing in
- * the hop-2 failure carries an `authorization_url`, an `invalid_token` code or
- * even a status — `apps/web` receives a sentence — and Arcade generates no
- * challenge because from its side the auth requirement was *met* before `/pre`
- * and the tool merely failed. Clearing it is a revoke in the Arcade dashboard,
- * by hand.
+ * Because between takes it costs stage time and buys nothing.
  *
- * A reset between takes must therefore not touch identity. The personas do not
- * change on stage, and the cost of re-seeding them is a dead grant for every
- * persona who had authorized.
+ * Resetting the IdP deletes every person, session, token and consent, so all
+ * four personas are signed out. Each one then needs a cg-idp login **and** a
+ * hop-2 authorization card plus a Continue on their first governed call —
+ * measured live on 2026-09-19, where exactly that happened and cleanly
+ * recovered. And the personas never change on stage: they come out of a
+ * fixture, nothing in a take edits them, so re-seeding them puts back
+ * something that was never disturbed.
+ *
+ * What a take *does* disturb is the loan book and the control plane, and those
+ * are what the default run puts back.
+ *
+ * (#123 was filed for a worse story — a dead grant Arcade would present
+ * forever without re-challenging. That turned out to be #100's replay
+ * revocation killing a *fresh* authorization, fixed in bbfb162, and the hop-2
+ * token is a one-hour credential with no refresh token anyway. The issue has
+ * the measurements. Nothing here depends on it: a reset that signs four people
+ * out mid-rehearsal is worth avoiding on its own.)
  *
  * ## Why `--hard` still exists
  *
- * Wiping the IdP is the only way to show the authorization flow again from
- * clean, which is the whole point of #174's second button. There a dead grant
- * is not an accident to avoid; it is the state the demo wants. What `--hard`
- * owes the presenter is to **say** that it has just invalidated every
- * Arcade-held grant and name the manual step, which it does in its own output.
+ * Wiping the IdP is the only way to show signing in and authorizing from
+ * clean, which is the whole point of #174's second button. There the sign-out
+ * is not a cost to avoid; it is the state the demo wants. What `--hard` owes
+ * the presenter is to **say** what it has just made them do again, which it
+ * does in its own output.
  *
  * ## Why HTTP and not a shell
  *
@@ -150,19 +154,25 @@ export function servicesFor(hard: boolean): ServiceSpec[] {
  * useful if it is said before anybody has a reason to ask.
  */
 export const SOFT_SKIP_LINE =
-  "idp      SKIPPED  sign-ins, tokens and consents left alone, so no persona is left holding a " +
-  "grant Arcade thinks is live (#123). `--hard` resets it too, and signs everyone out.";
+  "idp      SKIPPED  people, sign-ins, tokens and consents left alone, so nobody has to log in " +
+  "or authorize again between takes (#123). `--hard` resets it too.";
 
 /**
  * And the sentence a hard run owes them, which is the other half of the same
- * fact. A presenter who has just invalidated every Arcade-held grant should
- * read that here, not discover it as a fault card in front of an audience.
+ * fact. A presenter who has just signed all four personas out should read that
+ * here, not discover it at the login page in front of an audience.
+ *
+ * It describes a recovery that **works**, and deliberately stops there. An
+ * earlier draft of this told the presenter to go and revoke each grant in the
+ * Arcade dashboard; live evidence on 2026-09-19 is that Arcade raises the
+ * authorization card on its own and Continue clears it, so that instruction
+ * would have sent someone to a dashboard to fix something that was not broken.
  */
-export const HARD_GRANT_WARNING =
-  "Every persona's Arcade-held cg-idp grant is now dead: Arcade still holds the token cg-idp just " +
-  "forgot, believes it is valid, and will not re-challenge. The first tool call per persona fails " +
-  "until that persona's cg-idp authorization is revoked in the Arcade dashboard by hand — that is " +
-  "the re-authorization this reset is for (#123).";
+export const HARD_SIGNOUT_NOTICE =
+  "All four personas are signed out and their consents are gone. Each one now needs a cg-idp " +
+  "login, and their first governed tool call raises the hop-2 authorization card — authorize, " +
+  "then Continue. That is the flow this reset exists to make demonstrable (#174); budget the " +
+  "clicks before you are on stage.";
 
 const LOOPBACK = /^(localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|\[?::1\]?)(:\d+)?$/i;
 
@@ -424,7 +434,7 @@ export async function runReset(options: ResetOptions): Promise<ResetOutcome> {
   // a reset that worked, and printing it above a FAILED line would read as
   // part of the failure.
   if (hard && services.find((service) => service.label === "idp")?.ok === true) {
-    log(`[reset] ${HARD_GRANT_WARNING}`);
+    log(`[reset] ${HARD_SIGNOUT_NOTICE}`);
   }
   return { ok, hard, services };
 }
@@ -453,8 +463,8 @@ export function parseHard(argv: string[]): boolean {
   if (nearly !== undefined) {
     throw new ResetConfigError(
       `${nearly} is not an option. The flag that also resets apps/idp is exactly \`--hard\`; ` +
-        "without it the IdP is left alone so no persona is left holding a grant Arcade thinks " +
-        "is live (#123).",
+        "without it the IdP is left alone, so nobody is signed out and nobody has to authorize " +
+        "again (#123).",
     );
   }
   return argv.includes("--hard");

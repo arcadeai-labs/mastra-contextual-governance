@@ -89,7 +89,6 @@ import { useEffect, useRef, useState } from "react";
 // transport's `fs` import — into the browser bundle, and `next build` fails.
 import { CHAT_PATH, replyText, type ChatEvent } from "../../lib/agent/events.ts";
 import { boundConversation, type ConversationMessage } from "../../lib/agent/conversation.ts";
-import { FaultConsequence } from "./FaultConsequence.tsx";
 import { noticeIsFor, subscribeToApprovalNotices } from "../../lib/governance/approval-stream.ts";
 import { Markdown } from "./Markdown.tsx";
 import { transcript } from "./transcript.ts";
@@ -801,7 +800,10 @@ export function EventView({
         <div role="alert" style={plumbing} data-kind="fault">
           <strong style={label}>{event.tool} — the tool did not complete</strong>
           <p style={{ margin: "0.4em 0", whiteSpace: "pre-wrap" }}>{event.message}</p>
-          <FaultConsequence message={event.message} />
+          <p style={{ margin: 0, color: "var(--muted)" }}>
+            The tool outcome is incomplete. Any side effects are unknown; use the detail above to
+            determine the next step.
+          </p>
         </div>
       );
 

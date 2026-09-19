@@ -166,10 +166,9 @@ describe("running a reset through it", () => {
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toMatch(/audit log cleared/);
     // The two a presenter would otherwise assume moved. `idp.db` is the one
-    // that matters most (#123): this button leaves every sign-in and every
-    // Arcade-held grant alone, which is why it is safe between takes — and a
-    // presenter who wants the auth flow back from clean needs the other
-    // reset, not this one.
+    // worth saying out loud (#123): this button signs nobody out, which is why
+    // it is safe between takes — and a presenter who wants the sign-in and
+    // authorization flow back from clean needs the other reset, not this one.
     expect(outcome.detail).toMatch(/loans\.db/);
     expect(outcome.detail).toMatch(/idp\.db/);
     expect(outcome.detail).toMatch(/nobody was signed out/);

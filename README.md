@@ -243,14 +243,13 @@ consents. Seconds, idempotent, safe to run repeatedly. It calls each service's o
 `POST /admin/reset` under the shared `RESET_TOKEN`, so with that variable unset there is
 nothing to call and every route answers 404.
 
-**Why the identity provider is not in the default run (#123).** Resetting it deletes the
-OAuth access tokens, and Arcade goes on holding the one it was issued before. Arcade
-believes that grant is valid, so it raises no new authorization challenge — it presents
-the dead token, the IdP answers `401 invalid_token`, and the persona's next tool call is
-a fault card. Clearing it is a revoke in the Arcade dashboard, by hand. So a reset
-between takes leaves identity alone, and says so on every run; `--hard` is for when
-showing the authorization flow from clean *is* the point, and it prints the manual step
-it has just created.
+**Why the identity provider is not in the default run (#123).** Resetting it signs all
+four personas out and drops their consents, so each one then needs a login *and* an
+authorization card plus a Continue on their first governed call. Between takes that is
+pure stage time: the personas come out of a fixture and nothing in a take edits them, so
+re-seeding them puts back something that was never disturbed. `--hard` is for when
+showing sign-in and authorization from clean *is* the point, and it prints what it has
+just made everyone do again.
 
 **A redeploy is not a reset.** All three databases sit on Render disks and seed from
 their fixture only when empty. Redeploying carries every stage edit and every approval
