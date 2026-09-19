@@ -75,6 +75,24 @@ const chromeResolution = resolveChrome();
 const REQUIRED = browserRequired();
 if (chromeResolution.path === null && !REQUIRED) console.warn(missingBrowserMessage(chromeResolution));
 
+/**
+ * What the co-branded frame takes off the top (#177).
+ *
+ * `app/layout.tsx` now draws a 34px bar above every surface and hands the rest
+ * of the viewport to the stage below it, so `.bank` fills the viewport *less
+ * the frame* rather than the viewport. What this file asserts is unchanged —
+ * the bank is full-screen, with nothing beside it and nothing under it — and
+ * the arithmetic moved by exactly one constant, which is the point of naming
+ * it. `test/frame.test.ts` measures the bar itself, on all three surfaces.
+ */
+const FRAME_BAR = 34;
+
+/** The two viewports the issue names, less the frame. */
+const FULL_SCREEN = [
+  { width: 1920, height: 1080, bank: { width: 1920, height: 1080 - FRAME_BAR } },
+  { width: 1440, height: 900, bank: { width: 1440, height: 900 - FRAME_BAR } },
+];
+
 interface Seen {
   url: string;
   headers: Record<string, string>;
@@ -394,13 +412,10 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
     if (chromeResolution.path === null) throw new Error(missingBrowserMessage(chromeResolution));
     const measured = await measureHome({ governanceStream: null });
 
-    // The bank fills both viewports the issue names. `dvh` in a headless Chrome
-    // with no browser chrome is the full height, so this is exact rather than
-    // approximate.
-    expect(measured.viewports).toEqual([
-      { width: 1920, height: 1080, bank: { width: 1920, height: 1080 } },
-      { width: 1440, height: 900, bank: { width: 1440, height: 900 } },
-    ]);
+    // The bank fills both viewports the issue names, less #177's frame. `dvh` in
+    // a headless Chrome with no browser chrome is the full height, so this is
+    // exact rather than approximate.
+    expect(measured.viewports).toEqual(FULL_SCREEN);
 
     // No control-plane column. The panel's whole namespace, absent from the
     // served document — server HTML and hydrated client tree together.
@@ -524,10 +539,7 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
 
       // Still whole, with a control plane configured.
       expect(measured.html).toContain("Loan Origination System");
-      expect(measured.viewports).toEqual([
-        { width: 1920, height: 1080, bank: { width: 1920, height: 1080 } },
-        { width: 1440, height: 900, bank: { width: 1440, height: 900 } },
-      ]);
+      expect(measured.viewports).toEqual(FULL_SCREEN);
     } finally {
       hooks.stop();
     }
@@ -597,10 +609,7 @@ test.skipIf(chromeResolution.path === null && !REQUIRED)(
       // Still whole: the bank fills the viewport and the columns are the ones
       // the 2026-09-18 gate asked for. A stale sign-in is not an outage.
       expect(measured.html).toContain("Loan Origination System");
-      expect(measured.viewports).toEqual([
-        { width: 1920, height: 1080, bank: { width: 1920, height: 1080 } },
-        { width: 1440, height: 900, bank: { width: 1440, height: 900 } },
-      ]);
+      expect(measured.viewports).toEqual(FULL_SCREEN);
     } finally {
       refusing.stop(true);
     }
