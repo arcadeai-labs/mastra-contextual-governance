@@ -1,17 +1,45 @@
 /**
- * `bun run reset` — the whole demo back to the seeded state, in seconds.
+ * `bun run reset` — the demo back to the seeded state, in seconds.
  *
- *     bun run reset                 # the local services in this checkout
- *     bun run reset --target render # the deployed ones
+ *     bun run reset                 # between takes: the loan book and the control plane
+ *     bun run reset --hard          # ...and the IdP, which signs every persona out
+ *     bun run reset --target render # either of the above, against the deployed ones
  *
- * Three databases, three services, three HTTP calls:
+ * Three databases, three services — but **not on every run**:
  *
- *     apps/idp        POST /admin/reset   people, sessions, tokens, consents
  *     apps/hooks      POST /admin/reset   {"mode":"demo"} — the four policy
  *                                         tables from the fixture, and grants,
  *                                         approval requests and the audit log
  *                                         emptied
  *     apps/loan-app   POST /admin/reset   the loan book, LN-2291 unapproved
+ *     apps/idp        POST /admin/reset   people, sessions, tokens, consents
+ *                                         — `--hard` only
+ *
+ * ## Why the IdP is not in the default run (#123)
+ *
+ * The IdP's reset deletes `oauthAccessToken` and `oauthRefreshToken`, and
+ * **Arcade goes on holding the hop-2 access token it was issued before the
+ * reset**. Arcade believes that grant is valid, so it raises no new
+ * authorization challenge; it simply presents the dead token, cg-idp answers
+ * `401 invalid_token`, and the persona's next tool call is a fault card. There
+ * is no recovery the demo can perform for itself: measured on #123, nothing in
+ * the hop-2 failure carries an `authorization_url`, an `invalid_token` code or
+ * even a status — `apps/web` receives a sentence — and Arcade generates no
+ * challenge because from its side the auth requirement was *met* before `/pre`
+ * and the tool merely failed. Clearing it is a revoke in the Arcade dashboard,
+ * by hand.
+ *
+ * A reset between takes must therefore not touch identity. The personas do not
+ * change on stage, and the cost of re-seeding them is a dead grant for every
+ * persona who had authorized.
+ *
+ * ## Why `--hard` still exists
+ *
+ * Wiping the IdP is the only way to show the authorization flow again from
+ * clean, which is the whole point of #174's second button. There a dead grant
+ * is not an accident to avoid; it is the state the demo wants. What `--hard`
+ * owes the presenter is to **say** that it has just invalidated every
+ * Arcade-held grant and name the manual step, which it does in its own output.
  *
  * ## Why HTTP and not a shell
  *
@@ -68,15 +96,23 @@ interface ServiceSpec {
   body?: unknown;
 }
 
-const SERVICES: ServiceSpec[] = [
-  // Identity first. It is the only one whose failure means "stop": a rotated
-  // OAuth client is a re-registration in a dashboard, and there is no point
-  // resetting the other two into a demo that cannot authorize.
-  {
-    label: "idp",
-    render: "cg-idp",
-    hostVar: { local: "IDP_PUBLIC_HOST", render: "RENDER_IDP_PUBLIC_HOST" },
-  },
+/**
+ * Identity first when it runs at all. It is the only one whose failure means
+ * "stop": a rotated OAuth client is a re-registration in a dashboard, and
+ * there is no point resetting the other two into a demo that cannot authorize.
+ */
+const IDP: ServiceSpec = {
+  label: "idp",
+  render: "cg-idp",
+  hostVar: { local: "IDP_PUBLIC_HOST", render: "RENDER_IDP_PUBLIC_HOST" },
+};
+
+/**
+ * Everything a reset between takes puts back. Neither of these holds a
+ * credential Arcade is registered against, so neither can produce the dead
+ * grant #123 is about.
+ */
+const BETWEEN_TAKES: ServiceSpec[] = [
   // `demo` explicitly, never the endpoint's own default: `policy` is the
   // conservative mode for a caller that did not say, and a rehearsal reset
   // that quietly left the audit log full is exactly the silent half-reset this
@@ -94,6 +130,40 @@ const SERVICES: ServiceSpec[] = [
   },
 ];
 
+/**
+ * The services this run will call, in order.
+ *
+ * Exported so a caller — `scripts/reset.ts --hard`, and #174's panel button
+ * after it — asks this module which services a scope means rather than
+ * keeping its own list that can drift out of agreement with this one.
+ */
+export function servicesFor(hard: boolean): ServiceSpec[] {
+  return hard ? [IDP, ...BETWEEN_TAKES] : BETWEEN_TAKES;
+}
+
+/**
+ * The sentence a soft run owes the presenter: what it deliberately did not do.
+ *
+ * Printed on every soft run rather than only when something looks wrong. A
+ * reset that silently stopped covering a database is the half-reset believed
+ * clean that this whole command exists to replace, and "I skipped it" is only
+ * useful if it is said before anybody has a reason to ask.
+ */
+export const SOFT_SKIP_LINE =
+  "idp      SKIPPED  sign-ins, tokens and consents left alone, so no persona is left holding a " +
+  "grant Arcade thinks is live (#123). `--hard` resets it too, and signs everyone out.";
+
+/**
+ * And the sentence a hard run owes them, which is the other half of the same
+ * fact. A presenter who has just invalidated every Arcade-held grant should
+ * read that here, not discover it as a fault card in front of an audience.
+ */
+export const HARD_GRANT_WARNING =
+  "Every persona's Arcade-held cg-idp grant is now dead: Arcade still holds the token cg-idp just " +
+  "forgot, believes it is valid, and will not re-challenge. The first tool call per persona fails " +
+  "until that persona's cg-idp authorization is revoked in the Arcade dashboard by hand — that is " +
+  "the re-authorization this reset is for (#123).";
+
 const LOOPBACK = /^(localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|\[?::1\]?)(:\d+)?$/i;
 
 export function originFor(host: string): string {
@@ -102,6 +172,11 @@ export function originFor(host: string): string {
 
 export interface ResetOptions {
   target: Target;
+  /**
+   * Reset `apps/idp` as well. Off by default — see the note at the top of this
+   * file on why a between-takes reset must not touch identity.
+   */
+  hard?: boolean;
   env: Record<string, string | undefined>;
   /** Injected in tests; `fetch` in anger. */
   fetch?: typeof fetch;
@@ -117,6 +192,8 @@ export interface ServiceOutcome {
 
 export interface ResetOutcome {
   ok: boolean;
+  /** What this run was asked to cover. */
+  hard: boolean;
   services: ServiceOutcome[];
 }
 
@@ -310,34 +387,46 @@ async function readJson(url: string, options: ResetOptions & { fetch: typeof fet
  */
 export async function runReset(options: ResetOptions): Promise<ResetOutcome> {
   const log = options.log ?? ((line: string) => console.log(line));
+  const hard = options.hard ?? false;
   const resolved = {
     ...options,
     fetch: options.fetch ?? fetch,
     timeoutMs: options.timeoutMs ?? 30_000,
   };
   const token = requireToken(options.env);
+  const specs = servicesFor(hard);
 
+  // Only the addresses this run will actually use. A soft run that demanded
+  // IDP_PUBLIC_HOST would refuse to put the loan book back because of a
+  // variable it was never going to read.
   log(
-    `[reset] target ${options.target} — ` +
-      SERVICES.map((spec) => `${spec.render} ${requireHost(spec, resolved)}`).join(", "),
+    `[reset] target ${options.target}, scope ${hard ? "hard (includes the IdP)" : "between-takes"} — ` +
+      specs.map((spec) => `${spec.render} ${requireHost(spec, resolved)}`).join(", "),
   );
 
   const started = performance.now();
   const services: ServiceOutcome[] = [];
-  for (const spec of SERVICES) {
+  for (const spec of specs) {
     const outcome = await resetOne(spec, resolved, token);
     log(`[reset] ${outcome.line}`);
     services.push(outcome);
   }
+  if (!hard) log(`[reset] ${SOFT_SKIP_LINE}`);
 
   const ok = services.every((service) => service.ok);
   const ms = Math.round(performance.now() - started);
   log(
     ok
-      ? `[reset] done in ${ms}ms — three services back to the seeded state. A redeploy is not a reset; a reset is not a re-registration.`
+      ? `[reset] done in ${ms}ms — ${specs.length} services back to the seeded state. A redeploy is not a reset; a reset is not a re-registration.`
       : `[reset] FAILED in ${ms}ms — ${services.filter((service) => !service.ok).map((service) => service.label).join(", ")}. The demo is NOT in a known state.`,
   );
-  return { ok, services };
+  // After the verdict, not before it: the grant warning is the consequence of
+  // a reset that worked, and printing it above a FAILED line would read as
+  // part of the failure.
+  if (hard && services.find((service) => service.label === "idp")?.ok === true) {
+    log(`[reset] ${HARD_GRANT_WARNING}`);
+  }
+  return { ok, hard, services };
 }
 
 export function parseTarget(argv: string[]): Target {
@@ -348,9 +437,37 @@ export function parseTarget(argv: string[]): Target {
   throw new ResetConfigError(`--target must be one of ${TARGETS.join(", ")} (got ${String(value)})`);
 }
 
+/**
+ * `--hard`, and nothing that merely looks like it.
+ *
+ * A misspelling is refused rather than read as "soft", because the two
+ * spellings mean opposite things about identity and the quiet reading is the
+ * one that ruins a rehearsal: `--hard-reset` silently leaving the IdP alone is
+ * a presenter who thinks they have a clean auth flow to demonstrate and does
+ * not.
+ */
+export function parseHard(argv: string[]): boolean {
+  const nearly = argv.find(
+    (arg) => arg !== "--hard" && /^--?h(ard)?/i.test(arg),
+  );
+  if (nearly !== undefined) {
+    throw new ResetConfigError(
+      `${nearly} is not an option. The flag that also resets apps/idp is exactly \`--hard\`; ` +
+        "without it the IdP is left alone so no persona is left holding a grant Arcade thinks " +
+        "is live (#123).",
+    );
+  }
+  return argv.includes("--hard");
+}
+
 if (import.meta.main) {
   try {
-    const outcome = await runReset({ target: parseTarget(Bun.argv.slice(2)), env: process.env });
+    const argv = Bun.argv.slice(2);
+    const outcome = await runReset({
+      target: parseTarget(argv),
+      hard: parseHard(argv),
+      env: process.env,
+    });
     process.exit(outcome.ok ? 0 : 1);
   } catch (cause) {
     if (!(cause instanceof ResetConfigError)) throw cause;

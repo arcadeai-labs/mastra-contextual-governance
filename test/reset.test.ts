@@ -9,6 +9,13 @@
  * HTTP surfaces. Nothing here opens a `.db` file: a test that read the disk
  * could pass against a service that never noticed the rows moved.
  *
+ * Since #123 the command has two scopes, and this file drives whichever one
+ * the claim is about: `--hard` where the assertion is about all three
+ * databases, and the bare command — which deliberately leaves `apps/idp`
+ * alone — where it is about what a presenter runs between takes.
+ * `test/reset-grants.test.ts` is where the difference between the two is the
+ * subject rather than the setup.
+ *
  * The three claims #23 is about, in the order they would go wrong:
  *
  *   1. one command, seconds, and afterwards LN-2291 is unapproved, the grants
@@ -158,6 +165,14 @@ async function runResetCommand(
   return { code, out, err };
 }
 
+/**
+ * The three-database run. Everything below that reads `apps/idp` back goes
+ * through this: the bare command leaves the IdP alone on purpose (#123), so
+ * asserting an idp line against it would be asserting the wrong contract.
+ */
+const runHardReset = (overrides: Record<string, string> = {}, args: string[] = []) =>
+  runResetCommand(overrides, ["--hard", ...args]);
+
 const json = async <T>(url: string, init?: RequestInit): Promise<T> =>
   (await (await fetch(url, init)).json()) as T;
 
@@ -253,7 +268,7 @@ describe("one command, three databases", () => {
   beforeAll(async () => {
     // A clean baseline first, so "back to the seeded state" is compared
     // against a reading rather than against a constant this file made up.
-    expect((await runResetCommand()).code).toBe(0);
+    expect((await runHardReset()).code).toBe(0);
     seeded = await snapshot();
   });
 
@@ -271,7 +286,7 @@ describe("one command, three databases", () => {
     expect(dirty.record.status).toBe("approved");
     expect(dirty.audit_rows).toBeGreaterThan(seeded.audit_rows);
 
-    const { code, out, err } = await runResetCommand();
+    const { code, out, err } = await runHardReset();
     expect(err).toBe("");
     expect(code).toBe(0);
 
@@ -292,10 +307,10 @@ describe("one command, three databases", () => {
   });
 
   test("it is safe to run repeatedly — twice leaves identical state", async () => {
-    expect((await runResetCommand()).code).toBe(0);
+    expect((await runHardReset()).code).toBe(0);
     const once = await snapshot();
 
-    expect((await runResetCommand()).code).toBe(0);
+    expect((await runHardReset()).code).toBe(0);
     const twice = await snapshot();
 
     expect(twice).toEqual(once);
@@ -315,7 +330,7 @@ describe("one command, three databases", () => {
 
   test("the OAuth client Arcade is registered against never moves", async () => {
     const before = await idpHealth();
-    await runResetCommand();
+    await runHardReset();
     const after = await idpHealth();
     expect(after.oauth.client_id).toBe(before.oauth.client_id);
     expect(after.people).toBe(before.people);
@@ -323,7 +338,7 @@ describe("one command, three databases", () => {
 
   test("it finishes in seconds, not minutes", async () => {
     const started = performance.now();
-    expect((await runResetCommand()).code).toBe(0);
+    expect((await runHardReset()).code).toBe(0);
     // Generous on purpose: the claim is "between takes", not a benchmark, and
     // a threshold tight enough to be interesting would be a flake on a loaded
     // CI box. What this catches is a reset that went back to waiting on a
@@ -369,7 +384,7 @@ describe("when it cannot do its job it says so and exits non-zero", () => {
 
   test("an unreachable service is reported, and the others still run", async () => {
     const dead = `127.0.0.1:${freePort()}`;
-    const { code, out } = await runResetCommand({ LOAN_APP_PUBLIC_HOST: dead });
+    const { code, out } = await runHardReset({ LOAN_APP_PUBLIC_HOST: dead });
     expect(code).not.toBe(0);
     expect(out).toContain("UNREACHABLE");
     // The two upstream of it were still put back: a presenter wants every
@@ -383,8 +398,29 @@ describe("when it cannot do its job it says so and exits non-zero", () => {
     expect(code).toBe(78);
     // Not the local variable: pointing `--target render` at a localhost value
     // would be the command silently resetting the wrong environment.
+    expect(err).toContain("RENDER_HOOKS_PUBLIC_HOST is unset");
+    expect(err).toContain("cg-hooks");
+    // And not a variable this scope was never going to read: a between-takes
+    // reset that refused to put the loan book back because RENDER_IDP_PUBLIC_HOST
+    // was unset would be blocked on an address it has no use for.
+    expect(err).not.toContain("RENDER_IDP_PUBLIC_HOST");
+  });
+
+  test("--hard --target render asks for the IdP's address too", async () => {
+    const { code, err } = await runHardReset({}, ["--target", "render"]);
+    expect(code).toBe(78);
     expect(err).toContain("RENDER_IDP_PUBLIC_HOST is unset");
     expect(err).toContain("cg-idp");
+  });
+
+  test("a misspelt --hard is refused rather than quietly read as a soft reset", async () => {
+    const { code, err } = await runResetCommand({}, ["--hard-reset"]);
+    expect(code).toBe(78);
+    expect(err).toContain("--hard-reset is not an option");
+    // The quiet reading is the dangerous one: a presenter who typed this
+    // believes the IdP is clean and is about to demonstrate an auth flow
+    // against grants that were never cleared.
+    expect(err).toContain("#123");
   });
 
   test("an unknown --target is refused", async () => {
