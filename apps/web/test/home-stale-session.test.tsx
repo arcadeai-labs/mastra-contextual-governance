@@ -171,7 +171,7 @@ describe("the chrome and the assistant, with the loan book expired", () => {
 
     expect(text(bar)).toContain("Nothing was refused by policy");
     expect(bar).toContain(`href="/api/auth/signin"`);
-    expect(text(bar)).toContain("Sign in again");
+    expect(text(bar)).toContain("sign in again");
   });
 
   test("the assistant stops claiming the tool calls land as that person", () => {

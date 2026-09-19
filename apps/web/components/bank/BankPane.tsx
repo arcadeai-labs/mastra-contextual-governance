@@ -228,7 +228,7 @@ export function BankPane({
           // its own screen.
           <span className="bank-user-note" role="status">
             The loan system is not accepting this browser&rsquo;s sign-in. Nothing was refused by
-            policy — <a href={SIGN_IN.href}>{SIGN_IN.label} again</a> to keep working.
+            policy — <a href={SIGN_IN.href}>sign in again</a> to keep working.
           </span>
         ) : null}
 
