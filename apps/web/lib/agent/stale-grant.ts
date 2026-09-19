@@ -79,8 +79,8 @@ export function staleGrant(message: string): StaleGrant | null {
       "most often because the identity provider was reset, or the grant was revoked.",
     recovery:
       "Arcade still believes that grant is live, so it will not ask for a new one and retrying " +
-      "fails the same way. Revoke this persona's cg-idp authorization in the Arcade dashboard, " +
-      "then run the step again and authorize when prompted.",
+      "fails the same way. Revoke the cg-idp authorization for this user in the Arcade " +
+      "dashboard, then run the step again and authorize when prompted.",
     // Worth saying, because the generic fault line cannot: `apps/loan-app`
     // resolves the caller before it touches the loan book, so a refusal here
     // is a call that never got as far as reading or writing anything.
