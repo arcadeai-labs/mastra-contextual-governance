@@ -146,6 +146,9 @@ which is the failure §4.4 exists for.
 
 Then `bun run reset --target render` again, so you start clean.
 
+**Do not use `--hard` here.** It wipes the IdP, which kills every Arcade-held grant
+and turns this dry run into an authorization exercise — see §3.
+
 ---
 
 ## 2. The four acts
@@ -329,28 +332,75 @@ Neither of them touches `loans.db` or `idp.db`. **A presenter who presses Reset 
 then finds LN-2291 still approved has found the documented behaviour**, and the
 confirmation dialog says so. For the loan book you need the command.
 
+Leaving `idp.db` alone is the safe half of that: nobody is signed out and no persona
+is left holding a grant Arcade thinks is live (#123). It also means **this button can
+never give you the auth flow back** — for that, see the hard reset below.
+
 ### The command, between takes
 
     bun run reset                   # the services in this checkout
     bun run reset --target render   # the deployed ones
 
-Three HTTP calls, in order, seconds not minutes:
+Two HTTP calls, in order, seconds not minutes:
 
 | # | service | what comes back |
 |---|---|---|
-| 1 | `apps/idp` | people, sessions, tokens and consents cleared; the four personas seeded again |
-| 2 | `apps/hooks` (`mode: demo`) | the four policy tables from the fixture; grants, approval requests and the audit log emptied |
-| 3 | `apps/loan-app` | the loan book, so `LN-2291` is unapproved again |
+| 1 | `apps/hooks` (`mode: demo`) | the four policy tables from the fixture; grants, approval requests and the audit log emptied |
+| 2 | `apps/loan-app` | the loan book, so `LN-2291` is unapproved again |
+
+**`apps/idp` is deliberately not in this run**, and the output says so on every run:
+
+    [reset] idp      SKIPPED  sign-ins, tokens and consents left alone, so no persona is
+                              left holding a grant Arcade thinks is live (#123).
+
+Why: the IdP's reset deletes the access tokens, and **Arcade goes on holding the
+hop-2 token it was issued before**. Arcade believes that grant is valid, so it raises
+no new authorization challenge — it presents the dead token, cg-idp answers `401
+invalid_token`, and the persona's next tool call is a fault card. There is no
+recovery the demo can perform for itself; clearing it is a revoke in the Arcade
+dashboard, by hand. The personas do not change on stage, so between takes there is
+nothing to gain from re-seeding them and a dead grant per persona to lose.
 
 One line per service with the before/after counts **the service itself reported**, and
 a non-zero exit if any of them refused. It is idempotent: running it twice leaves
 identical state, which `test/reset.test.ts` asserts by doing exactly that.
 
+### The hard reset, when you want the auth flow back
+
+    bun run reset --hard                   # ...and the IdP as well
+    bun run reset --hard --target render
+
+Same two services, plus `apps/idp` first: people, sessions, tokens and consents
+cleared and the four personas seeded again. Use it when the thing you want to show is
+**signing in and authorizing from scratch**, not when you want the demo back to the
+top of act 1.
+
+It ends with the consequence spelled out, after the verdict:
+
+    [reset] Every persona's Arcade-held cg-idp grant is now dead: Arcade still holds the
+            token cg-idp just forgot, believes it is valid, and will not re-challenge.
+            The first tool call per persona fails until that persona's cg-idp
+            authorization is revoked in the Arcade dashboard by hand — that is the
+            re-authorization this reset is for (#123).
+
+**So `--hard` has a manual step after it**, and it is not optional. For each persona
+you are about to use: Arcade dashboard → that user's connections → revoke `cg-idp`.
+Then their next tool call raises the layer-2 authorization card and the flow runs from
+clean. Skip the revoke and the first call is a fault card instead, wearing the
+signature in §4.4.
+
+A misspelling is refused rather than read as a soft reset — `--hard-reset` exits 78
+and names the flag — because the quiet reading is a presenter who thinks the IdP is
+clean and is about to demonstrate an auth flow against grants that were never
+cleared.
+
 Addresses come from the environment in HOST form and are never derived. `--target
-render` reads `RENDER_IDP_PUBLIC_HOST`, `RENDER_HOOKS_PUBLIC_HOST` and
-`RENDER_LOAN_APP_PUBLIC_HOST` — separate variables from the local ones, so a command
-aimed at Render cannot silently reset a laptop and a command with no `--target` cannot
-silently reset the live demo.
+render` reads `RENDER_HOOKS_PUBLIC_HOST` and `RENDER_LOAN_APP_PUBLIC_HOST`, plus
+`RENDER_IDP_PUBLIC_HOST` when `--hard` is given — separate variables from the local
+ones, so a command aimed at Render cannot silently reset a laptop and a command with
+no `--target` cannot silently reset the live demo. Only the addresses a run will
+actually use are required: a between-takes reset is not blocked by an unset
+`RENDER_IDP_PUBLIC_HOST` it was never going to read.
 
 **Why endpoints and not a shell.** Each service reseeds from the fixture compiled into
 **its own running image**. A `sqlite3` session in a Render shell cannot promise that:
@@ -375,9 +425,11 @@ with a named consequence, not a warning.
 > dark, and no screen anywhere says why. Recovery is a re-registration in the Arcade
 > dashboard — see §1.1.
 
-One visible, harmless consequence of a reset: consents are gone, so the first
-authorize afterwards shows the login page and the consent page again. That is what a
-rehearsal from clean should look like.
+One visible consequence of `--hard`, and the reason it exists: consents are gone, so
+the first authorize afterwards shows the login page and the consent page again. That
+is what a rehearsal from clean should look like — **once the Arcade-side grant has
+been revoked too**, which `--hard` cannot do for you. The plain `bun run reset` leaves
+all of this alone.
 
 ---
 
@@ -478,21 +530,40 @@ In order of how often it has actually been the cause:
 
 ### 4.4 Two known live failures, by signature
 
-Both were open at the time of writing; each has a fix in review. Name them from the
-symptom rather than diagnosing from scratch on stage.
+Name them from the symptom rather than diagnosing from scratch on stage.
 
-**Hop 2 — "The identity provider rejected the token." (#100).**
+**Hop 2 — "The identity provider rejected the token." (#123).**
 Signature: `[TOOL_RUNTIME_FATAL] ToolExecutionError during execution of tool
 'get_loan': The identity provider rejected the token.` — a **fault** card, not a
-denial. `/pre` and `/post` both fired `allow`, so the control plane is fine. In
-cg-idp's log, two `POST /oauth2/token rejected: invalid_grant "invalid code"` lines a
-few hundred milliseconds apart for the same client: the verifier's server-side
-`next_uri` fetch and the browser's redirect both exchange the same single-use code,
-and Better Auth revokes the tokens the first exchange minted. **It is per persona, not
-per deployment** — one persona can be broken while another works.
-*On stage:* switch to a persona whose grant is good. *Recovery:* revoke that persona's
-`cg-idp` authorization in Arcade and re-authorize, which reproduces it reliably —
-so only bother if the fix is deployed.
+denial. `/pre` and `/post` both fired `allow`, so the control plane is fine. The card
+now names this cause and this recovery itself.
+
+> This used to be attributed to #100 (a single-use authorization code exchanged
+> twice, `invalid_grant "invalid code"` in cg-idp's log). **#100 is merged and is not
+> the cause.** If you do see the `invalid_grant` pair in the log, that is a different
+> fault and the fix for it is deployed.
+
+*Cause:* the persona's `cg-idp` grant no longer exists at our IdP while **Arcade still
+holds the token it was issued**. The usual way to get there is a reset of `idp.db` —
+`bun run reset --hard`, a deleted disk, a changed `BETTER_AUTH_SECRET` — but a plain
+expiry or a revoke does it too. Arcade believes the grant is valid, so it presents the
+dead token and raises **no** authorization challenge; the only signal anywhere is
+cg-idp's own `401` with `WWW-Authenticate: Bearer error="invalid_token"`, and that
+does not survive the next hop. **It is per persona, not per deployment** — one persona
+can be broken while another works.
+
+*On stage:* switch to a persona whose grant is good. Retrying does not help and never
+will; Arcade will not re-challenge.
+
+*Recovery, and it is manual:* Arcade dashboard → that user's connections → revoke
+`cg-idp`. Their next tool call then raises the layer-2 authorization card and the flow
+runs from clean. Nothing in the demo can do this for you — measured on #123, no
+`authorization_url`, no `invalid_token` and no status reaches `apps/web`, and there is
+no Arcade-side revoke reachable without the project API key.
+
+*Not to be confused with* a 429 from `/oauth2/userinfo`, which now reads *"The
+identity provider answered 429 and did not say whether this token is still good."*
+That one needs no dashboard: wait a minute (#166, #167).
 
 **Hop 1 — the gateway token goes stale (#113).**
 Signature: a re-authorization card appears mid-session for a persona who was working,
