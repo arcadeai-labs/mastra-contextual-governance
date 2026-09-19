@@ -26,6 +26,20 @@ const userinfoSchema = z.object({ email: z.string().email() }).passthrough();
  * problem; 503 when the identity provider is, so that an outage upstream
  * reads as an outage and not as every caller's credentials failing at once.
  */
+/**
+ * Did the provider refuse the **token**, or refuse the **request**?
+ *
+ * 401 and 403 are the two answers that are about the bearer: OAuth 2.0 Bearer
+ * Token Usage (RFC 6750 §3.1) spends `invalid_token` on 401 and
+ * `insufficient_scope` on 403, and both mean the credential presented will not
+ * work again as it stands. Every other status — 429, 500, 502, 503 — is the
+ * provider saying something about itself, and says nothing at all about this
+ * token.
+ */
+function tokenRefused(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
 export class ActorError extends Error {
   constructor(
     message: string,
@@ -230,7 +244,20 @@ export async function actorFromRequest(
 
   if (!response.ok) {
     remembered.delete(key);
-    throw new ActorError("The identity provider rejected the token.");
+    // Which of the two it is matters to whoever reads the answer. "The
+    // provider says this bearer is no good" and "the provider would not answer
+    // just now" have different recoveries — one is a fresh sign-in or a fresh
+    // grant, the other is waiting — and collapsing them meant a provider
+    // having a bad minute was reported as a bad token. #167 made the same
+    // split on the other side of this call; this is the same fix one service
+    // down (#123).
+    throw tokenRefused(response.status)
+      ? new ActorError("The identity provider rejected the token.")
+      : new ActorError(
+          `The identity provider answered ${response.status} and did not say whether this ` +
+            "token is still good.",
+          503,
+        );
   }
 
   const parsed = userinfoSchema.safeParse(await response.json().catch(() => null));
