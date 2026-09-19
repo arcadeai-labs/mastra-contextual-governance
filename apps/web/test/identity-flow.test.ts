@@ -24,6 +24,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 
 import { deploymentReadiness, readIdentitySurface, readWebConfig } from "../lib/config.ts";
 import { readSession } from "../lib/identity/session.ts";
+import { SIGNIN_PATH } from "../lib/identity/handlers.ts";
 import { SESSION_SECRET_MIN_LENGTH, sessionSecretProblem } from "../lib/identity/seal.ts";
 import {
   Browser,
@@ -81,7 +82,39 @@ function sessionOf(browser: Browser) {
 }
 
 describe("signing in as a person", () => {
-  test("the persona button lands on cg-idp's login page, not Arcade's", async () => {
+  /**
+   * #176's third criterion, against the real IdP.
+   *
+   * The bank's chrome renders **one** `Sign in` and its href is this path with
+   * nothing on it — no persona hint, because there are no persona buttons left
+   * to have pressed. What has to still be true is the thing that was always the
+   * point: the browser lands on **cg-idp's** login page, and the person who
+   * comes back is whoever types a password there.
+   *
+   * The literal is imported rather than typed, so this and
+   * `components/identity/SessionChrome.tsx` cannot drift into testing different
+   * addresses.
+   */
+  test("the chrome's one Sign in lands on cg-idp's login page, with no persona chosen", async () => {
+    const browser = new Browser();
+    const started = await browser.fetch(`${harness.webUrl}${SIGNIN_PATH}`);
+
+    expect(started.status).toBe(303);
+    const authorize = new URL(started.headers.get("location")!);
+    expect(authorize.origin).toBe(harness.idpUrl);
+    expect(authorize.pathname).toBe("/oauth2/authorize");
+    expect(authorize.searchParams.get("client_id")).toBe(harness.config.identity.idpClientId);
+    expect(authorize.searchParams.get("redirect_uri")).toBe(`${harness.webUrl}/api/auth/callback`);
+    // Still forced re-authentication, so a browser that was somebody a moment
+    // ago cannot be quietly continued as them.
+    expect(authorize.searchParams.get("prompt")).toBe("login");
+
+    const landed = await browser.follow(authorize.toString(), (fields) => fields, { limit: 4 });
+    expect(new URL(landed.url).origin).toBe(harness.idpUrl);
+    expect(landed.html).toContain("Sign in");
+  });
+
+  test("the route still accepts a persona hint, and lands in the same place", async () => {
     const browser = new Browser();
     const started = await browser.fetch(`${harness.webUrl}/api/auth/signin?persona=dana`);
 

@@ -164,6 +164,25 @@ export interface ChatProps {
    * (`lib/governance/stream-url.ts`).
    */
   approvalStreamUrl?: string | null;
+  /**
+   * The bank has stopped accepting this browser's sign-in (#176).
+   *
+   * `true` when the loan book read comes back `expired` — a real 401 from
+   * `apps/loan-app` on this person's own IdP bearer, which `BankPane` holds
+   * because three surfaces have to agree about it.
+   *
+   * It changes one sentence and nothing else. The chat still runs, the composer
+   * still sends, and a turn started in this state fails at the gateway with its
+   * own message; what may not happen is this line going on promising that every
+   * tool call is made as this person while the bank is refusing that person's
+   * bearer. That was half of the contradiction the human photographed on
+   * 2026-09-19 — the other half was the chrome bar above it.
+   *
+   * **Not a governance state.** No hook ran. The wording says so, in the same
+   * words `lib/loan-context/read.ts` uses, because a stale bearer that looked
+   * like a policy denial would undo the distinction the whole demo rests on.
+   */
+  sessionStale?: boolean;
 }
 
 /** The approval a turn ended on, and what it would resume. */
@@ -198,7 +217,7 @@ function samePersona(requesterId: string, signedInAs: string | null): boolean {
   );
 }
 
-export function Chat({ signedInAs, approvalStreamUrl = null }: ChatProps) {
+export function Chat({ signedInAs, approvalStreamUrl = null, sessionStale = false }: ChatProps) {
   const [prompt, setPrompt] = useState(
     "Approve the loan for $95K and double-check your work so you don't make any mistakes.",
   );
@@ -588,14 +607,32 @@ export function Chat({ signedInAs, approvalStreamUrl = null }: ChatProps) {
 
   return (
     <section className="chat-shell" aria-label="Conversation">
-      <p style={{ color: "var(--muted)", fontSize: "0.9em", margin: "0 0 0.5em" }}>
-        {signedInAs ? (
+      {/* Who the conversation acts as. Amber rather than muted grey when the
+          bank has stopped accepting the sign-in, on the same reasoning as the
+          layer-2 and waiting cards below: nothing was refused and nothing
+          broke, so it may not wear the denial's maroon or the fault's red, but
+          a reader has to notice it. */}
+      <p
+        data-acting-as={signedInAs === null ? "nobody" : sessionStale ? "stale" : "active"}
+        style={{
+          color: sessionStale && signedInAs !== null ? "#8a6100" : "var(--muted)",
+          fontSize: "0.9em",
+          margin: "0 0 0.5em",
+        }}
+      >
+        {signedInAs === null ? (
+          <>Nobody is signed in on this browser, so there is no one to act as.</>
+        ) : sessionStale ? (
+          <>
+            This browser signed in as <code>{signedInAs}</code>, but the loan system has stopped
+            accepting that sign-in, so a tool call would not land as this person. Nothing was
+            refused by policy — sign in again.
+          </>
+        ) : (
           <>
             Acting as <code>{signedInAs}</code> — every tool call is made as this person, because this
             browser is signed in as them.
           </>
-        ) : (
-          <>Nobody is signed in on this browser, so there is no one to act as.</>
         )}
       </p>
 

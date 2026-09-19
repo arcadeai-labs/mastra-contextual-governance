@@ -14,6 +14,23 @@
  * now reach three surfaces — the 503 pages, `/health`, and a red banner in
  * front of whoever opens the page — and all three come from `lib/config.ts`,
  * which is what stops them describing different deployments.
+ *
+ * ## Two components since #176, and that is the point
+ *
+ * The banner used to be declared inside `SignInPanel.tsx` and rendered above
+ * the four "Sign in as …" buttons. #176 deleted the switcher and is explicit
+ * that the banner is not part of it — *"do not let it leave with the buttons"*
+ * — so it has its own file and each page places it, and this file checks the
+ * two halves apart:
+ *
+ * - `ConfigurationBanner` still appears, still red, still naming the missing
+ *   variable, with nothing left of a panel to carry it.
+ * - `SessionChrome` — what the bank's top chrome now holds — still goes inert
+ *   when sign-in itself is broken, and still says nothing about a persona.
+ *
+ * The third half, that it reaches the served `/`, is in
+ * `test/home-full-screen-browser.test.ts`: a claim about the whole page cannot
+ * be made by rendering one component of it.
  */
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -24,7 +41,9 @@ import {
   isMisconfigured,
   readIdentitySurface,
 } from "../lib/config.ts";
-import { SignInPanel } from "../components/identity/SignInPanel.tsx";
+import { ConfigurationBanner } from "../components/identity/ConfigurationBanner.tsx";
+import { SessionChrome } from "../components/identity/SessionChrome.tsx";
+import { SIGNIN_PATH } from "../lib/identity/handlers.ts";
 
 /** `openssl rand -hex 32`, written out so this suite's green is not a sample. */
 const GOOD_SECRET = "3f9a1c7e5b2d84069a1fe73c05b8d42e6c917ab3fd50e28c47196baf3d0c5e81";
@@ -44,10 +63,17 @@ const COMPLETE = {
   ANTHROPIC_API_KEY: "anthropic-key",
 } as const;
 
-function render(env: Record<string, string>): string {
-  const config = readIdentitySurface(env);
+/** The banner alone, exactly as `app/page.tsx` and `app/chat/page.tsx` place it. */
+function banner(env: Record<string, string>): string {
   return renderToStaticMarkup(
-    <SignInPanel session={null} problems={configurationProblems(config)} />,
+    <ConfigurationBanner problems={configurationProblems(readIdentitySurface(env))} />,
+  );
+}
+
+/** The session controls the bank's top chrome carries, with nobody signed in. */
+function chrome(env: Record<string, string>): string {
+  return renderToStaticMarkup(
+    <SessionChrome session={null} problems={configurationProblems(readIdentitySurface(env))} />,
   );
 }
 
@@ -65,7 +91,7 @@ describe("the banner, with ARCADE_GATEWAY_ID absent", () => {
   const { ARCADE_GATEWAY_ID, ...withoutGateway } = COMPLETE;
 
   test("it appears, and names the missing variable in the visitor's face", () => {
-    const html = render(withoutGateway);
+    const html = banner(withoutGateway);
 
     expect(html).toContain('role="alert"');
     expect(text(html)).toContain("This deployment is not fully configured");
@@ -77,12 +103,12 @@ describe("the banner, with ARCADE_GATEWAY_ID absent", () => {
     );
   });
 
-  test("sign-in still works, so its buttons stay live", () => {
-    const html = render(withoutGateway);
-    // Only the gateway is broken. Disabling the personas here would say the
-    // wrong thing — a visitor can sign in, and finding out how far they get is
-    // the point of the banner above them.
-    expect(html).toContain(`href="/api/auth/signin?persona=dana"`);
+  test("sign-in still works, so its control stays live", () => {
+    const html = chrome(withoutGateway);
+    // Only the gateway is broken. Disabling the way in here would say the wrong
+    // thing — a visitor can sign in, and finding out how far they get is the
+    // point of the banner above them.
+    expect(html).toContain(`href="${SIGNIN_PATH}"`);
     expect(html).not.toContain("disabled");
   });
 
@@ -100,26 +126,25 @@ describe("the banner, with ARCADE_GATEWAY_ID absent", () => {
 describe("the banner, with sign-in itself broken", () => {
   const { IDP_CLIENT_SECRET, ...withoutClientC } = COMPLETE;
 
-  test("the persona buttons are disabled rather than hidden", () => {
-    const html = render(withoutClientC);
+  test("the way in is disabled rather than hidden", () => {
+    const html = chrome(withoutClientC);
 
-    // Inert, not absent: hiding them would leave a visitor wondering whether
-    // this demo has personas at all.
+    // Inert, not absent: hiding it would leave a visitor wondering whether this
+    // deployment has a sign-in at all.
     expect(html).toContain("disabled");
-    expect(html).not.toContain(`href="/api/auth/signin?persona=dana"`);
-    expect(text(html)).toContain("Alice");
-    expect(text(html)).toContain("IDP_CLIENT_SECRET is not set");
+    expect(html).toContain("Sign in");
+    expect(html).not.toContain(`href="${SIGNIN_PATH}"`);
+    expect(text(banner(withoutClientC))).toContain("IDP_CLIENT_SECRET is not set");
   });
 
   test("a SESSION_SECRET that is set but too weak reads as a configuration problem too", () => {
-    const html = render({ ...COMPLETE, SESSION_SECRET: "x" });
-    expect(text(html)).toContain("at least 32 characters");
-    expect(html).toContain("disabled");
+    expect(text(banner({ ...COMPLETE, SESSION_SECRET: "x" }))).toContain("at least 32 characters");
+    expect(chrome({ ...COMPLETE, SESSION_SECRET: "x" })).toContain("disabled");
   });
 });
 
 describe("a fully configured deployment", () => {
-  test("no banner, live buttons, and /health says ok", () => {
+  test("no banner, a live way in, and /health says ok", () => {
     const config = readIdentitySurface(COMPLETE);
 
     expect(isMisconfigured(configurationProblems(config))).toBe(false);
@@ -131,13 +156,32 @@ describe("a fully configured deployment", () => {
       agent: "configured",
     });
 
-    const html = render(COMPLETE);
-    expect(html).not.toContain('role="alert"');
-    expect(text(html)).not.toContain("This deployment is not fully configured");
+    expect(banner(COMPLETE)).toBe("");
+
+    const html = chrome(COMPLETE);
     expect(html).not.toContain("disabled");
-    for (const persona of ["dana", "sam", "riley", "morgan"]) {
-      expect(html).toContain(`href="/api/auth/signin?persona=${persona}"`);
+    expect(html).toContain(`href="${SIGNIN_PATH}"`);
+  });
+
+  /**
+   * #176's first criterion, at the one place a persona button could come back.
+   *
+   * The switcher is gone because one Chrome profile per persona is the real
+   * demo shape and a row of "Sign in as …" buttons read as the most
+   * demo-looking thing on a screen arguing that nothing here is a mock. What
+   * replaced it is one `Sign in` that starts the same OIDC authorization with
+   * **no persona preselected** — so the hint is what must not reappear, and a
+   * `?persona=` on this anchor is exactly how it would.
+   */
+  test("nothing here names a persona or preselects one", () => {
+    const html = chrome(COMPLETE);
+
+    expect(html).toContain(`href="${SIGNIN_PATH}"`);
+    expect(html).not.toContain("persona=");
+    for (const persona of ["Alice", "Bob", "Charlie", "Michael"]) {
+      expect(text(html)).not.toContain(persona);
     }
+    expect(text(html)).not.toContain("Sign in as");
   });
 });
 
@@ -170,16 +214,16 @@ describe("the banner, with ANTHROPIC_API_KEY absent", () => {
     // The failure this heading exists for: identity is perfect, the persona
     // signs in, the gateway token is held — and `/chat` answers 503 the first
     // time somebody presses Send, which on this project means on stage.
-    const html = render(withoutModel);
+    const html = banner(withoutModel);
 
     expect(html).toContain('role="alert"');
     expect(text(html)).toContain("The agent is not configured");
     expect(text(html)).toContain("ANTHROPIC_API_KEY is not set");
     expect(text(html)).not.toContain("Signing in is not configured");
-    // Sign-in still works, so its buttons stay live — the same reasoning as
+    // Sign-in still works, so its control stays live — the same reasoning as
     // the gateway case above.
-    expect(html).toContain(`href="/api/auth/signin?persona=dana"`);
-    expect(html).not.toContain("disabled");
+    expect(chrome(withoutModel)).toContain(`href="${SIGNIN_PATH}"`);
+    expect(chrome(withoutModel)).not.toContain("disabled");
   });
 
   test("it does not repeat the gateway's problems under the agent heading", () => {

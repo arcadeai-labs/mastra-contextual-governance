@@ -17,8 +17,14 @@
  * A **server** component, and it does three things a client one could not:
  *
  * 1. It unseals the session here, so the gateway tokens in the cookie never
- *    reach the browser. `SignInPanel` is rendered on this side of the boundary
- *    and handed down as an element, so only what it prints crosses.
+ *    reach the browser. `SessionChrome` is rendered on this side of the
+ *    boundary and handed down as an element, so only what it prints crosses.
+ *    Since #176 that element is the session controls in the bank's top chrome
+ *    — the gateway token's expiry, and `Sign out` or `Sign in` — rather than a
+ *    card of four "Sign in as …" persona buttons below the loan files. One
+ *    Chrome profile per persona is the real demo shape, so a switcher read as
+ *    the most demo-looking thing on a screen arguing that nothing here is a
+ *    mock.
  * 2. It opens **one** gateway session and asks it one thing: a real
  *    `tools/list` with the session's bearer (#15, `lib/agent/tool-list.ts`).
  *    That is the *whole* cost of this page against the gateway — one listing,
@@ -67,7 +73,8 @@ import { approvalStreamUrl } from "../lib/governance/stream-url.ts";
 import { homeSurface } from "../lib/home/surface.ts";
 import { readLoanBook } from "../lib/loan-context/read.ts";
 import { PersonaToolList } from "../components/identity/PersonaToolList.tsx";
-import { SignInPanel } from "../components/identity/SignInPanel.tsx";
+import { ConfigurationBanner } from "../components/identity/ConfigurationBanner.tsx";
+import { SessionChrome } from "../components/identity/SessionChrome.tsx";
 import { BankPane } from "../components/bank/BankPane.tsx";
 
 /**
@@ -113,11 +120,21 @@ export default async function Home() {
     readLoanBook(session),
   ]);
 
+  const problems = configurationProblems(config);
+
   return (
     <>
+      {/* In front of the application rather than inside it (#176). `.bank` is
+          `100dvh`, so a banner here is the first thing on the page and pushes
+          the whole screen down — which is the point: it appears only on a
+          deployment that cannot do what it claims, and #84 round 2 found that
+          one renders a perfectly normal page and fails at the point of use. It
+          used to ride in on the sign-in panel; the panel is gone and it is
+          not. */}
+      <ConfigurationBanner problems={problems} />
       <BankPane
         signedInAs={session?.email ?? null}
-        identity={<SignInPanel session={session} problems={configurationProblems(config)} />}
+        identity={<SessionChrome session={session} problems={problems} />}
         loans={loans}
         toolList={<PersonaToolList session={session} tools={tools} />}
         // #20: the chat watches the control plane for the one frame that
