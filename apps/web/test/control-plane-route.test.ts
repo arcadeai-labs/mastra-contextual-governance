@@ -20,6 +20,7 @@ import { join } from "node:path";
 
 import {
   readControlPlane,
+  RESET_MODES,
   runReset,
   type ControlPlaneReport,
   type ControlPlaneStatus,
@@ -164,9 +165,36 @@ describe("running a reset through it", () => {
 
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toMatch(/audit log cleared/);
-    // The one a presenter would otherwise assume moved.
+    // The two a presenter would otherwise assume moved. `idp.db` is the one
+    // that matters most (#123): this button leaves every sign-in and every
+    // Arcade-held grant alone, which is why it is safe between takes — and a
+    // presenter who wants the auth flow back from clean needs the other
+    // reset, not this one.
     expect(outcome.detail).toMatch(/loans\.db/);
+    expect(outcome.detail).toMatch(/idp\.db/);
+    expect(outcome.detail).toMatch(/nobody was signed out/);
     expect(await auditRows()).toBe(0);
+  });
+
+  test("neither mode can reach anything but cg-hooks", async () => {
+    // The structural half of the claim above, and the one that survives a
+    // rewording: the panel has exactly one address, so there is no path from
+    // either button to idp.db or loans.db at all. #174 adds a third mode that
+    // deliberately does reach all three; this pins what the two existing ones
+    // are.
+    const asked: string[] = [];
+    const real = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      asked.push(new URL(String(input)).host);
+      return real(input, init);
+    }) as typeof fetch;
+    try {
+      for (const mode of RESET_MODES) await runReset(config, mode, RESET_TOKEN);
+    } finally {
+      globalThis.fetch = real;
+    }
+
+    expect(new Set(asked)).toEqual(new Set([config.hooksHost]));
   });
 
   test("a wrong token is refused by cg-hooks, and the sentence says so", async () => {

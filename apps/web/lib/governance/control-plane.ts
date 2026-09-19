@@ -239,7 +239,7 @@ export async function runReset(
       mode,
       detail:
         mode === "demo"
-          ? `Demo reset: policy replaced from the fixture${revision === null ? "" : ` at revision ${revision}`}, grants, approval requests and the audit log cleared. loans.db is apps/loan-app's and was not touched.`
+          ? `Demo reset: policy replaced from the fixture${revision === null ? "" : ` at revision ${revision}`}, grants, approval requests and the audit log cleared. loans.db is apps/loan-app's and idp.db is apps/idp's; neither was touched, so nobody was signed out and no persona is left holding a grant Arcade thinks is live (#123).`
           : `Policy reset from the fixture${revision === null ? "" : ` at revision ${revision}`}. Grants, approval requests and the audit log were left alone.`,
     };
   } catch (cause) {

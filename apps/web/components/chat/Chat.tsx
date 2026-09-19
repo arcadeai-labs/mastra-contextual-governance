@@ -89,6 +89,7 @@ import { useEffect, useRef, useState } from "react";
 // transport's `fs` import — into the browser bundle, and `next build` fails.
 import { CHAT_PATH, replyText, type ChatEvent } from "../../lib/agent/events.ts";
 import { boundConversation, type ConversationMessage } from "../../lib/agent/conversation.ts";
+import { staleGrant } from "../../lib/agent/stale-grant.ts";
 import { noticeIsFor, subscribeToApprovalNotices } from "../../lib/governance/approval-stream.ts";
 import { Markdown } from "./Markdown.tsx";
 import { transcript } from "./transcript.ts";
@@ -800,10 +801,7 @@ export function EventView({
         <div role="alert" style={plumbing} data-kind="fault">
           <strong style={label}>{event.tool} — the tool did not complete</strong>
           <p style={{ margin: "0.4em 0", whiteSpace: "pre-wrap" }}>{event.message}</p>
-          <p style={{ margin: 0, color: "var(--muted)" }}>
-            The tool outcome is incomplete. Any side effects are unknown; use the detail above to
-            determine the next step.
-          </p>
+          <FaultConsequence message={event.message} />
         </div>
       );
 
@@ -970,4 +968,38 @@ function isAuthorizationProse(text: string, authorizationUrls: readonly string[]
   // of the structured challenge.
   const reportsFailure = /\b(?:error|failed|failure|unable|cannot|can't|still|but)\b/.test(lower);
   return mentionsAuthorization && carriesAction && !reportsFailure;
+}
+
+
+/**
+ * What the fault means and what to do about it.
+ *
+ * The default says as little as it can honestly say: the outcome is
+ * incomplete and side effects are unknown. One failure is better understood
+ * than that — the grant Arcade holds has gone stale (#123) — and for it the
+ * card names the cause, the manual recovery and the fact that nothing reached
+ * the loan book. Everything else keeps the generic wording, because a card
+ * that guessed a cause would be the same mislabelling one register down.
+ *
+ * Still grey, still inside the fault card, still `data-kind="fault"`. This is
+ * a better-described plumbing failure, not a new kind of event, and above all
+ * not an authorization card: there is no link to offer, and #123 measured why.
+ */
+function FaultConsequence({ message }: { message: string }) {
+  const stale = staleGrant(message);
+  if (stale === null) {
+    return (
+      <p style={{ margin: 0, color: "var(--muted)" }}>
+        The tool outcome is incomplete. Any side effects are unknown; use the detail above to
+        determine the next step.
+      </p>
+    );
+  }
+  return (
+    <div style={{ color: "var(--muted)" }} data-fault-cause="stale-grant">
+      <p style={{ margin: "0 0 0.4em" }}>{stale.cause}</p>
+      <p style={{ margin: "0 0 0.4em" }}>{stale.recovery}</p>
+      <p style={{ margin: 0 }}>{stale.effect}</p>
+    </div>
+  );
 }
