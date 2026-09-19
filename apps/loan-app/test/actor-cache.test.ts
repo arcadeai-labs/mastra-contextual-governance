@@ -185,7 +185,21 @@ describe("what is never remembered", () => {
     answers = { "tok-alice": ALICE };
     status = 429;
 
-    await expect(actorFromRequest(read("tok-alice"), idpHost)).rejects.toThrow(/rejected the token/);
+    // And it is not reported as a bad token either: 429 is the provider
+    // saying something about itself. A person told their grant was rejected
+    // would go and authorize again, which is not the recovery for this and
+    // costs the one thing a rehearsal does not have (#123).
+    const refusal = await actorFromRequest(read("tok-alice"), idpHost).then(
+      (email) => new Error(`expected a refusal, resolved to ${email}`),
+      (cause: unknown) => cause,
+    );
+    if (!(refusal instanceof ActorError)) throw refusal;
+    expect(refusal.message).toBe(
+      "The identity provider answered 429 and did not say whether this token is still good.",
+    );
+    // 503, not 401. The status is what the caller acts on, and a 401 here
+    // would send a working sign-in back round the login page.
+    expect(refusal.status).toBe(503);
     expect(rememberedKeys()).toEqual([]);
 
     // The moment the provider answers again, so does this service. A refusal

@@ -232,14 +232,24 @@ Full three-terminal walkthrough in [`apps/web/README.md`](./apps/web/README.md).
 ### Getting back to a clean state
 
 ```sh
-bun run reset                   # the three services in this checkout
-bun run reset --target render   # the deployed ones
+bun run reset                   # between takes: the control plane and the loan book
+bun run reset --hard            # ...and the identity provider, which signs everyone out
+bun run reset --target render   # either of the above, against the deployed ones
 ```
 
-One command, three databases: the identity provider's people, the control plane's policy
-and audit log, and the loan book. Seconds, idempotent, safe to run repeatedly. It calls
-each service's own `POST /admin/reset` under the shared `RESET_TOKEN`, so with that
-variable unset there is nothing to call and every route answers 404.
+One command, two scopes. The default puts the control plane's policy and audit log and
+the loan book back; `--hard` adds the identity provider's people, sessions, tokens and
+consents. Seconds, idempotent, safe to run repeatedly. It calls each service's own
+`POST /admin/reset` under the shared `RESET_TOKEN`, so with that variable unset there is
+nothing to call and every route answers 404.
+
+**Why the identity provider is not in the default run (#123).** Resetting it signs all
+four personas out and drops their consents, so each one then needs a login *and* an
+authorization card plus a Continue on their first governed call. Between takes that is
+pure stage time: the personas come out of a fixture and nothing in a take edits them, so
+re-seeding them puts back something that was never disturbed. `--hard` is for when
+showing sign-in and authorization from clean *is* the point, and it prints what it has
+just made everyone do again.
 
 **A redeploy is not a reset.** All three databases sit on Render disks and seed from
 their fixture only when empty. Redeploying carries every stage edit and every approval
@@ -516,7 +526,7 @@ is read off the Render service page.** See the warning in step 1.
 |---|---|---|
 | `HOOKS_PUBLIC_HOST` | `apps/web`, `tools/approvals`, `bun run reset` | `cg-hooks`' Render page. This one reaches the browser via the panel, so a bare service name fails in a visitor's DevTools |
 | `LOAN_APP_PUBLIC_HOST` | `apps/hooks`, `apps/web`, `tools/loan`, `bun run reset` | `cg-loan-app`'s Render page. Reaches the toolkit as an Arcade secret. `apps/web` reads the loan book with it for the `/` cards and the `/loans` board (#157) |
-| `IDP_PUBLIC_HOST` | `apps/loan-app`, `bun run reset` | `cg-idp`'s Render page. Where bearer tokens are validated. Locally, also the port `dev:idp-stub` binds |
+| `IDP_PUBLIC_HOST` | `apps/loan-app`, `bun run reset --hard` | `cg-idp`'s Render page. Where bearer tokens are validated. Locally, also the port `dev:idp-stub` binds |
 | `WEB_PUBLIC_HOST` | `tools/approvals` | `cg-web`'s Render page. Builds the approval link. Absent from `render.yaml`: Render injects `RENDER_EXTERNAL_HOSTNAME` |
 | `PUBLIC_URL` | `apps/web` | `cg-web`'s Render page, **with the scheme**. Every OAuth `redirect_uri` is built from it and matched byte for byte. Also decides whether the session cookie carries `Secure` |
 | `IDP_ISSUER` | `apps/web` | `cg-idp`'s Render page, with the scheme |
@@ -684,9 +694,10 @@ person.
 
 **The four demo personas share one password:** `megaforce-demo-2026`. This checked-in
 credential is deliberately demo-only, not a production secret, and must not be reused
-outside this demo. After a merged change to the fixture is deployed, run `bun run reset`
-(`bun run reset --target render` for Render) so the persistent `idp.db` reseeds; a redeploy
-alone does not change existing rows.
+outside this demo. After a merged change to the fixture is deployed, run `bun run reset
+--hard` (with `--target render` for Render) so the persistent `idp.db` reseeds; a redeploy
+alone does not change existing rows, and the default run deliberately leaves `idp.db`
+alone (#123).
 
 ## Two things that will bite you
 
@@ -714,7 +725,8 @@ Three things about Render that are load-bearing here:
 
 **A redeploy is not a reset.** Each database-owning service mounts a disk and seeds from
 its fixture only when the database has no schema. Deploying changes the code, not the
-rows. Getting back to clean is `bun run reset`, or the panel's Reset control.
+rows. Getting back to clean is `bun run reset` (`--hard` to include `idp.db`), or the
+panel's Reset control.
 
 **Services with disks give up zero-downtime deploys.** Render stops the old instance
 before starting the new one. Irrelevant for a demo, and worth one line so nobody reports
