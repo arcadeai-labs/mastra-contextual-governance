@@ -27,7 +27,33 @@ const config: NextConfig = {
   //
   // `scripts/verify-standalone.ts` is what holds this honest. It drives the
   // built image, and `--image <a pre-fix tag>` makes it go red.
-  outputFileTracingIncludes: { "/api/chat": ["./node_modules/ws/**/*"] },
+  //
+  // `public/**/*` on `/`, because the standalone tree does not carry it either
+  // (#177). Next's own docs say to copy `public` beside `.next/static` in the
+  // Dockerfile, and that is the obvious fix — but it puts the deployable
+  // artifact somewhere only Docker can assemble it, and this repo has already
+  // paid for that once: #92 was a standalone gap that every local check was
+  // blind to because none of them ran the artifact. Carrying `public` in the
+  // trace instead means `bun run --cwd apps/web build` emits a **complete**
+  // `.next/standalone`, and the runner stage copies that one tree — so the
+  // thing `test/public-assets.test.ts` boots on a socket and the thing Render
+  // serves are the same tree, and a fast test can hold it.
+  //
+  // The glob is relative to this package, so it lands at
+  // `.next/standalone/apps/web/public/` — where `server.js` looks, because
+  // `outputFileTracingRoot` makes the standalone tree mirror the monorepo. It
+  // is the whole directory rather than the two wordmarks `app/Frame.tsx`
+  // names: the next file added to `public/` must not be able to go missing in
+  // production the way these two did.
+  //
+  // Measured, not assumed. Before this line, `NODE_ENV=production node
+  // apps/web/server.js` on the built tree answered `/` with 200 and both
+  // `/arcade-wordmark-white.svg` and `/mastra-wordmark.svg` with 404 — the
+  // co-brand frame with two missing marks, on a projector.
+  outputFileTracingIncludes: {
+    "/api/chat": ["./node_modules/ws/**/*"],
+    "/": ["./public/**/*"],
+  },
 };
 
 export default config;

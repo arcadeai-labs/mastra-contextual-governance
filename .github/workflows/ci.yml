@@ -210,3 +210,37 @@ jobs:
           echo "::error::${{ matrix.service }} did not answer /health"
           docker logs svc
           exit 1
+
+      # A boot is not a served file either. `public/` does not travel with
+      # `output: "standalone"` on its own, and #177's co-brand frame is the
+      # first thing in this repo to need it: both wordmarks rendered under
+      # `next dev` and answered 404 in the artifact, which would have put a
+      # frame with two broken images on a projector. `next.config.ts` carries
+      # the directory in the file trace and
+      # `apps/web/test/public-assets.test.ts` proves that against the locally
+      # built tree — but only on whatever machine ran it. This is the same
+      # claim on Alpine, against the image, and it is derived from the
+      # directory rather than from the two file names, so the next asset
+      # added is covered by having been added.
+      - name: cg-web serves apps/web/public
+        if: matrix.service == 'web'
+        run: |
+          files="$(cd apps/web/public && find . -type f | sed 's|^\./||' | sort)"
+          if [ -z "$files" ]; then
+            echo "::error::apps/web/public is empty, so this step asserted nothing"
+            exit 1
+          fi
+          body="$(mktemp)"
+          status=0
+          while IFS= read -r file; do
+            code="$(curl -s -o "$body" -w '%{http_code}' "http://localhost:8080/$file")"
+            served="$(wc -c < "$body" | tr -d ' ')"
+            source="$(wc -c < "apps/web/public/$file" | tr -d ' ')"
+            if [ "$code" = "200" ] && cmp -s "$body" "apps/web/public/$file"; then
+              echo "/$file  200  $served bytes, byte-for-byte"
+            else
+              echo "::error::/$file answered $code with $served bytes; the file is $source bytes"
+              status=1
+            fi
+          done <<< "$files"
+          exit "$status"
