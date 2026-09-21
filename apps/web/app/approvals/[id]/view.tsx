@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 
 import type { ApprovalRecord } from "@cg/policy-schema";
 
+import type { Opener } from "../../../lib/approvals/opener.ts";
 import type { DecideResult } from "../../../lib/decide.ts";
 
 const line = "1px solid var(--line)";
@@ -208,20 +209,67 @@ export function UnknownRequest({ id, reason }: { id: string; reason: string }) {
 
 export interface ApprovalPageProps {
   request: ApprovalRecord;
-  /** Who the page is acting as. The identity the tool call is made under. */
-  actingAs: string;
-  /** Every persona the control plane knows, for the switcher. */
+  /**
+   * Who opened the link, from the sealed session and from nothing else (#180).
+   *
+   * Not a string any more, because "nobody" is a real answer and used to be
+   * spelled as the routed approver's address. A page that cannot tell those
+   * apart cannot tell the audience the truth about whose decision it is
+   * about to make.
+   */
+  opener: Opener;
+  /** Every persona the control plane knows, so a decider can be named rather than addressed. */
   personas: ReadonlyArray<{ user_id: string; display_name: string; role: string }>;
   /**
-   * The interactive block — persona switcher, the two buttons, and whatever
-   * came back from pressing one. A client component, passed in, so this shell
-   * stays a plain function of its props.
+   * The two buttons and whatever came back from pressing one. A client
+   * component, passed in, so this shell stays a plain function of its props.
+   * Rendered only for a signed-in opener — see `SignInToDecide`.
    */
   controls: ReactNode;
 }
 
-export function ApprovalPage({ request, actingAs, personas, controls }: ApprovalPageProps) {
-  const acting = personas.find((p) => p.user_id === actingAs);
+/**
+ * What a signed-out opener gets instead of the buttons.
+ *
+ * A **different affordance with a different destination**, deliberately not a
+ * greyed-out Approve: a disabled Approve on a governance page invites the
+ * reading that the system considered approving and declined, which is a
+ * refusal nothing here made. This is a sign-in, and it says so.
+ *
+ * A Slack link opened in a browser with no session is the ordinary case, not
+ * an error, so it reads as ordinary — and the round trip is the sign-in flow's
+ * own `next`, which brings them back to this link with the request still on
+ * screen behind them.
+ */
+export function SignInToDecide({ signInUrl }: { signInUrl: string }) {
+  return (
+    <div style={{ ...styles.panel, marginTop: "2.5rem" }}>
+      <p style={{ margin: "0 0 0.75rem", fontSize: "0.875rem", color: "var(--muted)" }}>
+        This browser is not signed in, so there is nobody to decide as. Deciding calls{" "}
+        <code>Approvals.Decide</code> through Arcade as a named person, and the link itself
+        carries no authority — so it cannot tell us who you are. Signing in brings you back to
+        this request.
+      </p>
+      <a href={signInUrl} data-sign-in-to-decide="" style={{ ...styles.button, display: "inline-block", textDecoration: "none" }}>
+        Sign in to decide
+      </a>
+    </div>
+  );
+}
+
+/**
+ * The request, and then either the buttons or a sign-in.
+ *
+ * `RequestDetails` is rendered **once**, before the branch, and that is
+ * structural rather than tidy: it is what makes the field set a signed-out
+ * opener sees identical to the one a signed-in opener sees, by construction
+ * rather than by two lists somebody has to keep in step. Whether this link
+ * should disclose the request to an unauthenticated opener at all is a
+ * separate question and not one this page decides differently per viewer.
+ */
+export function ApprovalPage({ request, opener, personas, controls }: ApprovalPageProps) {
+  const signedIn = opener.state === "signed-in";
+  const acting = signedIn ? personas.find((p) => p.user_id === opener.email) : undefined;
 
   return (
     <main style={styles.main}>
@@ -235,15 +283,21 @@ export function ApprovalPage({ request, actingAs, personas, controls }: Approval
 
       <RequestDetails request={request} />
 
-      <div style={{ ...styles.panel, marginTop: "2.5rem" }}>
-        <p style={{ margin: "0 0 0.75rem", fontSize: "0.875rem", color: "var(--muted)" }}>
-          Acting as <strong style={{ color: "var(--fg)" }}>{acting?.display_name ?? actingAs}</strong>
-          {acting !== undefined && ` — ${acting.role}`}. Pressing a button below calls{" "}
-          <code>Approvals.Decide</code> through Arcade as that person, so it passes the same
-          pre-execution hook as any other tool call. The link itself carries no authority.
-        </p>
-        {controls}
-      </div>
+      {opener.state === "signed-out" ? (
+        <SignInToDecide signInUrl={opener.signInUrl} />
+      ) : (
+        <div style={{ ...styles.panel, marginTop: "2.5rem" }}>
+          <p style={{ margin: "0 0 0.75rem", fontSize: "0.875rem", color: "var(--muted)" }}>
+            Signed in as <strong style={{ color: "var(--fg)" }}>{acting?.display_name ?? opener.email}</strong>
+            {acting !== undefined && ` — ${acting.role}`}
+            {acting !== undefined && <span style={{ color: "var(--muted)" }}> ({opener.email})</span>}. Pressing a
+            button below calls <code>Approvals.Decide</code> through Arcade as that person, so it passes
+            the same pre-execution hook as any other tool call. The link itself carries no authority —
+            holding it is not permission, and it is not what named you either.
+          </p>
+          {controls}
+        </div>
+      )}
     </main>
   );
 }

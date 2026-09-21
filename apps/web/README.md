@@ -200,10 +200,13 @@ swap. It holds this persona's Arcade gateway token, which is how the tool call
 reaches Arcade as that person; a real IdP replaces how the session is
 established, not hop 1. `lib/identity/handlers.ts::liveGatewayToken` stays.
 
-`/approvals/{id}` carries a second, narrower "acting as" cookie
-(`lib/persona.ts`) that predates this and is not a sign-in — it chooses which
-roster member presses a button on that page, which is what makes the
-self-approval refusal demonstrable. It never touches the agent's persona.
+`/approvals/{id}` used to carry a second, narrower "acting as" cookie
+(`lib/persona.ts`), and **#180 deleted it.** It was the surviving persona
+switcher, on the one page where identity is load-bearing, and its *default* —
+no cookie at all — acted as the routed approver, so the requester opening her
+own link decided as the person it had been routed to. That page now reads the
+same sealed session as everything else; `lib/approvals/opener.ts` is the whole
+of it.
 
 ### Configuration, and what `/health` says
 
@@ -866,14 +869,31 @@ The refusal is styled as a deliberate screen rather than an error page, because 
 Alice clicking her own link sees the same `CHECK_FAILED` her agent saw, and there is an audit
 row for it against her identity.
 
-### Acting as
+### Who is deciding
 
-`lib/persona.ts` is the persona switcher, standing in for real login exactly as `DESIGN.md`
-says: each persona is a real Arcade account with a real email, and the switcher chooses which
-of them the tool call is made under. It defaults to the routed approver, so the link works
-straight from Slack, and ignores a cookie naming somebody the control plane has never heard
-of. It is not a permission — choosing the requester and pressing Approve is the beat, not a
-hole.
+`lib/approvals/opener.ts`, and only the sealed IdP session — the same identity `/` has read
+since #176. There is no cookie the browser can set, and **no fallback**: an opener with no
+session is signed out, not "probably the approver".
+
+That fallback is what #180 was about. `lib/persona.ts` defaulted to the routed approver so the
+link would work straight from Slack, which meant Alice, opening her own escalation in her own
+browser with no cookie, was acting as Charlie. `pre.decide-not-by-the-requester` was never
+broken — it was never asked about her, and the audit row named somebody who was not there.
+
+The "act as Alice and watch her be refused" beat survives and is now real: Alice signs in as
+Alice, in her own Chrome profile, presses Approve, and the pre-hook refuses her by name.
+Signing in supplies a name and nothing more; `/pre` is still the only thing that says whether
+that person may decide.
+
+**A signed-out opener** — a Slack link opened in a browser with no session, which is the
+ordinary case — sees the request exactly as a signed-in one does, with the two buttons
+replaced by a distinct `Sign in to decide` pointing at
+`/api/auth/signin?next=/approvals/{id}`. Reading is not deciding; the approver should see what
+they are being asked to approve before being asked for a password; and a dead link says
+"nothing to decide" rather than charging a password first. Deliberately not a greyed-out
+Approve: a disabled Approve on a governance page reads as a refusal nothing made. The round
+trip is the sign-in flow's own `next` (`safeNext` + `signinCallback`) and not a second
+mechanism.
 
 ### Configuration
 
