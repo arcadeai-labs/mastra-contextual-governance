@@ -817,7 +817,24 @@ export interface IdentityHarness {
   stop(): Promise<void>;
 }
 
-export async function startIdentityHarness(): Promise<IdentityHarness> {
+export interface IdentityHarnessOptions {
+  /**
+   * Extra callback URLs `apps/idp` will accept for client C.
+   *
+   * For a suite that serves the *pages* from its own `next dev` on its own
+   * port rather than from this harness's handler server. Better Auth checks
+   * the redirect URI against the registered list and answers
+   * `invalid_redirect` otherwise — correctly, and it is not something to work
+   * around by pointing the sign-in at a server that does not serve the page
+   * under test. Reserve the port with `freePort()` first and pass the callback
+   * here.
+   */
+  extraWebRedirectUris?: readonly string[];
+}
+
+export async function startIdentityHarness(
+  options: IdentityHarnessOptions = {},
+): Promise<IdentityHarness> {
   // Registration is a module-level cache keyed by gateway URL, and every run of
   // this harness stands a new one up on a new port. Clearing it is what keeps
   // one suite's registration out of the next suite's flow.
@@ -855,7 +872,11 @@ export async function startIdentityHarness(): Promise<IdentityHarness> {
     // Client A stays the Arcade registration; client C is `apps/web`'s own —
     // DESIGN.md's "one OAuth client per relying party", settled on #75/#79.
     IDP_OAUTH_CLIENTS: "web",
-    IDP_OAUTH_REDIRECT_URIS_WEB: `${webUrl}/api/auth/callback,${arcade.url}/idp/callback`,
+    IDP_OAUTH_REDIRECT_URIS_WEB: [
+      `${webUrl}/api/auth/callback`,
+      `${arcade.url}/idp/callback`,
+      ...(options.extraWebRedirectUris ?? []),
+    ].join(","),
     NODE_ENV: "test",
   };
 

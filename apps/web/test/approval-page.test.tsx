@@ -15,8 +15,10 @@ import { ApprovalRecord } from "@cg/policy-schema";
 import { ApprovalPage, Outcome, RequestDetails, UnknownRequest } from "../app/approvals/[id]/view.tsx";
 import { fetchApproval, fetchRoster } from "../lib/approvals-store.ts";
 import { submitDecision, type DecideResult } from "../lib/decide.ts";
-import { choosePersona } from "../lib/persona.ts";
-import { DANA, MORGAN, RILEY, SAM, startHarness, type Harness } from "./harness.ts";
+import { readOpener, signInToDecideUrl, type Opener } from "../lib/approvals/opener.ts";
+import { chunk, chunkName, seal } from "../lib/identity/seal.ts";
+import { SESSION_COOKIE, type Session } from "../lib/identity/session.ts";
+import { DANA, MORGAN, RILEY, SAM, SESSION_SECRET, startHarness, type Harness } from "./harness.ts";
 
 let harness: Harness;
 
@@ -123,6 +125,30 @@ describe("pressing a button", () => {
     expect(await harness.read(request.id)).toMatchObject({ status: "pending", decided_by: null });
   });
 
+  test("the audit row names the requester, and no row names the routed approver", async () => {
+    // The control plane's own log, read back over `/audit`. #180's real cost
+    // was never the loan — it was a row recording Charlie approving a request
+    // Alice raised, at a moment Charlie was not present, which is wrong in a
+    // way indistinguishable from the correct case.
+    await press(DANA, "approved");
+
+    const self = (rows: Array<Record<string, unknown>>) =>
+      rows.filter((row) => JSON.stringify(row).includes("decide-not-by-the-requester"));
+
+    // Filtered by person rather than counted, because this file shares one
+    // `governance.db` across its cases and a bare count would be an assertion
+    // about test order.
+    const hers = self(await harness.audit({ hook: "pre", decision: "deny", user_id: DANA, tool: "Approvals.Decide" }));
+    const his = self(await harness.audit({ hook: "pre", decision: "deny", user_id: RILEY, tool: "Approvals.Decide" }));
+
+    expect(hers.length).toBeGreaterThan(0);
+    expect(hers.every((row) => row.user_id === DANA)).toBe(true);
+    // Charlie is never the subject of a separation-of-duties refusal on a
+    // request Alice raised. He was, before #180 — as the person Alice's click
+    // was attributed to.
+    expect(his).toEqual([]);
+  });
+
   test("a clicker whose clearance does not cover the amount is refused", async () => {
     const result = await press(SAM, "approved");
 
@@ -172,38 +198,143 @@ describe("the denial screen", () => {
   });
 });
 
-describe("acting as", () => {
-  test("defaults to the routed approver, so the link works from Slack", async () => {
-    const roster = await fetchRoster(harness.config);
-    expect(choosePersona(undefined, roster, request.approver_id)).toBe(RILEY);
+/**
+ * A browser carrying the cookies a real sign-in would have left, as
+ * `next/headers`' `cookies()` hands them over.
+ *
+ * Sealed with the suite's own `SESSION_SECRET`, through the same `seal` and
+ * `chunk` the sign-in callback writes with — so what these tests hand the page
+ * is the format a browser actually carries, not a shortcut around the seal.
+ */
+function jarFor(session: Session | null) {
+  const cookies =
+    session === null
+      ? Promise.resolve<Array<{ name: string; value: string }>>([])
+      : seal(session, SESSION_SECRET).then((sealed) =>
+          chunk(sealed).map((value, index) => ({ name: chunkName(SESSION_COOKIE, index), value })),
+        );
+  return cookies.then((all) => ({ getAll: () => all }));
+}
+
+const signedInAs = (email: string): Session => ({ email, signed_in_at: Date.now() });
+
+describe("who the page is deciding as", () => {
+  test("the sealed session, and nothing else", async () => {
+    const opener = await readOpener(await jarFor(signedInAs(RILEY)), request.id, harness.config);
+    expect(opener).toEqual({ state: "signed-in", email: RILEY });
   });
 
-  test("honours a chosen persona the control plane knows", async () => {
-    const roster = await fetchRoster(harness.config);
-    // Choosing the requester is not an escalation — it is the beat the demo
-    // wants, and the pre-hook is what answers it.
-    expect(choosePersona(DANA, roster, request.approver_id)).toBe(DANA);
+  test("a browser with no session is signed out — not the routed approver", async () => {
+    // #180 in one assertion. This used to answer with `request.approver_id`,
+    // which is how Alice pressed Approve as Charlie.
+    const opener = await readOpener(await jarFor(null), request.id, harness.config);
+
+    expect(opener.state).toBe("signed-out");
+    expect(opener).not.toMatchObject({ email: request.approver_id });
   });
 
-  test("ignores a persona the control plane has never heard of", async () => {
-    const roster = await fetchRoster(harness.config);
-    expect(choosePersona("attacker@example.test", roster, request.approver_id)).toBe(RILEY);
+  test("the requester's own session names the requester", async () => {
+    // She really is signed in, as herself. That is the beat, and it is now
+    // honest: no cookie chose this, a password did.
+    const opener = await readOpener(await jarFor(signedInAs(DANA)), request.id, harness.config);
+    expect(opener).toEqual({ state: "signed-in", email: DANA });
   });
 
-  test("the whole page names the identity the call will be made under", async () => {
-    const roster = await fetchRoster(harness.config);
-    const html = renderToStaticMarkup(
+  test("a cookie the browser can write does not select the decider", async () => {
+    // `cg_persona` is gone; a browser that still carries one — a laptop open
+    // across the deploy — is simply signed out, and not Charlie.
+    const stale = { getAll: () => [{ name: "cg_persona", value: RILEY }] };
+
+    expect(await readOpener(stale, request.id, harness.config)).toEqual({
+      state: "signed-out",
+      signInUrl: signInToDecideUrl(request.id),
+    });
+  });
+
+  test("a session sealed under a different key is signed out, not a name", async () => {
+    const forged = await seal(signedInAs(RILEY), "a-different-secret-long-enough-to-pass-0123");
+    const jar = { getAll: () => chunk(forged).map((value, index) => ({ name: chunkName(SESSION_COOKIE, index), value })) };
+
+    expect((await readOpener(jar, request.id, harness.config)).state).toBe("signed-out");
+  });
+
+  test("the sign-in comes back to this link", async () => {
+    // The round trip is the sign-in flow's own `next`: a same-origin path,
+    // which is the only thing `safeNext` will accept.
+    const url = signInToDecideUrl("apr_01HXYZ");
+    expect(url).toBe("/api/auth/signin?next=%2Fapprovals%2Fapr_01HXYZ");
+    expect(decodeURIComponent(new URL(url, "http://x").searchParams.get("next") ?? "")).toBe(
+      "/approvals/apr_01HXYZ",
+    );
+  });
+});
+
+describe("what the page says about it", () => {
+  const signedIn = (email: string): Opener => ({ state: "signed-in", email });
+  const signedOut: Opener = { state: "signed-out", signInUrl: signInToDecideUrl("apr_x") };
+
+  const render = async (opener: Opener) =>
+    renderToStaticMarkup(
       <ApprovalPage
         request={request}
-        actingAs={DANA}
-        personas={roster}
-        controls={<p>controls</p>}
+        opener={opener}
+        personas={await fetchRoster(harness.config)}
+        controls={<p>the buttons</p>}
       />,
     );
 
-    expect(html).toContain("Acting as");
+  test("signed in, it names the person the call will be made as", async () => {
+    const html = await render(signedIn(DANA));
+
+    expect(html).toContain("Signed in as");
     expect(html).toContain("Alice");
+    expect(html).toContain(DANA);
     expect(html).toContain("Approvals.Decide");
     expect(html).toContain("carries no authority");
+    expect(html).toContain("the buttons");
+  });
+
+  test("signed out, the buttons are replaced by a sign-in that returns here", async () => {
+    const html = await render(signedOut);
+
+    expect(html).toContain("Sign in to decide");
+    expect(html).toContain(signedOut.state === "signed-out" ? signedOut.signInUrl.replace(/&/g, "&amp;") : "");
+    // A distinct affordance, not a greyed-out Approve: a disabled Approve on a
+    // governance page reads as a refusal nothing made.
+    expect(html).not.toContain("the buttons");
+    expect(html).not.toContain("disabled");
+  });
+
+  test("there is no way to choose who to act as", async () => {
+    const html = await render(signedIn(RILEY));
+
+    expect(html).not.toContain("Act as");
+    expect(html).not.toContain("<select");
+    expect(html).not.toContain("<option");
+    // The switcher listed every roster member as an option. Bob is in no field
+    // of this request, so his address being gone is the switcher being gone —
+    // unlike Michael's, which `RequestDetails` still prints under "Also
+    // sufficient, not asked", because who was deliberately *not* bothered is
+    // part of what routing is demonstrating.
+    expect(html).not.toContain(SAM);
+    expect(html).toContain(MORGAN);
+  });
+
+  test("signed out shows the same fields as signed in, no more and no less", async () => {
+    // Held by construction — `RequestDetails` is rendered once, before the
+    // branch — and asserted so it stays that way. Whether the link should
+    // disclose this to an unauthenticated opener at all is a separate question
+    // and not one this page answers differently per viewer.
+    const fields = (html: string) => html.match(/<div style="width:11rem[^>]*>([^<]*)</g) ?? [];
+
+    const inside = await render(signedIn(RILEY));
+    const outside = await render(signedOut);
+
+    expect(fields(outside)).toEqual(fields(inside));
+    expect(fields(inside).length).toBeGreaterThan(5);
+    for (const shown of [DANA, "approve_loan", "LN-2291", "$95,000", "Eleven years in business"]) {
+      expect(outside).toContain(shown);
+      expect(inside).toContain(shown);
+    }
   });
 });

@@ -1,8 +1,7 @@
 "use client";
 
 /**
- * The interactive half of the approval page: who you are acting as, and the
- * two buttons.
+ * The interactive half of the approval page: the two buttons.
  *
  * A client component only because the result of pressing a button has to
  * appear without the message travelling through the URL — a `CHECK_FAILED`
@@ -10,7 +9,16 @@
  * make it forgeable by anyone who can edit an address bar. `useActionState`
  * keeps it server-produced.
  *
- * Both server actions arrive as props. Nothing here talks to Arcade or to the
+ * **There is no "Act as" control here any more (#180).** It used to sit
+ * directly above these buttons, and it was the last persona switcher in the
+ * demo, on the one page where identity is load-bearing. Who the call is made
+ * as is now the sealed session's answer and is decided on the server, so
+ * nothing in the browser — this component included — has any say in it. That is
+ * also why this component no longer takes an `actingAs`: it has no use for a
+ * name it cannot influence, and a copy of one is a copy that can disagree with
+ * the server.
+ *
+ * The server action arrives as a prop. Nothing here talks to Arcade or to the
  * control plane; the browser cannot reach either, and it should not be able to.
  */
 import { useActionState } from "react";
@@ -19,57 +27,16 @@ import { IDLE, type DecideResult } from "../../../lib/decide.ts";
 import { Outcome, pageStyles } from "./view.tsx";
 
 export interface ControlsProps {
-  personas: ReadonlyArray<{ user_id: string; display_name: string; role: string }>;
-  actingAs: string;
   /** Already decided: the buttons are shown, and refused, rather than hidden. */
   settled: boolean;
-  switchPersona: (form: FormData) => Promise<void>;
   decide: (previous: DecideResult, form: FormData) => Promise<DecideResult>;
 }
 
-export function DecideControls({
-  personas,
-  actingAs,
-  settled,
-  switchPersona,
-  decide,
-}: ControlsProps) {
+export function DecideControls({ settled, decide }: ControlsProps) {
   const [result, submit, pending] = useActionState(decide, IDLE);
 
   return (
     <>
-      <form
-        action={switchPersona}
-        style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "1rem" }}
-      >
-        <label htmlFor="persona" style={{ fontSize: "0.875rem", color: "var(--muted)" }}>
-          Act as
-        </label>
-        <select
-          id="persona"
-          name="persona"
-          // Keyed on the persona so a switch remounts the select. `defaultValue`
-          // is honoured at mount only, and this is a client component that
-          // React reconciles rather than remounts when the server re-renders
-          // with a new cookie — so without the key the dropdown keeps saying
-          // "Charlie" while the panel above it says "Acting as Alice".
-          // Two widgets disagreeing about who you are, in the one demo whose
-          // whole point is who you are.
-          key={actingAs}
-          defaultValue={actingAs}
-          style={{ ...pageStyles.button, padding: "0.4rem 0.6rem" }}
-        >
-          {personas.map((persona) => (
-            <option key={persona.user_id} value={persona.user_id}>
-              {persona.display_name} — {persona.role}
-            </option>
-          ))}
-        </select>
-        <button type="submit" style={{ ...pageStyles.button, padding: "0.4rem 0.8rem" }}>
-          Switch
-        </button>
-      </form>
-
       <form action={submit}>
         <label
           htmlFor="note"

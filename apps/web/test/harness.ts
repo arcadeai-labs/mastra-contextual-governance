@@ -39,6 +39,16 @@ const REPO_ROOT = join(HERE, "..", "..", "..");
 export const REPO = REPO_ROOT;
 export const HOOK_SECRET = "hook-secret-for-web-tests";
 export const STORE_TOKEN = "store-token-for-web-tests";
+/**
+ * A real key, because #180 made these suites seal sessions.
+ *
+ * `readWebConfig({})` leaves `sessionSecret` empty and `seal` has no
+ * development fallback on purpose, so a suite that wants to hand the approval
+ * page a signed-in browser has to supply one. Long enough to clear
+ * `sessionSecretProblem`'s 32-character floor — a shorter one is refused, which
+ * is the whole point of that check.
+ */
+export const SESSION_SECRET = "approval-page-suite-session-secret-0123456789";
 
 export const DANA = "alice@bank.example";
 export const SAM = "bob@bank.example";
@@ -53,6 +63,14 @@ export interface Harness {
   read(id: string): Promise<Record<string, unknown> | null>;
   /** Every `/pre` call the stand-in Arcade made, in order. */
   preCalls: Array<{ user_id: string; tool: string }>;
+  /**
+   * `GET /audit` on the real control plane, with the hook secret.
+   *
+   * The rows the hooks wrote, not a reconstruction: #180's claim is that the
+   * audit row names the person who pressed the button, and the only way to say
+   * that honestly is to read the log the control plane actually kept.
+   */
+  audit(filters?: Record<string, string>): Promise<Array<Record<string, unknown>>>;
   stop(): Promise<void>;
 }
 
@@ -79,7 +97,11 @@ export async function startHarness(): Promise<Harness> {
     // `identity-flow.test.ts` and `tracer-bullet.test.ts` build their own
     // configurations for those. Read from an empty environment rather than
     // written out, so a new field cannot be forgotten here.
-    identity: readWebConfig({}).identity,
+    // A real `SESSION_SECRET`, so a test can seal the session the approval page
+    // now takes its identity from (#180). Everything else comes from an empty
+    // environment rather than being written out, so a new field cannot be
+    // forgotten here.
+    identity: { ...readWebConfig({}).identity, sessionSecret: SESSION_SECRET },
     agent: readWebConfig({}).agent,
   };
 
@@ -98,6 +120,15 @@ export async function startHarness(): Promise<Harness> {
       const response = await store("POST", "/approvals", { ...ESCALATION, ...overrides });
       if (response.status !== 201) throw new Error(`escalate: ${response.status} ${await response.text()}`);
       return ((await response.json()) as { request: Record<string, unknown> }).request;
+    },
+    async audit(filters = {}) {
+      const query = new URLSearchParams(filters).toString();
+      const response = await fetch(`http://${hooks.host}/audit${query ? `?${query}` : ""}`, {
+        // Arcade's bearer, not the store's — these are the hooks' own rows.
+        headers: { authorization: `Bearer ${HOOK_SECRET}` },
+      });
+      if (!response.ok) throw new Error(`audit: ${response.status} ${await response.text()}`);
+      return ((await response.json()) as { rows: Array<Record<string, unknown>> }).rows;
     },
     async read(id) {
       const response = await store("GET", `/approvals/${id}`);
