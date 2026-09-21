@@ -1373,9 +1373,15 @@ id, the zero `/pre` denials — is mechanical and is measured either way.
 
 ## Driving the two beats locally
 
-Three terminals. No Arcade account, no network, no secrets to set: `apps/hooks`
-and the stand-in both fall back to the same development bearers outside
-production.
+Four terminals. No Arcade account and no network — `apps/hooks` and the stand-in
+both fall back to the same development bearers outside production. Two secrets
+are yours to make, and they are the only ones: a `SESSION_SECRET`, and client
+C's secret, which `apps/idp` prints exactly once.
+
+`apps/idp` is here because deciding is now done **as a named person** — see
+[Who is deciding](#who-is-deciding). The approval link carries no identity, so
+without somewhere to sign in, the page has nobody to press the button as and
+says so.
 
 Pick your own ports — every service reads `PORT` and this worktree owns a block
 of ten. The ports below are examples; substitute yours.
@@ -1396,14 +1402,45 @@ PORT=4402 HOOKS_PUBLIC_HOST=localhost:4401 bun run --cwd apps/web arcade-stand-i
 
 Leave `PORT` off and it binds `:0` and tells you what it got.
 
-**Terminal 3 — the web app**, pointed at the stand-in. `ARCADE_API_KEY` must be
-non-empty; the stand-in ignores the value.
+**Terminal 3 — the identity provider.** Needs its own install
+(`bun install --cwd apps/idp`) — see `DESIGN.md`. `IDP_OAUTH_CLIENTS=web` mints
+client C; the redirect URI is the web app's callback and must match it exactly.
 
 ```sh
-PORT=4400 HOOKS_PUBLIC_HOST=localhost:4401 \
+PORT=4403 IDP_PUBLIC_URL=http://localhost:4403 \
+  IDP_DB_PATH=/tmp/cg/idp.db IDP_OAUTH_CLIENTS=web \
+  IDP_OAUTH_REDIRECT_URIS_WEB=http://localhost:4400/api/auth/callback \
+  bun apps/idp/src/index.ts
+```
+
+Its boot line names client C's id. The secret it will not print again, so mint
+one now — a spare shell, the same variables, and write down what it prints:
+
+```sh
+IDP_PUBLIC_URL=http://localhost:4403 IDP_DB_PATH=/tmp/cg/idp.db \
+  IDP_OAUTH_CLIENTS=web \
+  IDP_OAUTH_REDIRECT_URIS_WEB=http://localhost:4400/api/auth/callback \
+  bun run --cwd apps/idp oauth-client --client web --rotate
+```
+
+**Terminal 4 — the web app**, pointed at the stand-in and at the IdP.
+`ARCADE_API_KEY` must be non-empty; the stand-in ignores the value.
+`SESSION_SECRET` seals the session cookie and is enforced — at least 32
+characters and 8 distinct ones, no fallback.
+
+```sh
+PORT=4400 PUBLIC_URL=http://localhost:4400 \
+  HOOKS_PUBLIC_HOST=localhost:4401 \
   ARCADE_API_URL=http://localhost:4402 ARCADE_API_KEY=offline \
+  IDP_ISSUER=http://localhost:4403 \
+  IDP_CLIENT_ID=<from above> IDP_CLIENT_SECRET=<from above> \
+  SESSION_SECRET=$(openssl rand -hex 32) \
   bun run --cwd apps/web dev
 ```
+
+`curl -s localhost:4400/health` should say `"signin":"configured"`. It will also
+say `"status":"degraded"` — the gateway and the agent are not configured here
+and do not need to be; neither beat below goes near them.
 
 Now create the escalation act 2 produces — normally `tools/approvals` writes
 this after the pre-hook refuses Alice, and here you write it directly:
@@ -1420,20 +1457,44 @@ curl -s -X POST http://localhost:4401/approvals \
        "required_clearance":95000}'
 ```
 
-It answers with the record; take the `id` and open
-`http://localhost:4400/approvals/<id>`.
+It answers with the record. Run it **twice** and keep both ids: each beat
+below needs its own request, because the first one ends up decided.
 
-**Beat one — Charlie approves.** The page opens acting as Charlie, the routed
-approver. Press **Approve**. You get *Decision recorded*, the status chip turns
-`approved`, and `governance.db` now holds a grant — `active`, single use,
-pinned to `LN-2291`, ceiling 95,000.
+Both beats are the same three steps — open the link, sign in, press the
+button — and they differ only in who signs in. **Use a separate browser profile
+per persona.** One persona per browser is the design, not a limitation, and here
+it is also the only way to be two people at once.
 
-**Beat two — Alice is refused.** Create a second request with the same curl.
-On its page, switch **Act as** to *Alice* and press **Approve**. You get
-the `CHECK_FAILED` screen carrying the pre-hook's own words —
+```
+http://localhost:4400/approvals/<first id>
+```
+
+The page opens **signed out**, whoever you are: the whole request is legible —
+Alice, `LN-2291`, $95,000, routed to Charlie — and where the buttons would be
+there is **Sign in to decide**. Reading is not deciding.
+
+**Beat one — Charlie approves.** In one profile, open the first id, press
+**Sign in to decide**, and type Charlie's address and the fixture password from
+`apps/idp/src/fixtures/people.json` into cg-idp's own login form. The first time
+a person uses client C, cg-idp asks *"Allow access?"* once — press **Allow**.
+You land back on the same request, the panel now reads *Signed in as Charlie —
+vp_credit*, and the buttons are there. Press **Approve**. You get *Decision
+recorded*, `Recorded as approved by charlie@bank.example`, the status chip turns
+`approved`, and `governance.db` now holds a grant — `active`, single use, pinned
+to `LN-2291`, ceiling 95,000.
+
+**Beat two — Alice is refused.** In a **second, fresh** profile, open the second
+id and do exactly the same thing as Alice. The page reads *Signed in as Alice —
+loan_officer*, and Approve is not disabled, greyed out or hidden: she presses it
+like anyone else, and the control plane answers. You get the `CHECK_FAILED`
+screen carrying the pre-hook's own words —
 *"Alice raised this approval request, and separation of duties means the
 person who asks cannot also be the person who approves"* — plus the `[ref evt_…]`
 token that joins it to the audit row. The request stays `pending`.
+
+Nothing in the browser chose Alice for that. She typed her own password, and the
+sealed session is the only thing the page reads — which is why this beat is now
+worth watching rather than a switcher being flipped on her behalf.
 
 That refusal is the actual policy in `governance.db` refusing, reached through
 the actual `/pre`. The stand-in cannot answer at all without asking first: see
