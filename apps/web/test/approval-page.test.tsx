@@ -125,6 +125,30 @@ describe("pressing a button", () => {
     expect(await harness.read(request.id)).toMatchObject({ status: "pending", decided_by: null });
   });
 
+  test("the audit row names the requester, and no row names the routed approver", async () => {
+    // The control plane's own log, read back over `/audit`. #180's real cost
+    // was never the loan — it was a row recording Charlie approving a request
+    // Alice raised, at a moment Charlie was not present, which is wrong in a
+    // way indistinguishable from the correct case.
+    await press(DANA, "approved");
+
+    const self = (rows: Array<Record<string, unknown>>) =>
+      rows.filter((row) => JSON.stringify(row).includes("decide-not-by-the-requester"));
+
+    // Filtered by person rather than counted, because this file shares one
+    // `governance.db` across its cases and a bare count would be an assertion
+    // about test order.
+    const hers = self(await harness.audit({ hook: "pre", decision: "deny", user_id: DANA, tool: "Approvals.Decide" }));
+    const his = self(await harness.audit({ hook: "pre", decision: "deny", user_id: RILEY, tool: "Approvals.Decide" }));
+
+    expect(hers.length).toBeGreaterThan(0);
+    expect(hers.every((row) => row.user_id === DANA)).toBe(true);
+    // Charlie is never the subject of a separation-of-duties refusal on a
+    // request Alice raised. He was, before #180 — as the person Alice's click
+    // was attributed to.
+    expect(his).toEqual([]);
+  });
+
   test("a clicker whose clearance does not cover the amount is refused", async () => {
     const result = await press(SAM, "approved");
 
