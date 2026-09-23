@@ -10,6 +10,9 @@ const config: NextConfig = {
   // hydrates. Every browser test in `test/` opens the app that way. Next 15
   // only warned. The production server (`server.js`) ignores this option.
   allowedDevOrigins: ["127.0.0.1"],
+  // The build's type check leaves out `test/`, which the Docker builder cannot
+  // resolve. The reason is in tsconfig.build.json (#190).
+  typescript: { tsconfigPath: "tsconfig.build.json" },
   // The monorepo root, so tracing picks up files linked from packages/.
   outputFileTracingRoot: new URL("../../", import.meta.url).pathname,
   // `ws` by hand, because tracing cannot find it on its own (#92).

@@ -1,0 +1,14 @@
+{
+  // What `next build` type-checks (#190), via `typescript.tsconfigPath` in
+  // next.config.ts. `bun run typecheck` still uses tsconfig.json, which checks
+  // the tests as well.
+  //
+  // Since Next 16 the build checks with the `tsc` CLI over the whole project
+  // its tsconfig selects. Next 15's in-process checker ignored diagnostics in
+  // `*.test.*` files. `apps/web/Dockerfile` copies only this package and
+  // `packages/`, so three tests that import from `../../loan-app/src` and
+  // `../../hooks/src` cannot resolve there, and the image build failed with
+  // TS2307. Leaving `test/` out restores Next 15's scope for the build.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "test"]
+}
