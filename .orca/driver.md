@@ -115,7 +115,8 @@ then acknowledge stale messages so one actionable waiter can block.
    infer it from the prose. Post a `**[driver]**` comment asking for the line,
    label it `needs-human`, and carry on with the rest of the wave. `/orca-slice`
    and `.github/ISSUE_TEMPLATE/slice.md` both emit the line, so this should only
-   ever happen to an issue filed by hand.
+   ever happen to an issue filed by hand. **The PRD is exempt** — it is not a
+   slice, it is never dispatched, and you never edit it.
 3. Dispatch up to four ready slices. Process deliveries, repeat.
 
 ## Escalation — where the line sits
