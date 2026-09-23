@@ -93,20 +93,17 @@ as the wire spells it (#89). No prompt steering is an acceptable fix for either.
     packages/governance-core    Hook framework, policy engine, audit, event bus. Zero loan references.
     packages/policy-schema      Shared zod types for policy, events, hook payloads.
 
-⚠️ **`apps/idp` is not a workspace member and needs its own install.** Better Auth 1.7
-requires zod 4; the root manifest pins every workspace to zod 3 for the Arcade/Mastra path,
-and Bun applies root overrides across the whole workspace while ignoring nested ones. So
-`apps/idp` is excluded from `workspaces`, carries its own `bun.lock`, and a fresh clone needs
-**two** installs:
+**One install, one zod (#187, 2026-09-23).** Every workspace, `apps/idp` included, is on
+zod 4, pinned exactly in the root `overrides`, so a fresh clone needs one `bun install`. The
+old zod 3 pin was precautionary ("check the Arcade SDK first"), but no Arcade TypeScript SDK
+is a dependency. By September it had become a blocker: `@mastra/mcp` 2 sits on
+`@modelcontextprotocol/*` 2, which requires zod 4.2 or later. Before #187, `apps/idp` lived
+outside the workspace with its own lockfile because Better Auth needs zod 4.
 
-    bun install
-    bun install --cwd apps/idp     # or `bun test` fails with "Cannot find module better-auth"
-
-That is a happy accident as much as a workaround — the service a forker deletes is also the
-one depending on nothing in the template, and it carries `"cg": { "external": true }` so
-`policy-schema`'s workspace sweep leaves it alone. But the second install is a real trap: a
-clone-and-run comes up looking broken. It belongs in the README (#24) and in the rehearsal
-runbook (#23).
+`apps/idp` still carries `"cg": { "external": true }`, so `policy-schema`'s workspace sweep
+leaves it alone: it knows people, not policy, and must depend on nothing in the template.
+Better Auth is held at 1.7.2, because 1.7.5 drops `account.issuer` and needs a schema
+migration (#188).
 
 `apps/hooks` and `apps/loan-app` stay separate processes on purpose: one is the governed
 system, the other is the thing governing it. Forking means replacing `apps/loan-app`,
