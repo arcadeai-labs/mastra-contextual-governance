@@ -4,7 +4,6 @@
   "type": "module",
   "workspaces": [
     "apps/*",
-    "!apps/idp",
     "packages/*"
   ],
   "scripts": {
@@ -23,7 +22,7 @@
   },
   "//": [
     "zod is pinned to one exact 4.x version, repo-wide, by the override below. The old 3.x pin (#28) guarded an Arcade TypeScript SDK this repo never depended on, and by #187 it blocked @mastra/mcp 2, whose MCP SDK requires zod ^4.2. One version everywhere is the point: two zods in one process disagree about instanceof.",
-    "apps/idp is excluded from the workspace on purpose: it stands in for the enterprise IdP and Better Auth needs zod 4, which the override below forbids. It has its own lockfile — see apps/idp/package.json.",
+    "apps/idp is a workspace member since #187: with the override at zod 4, Better Auth installs from the root like everything else, so a fresh clone needs one `bun install` and there is one lockfile. It is still the enterprise IdP stand-in a forker deletes, so it depends on nothing in the template and nothing depends on it — apps/idp/test/knows-people-not-loans.test.ts enforces both halves.",
     "dev:idp-stub keeps `--cwd apps/loan-app` because that is where the stub lives, but it binds IDP_PUBLIC_HOST's port, not the PORT in that directory's .env.local — which is the loan API's. See #56 and the comment at the top of apps/loan-app/scripts/dev-idp.ts; apps/loan-app/test/dev-idp-port.test.ts fails if it goes back to PORT."
   ],
   "overrides": {

@@ -265,9 +265,11 @@ notes, re-run both suites.
 an OAuth 2.1 server, owning `idp.db`, serving a login page and a consent page. **You
 delete it and point at your Okta.**
 
-It is deliberately easy to delete. It is not a workspace member, carries its own
-lockfile, declares `"cg": { "external": true }`, and nothing in the template imports
-from it.
+It is deliberately easy to delete. It declares no `@cg/*` dependency, declares
+`"cg": { "external": true }`, and nothing in the template declares or imports it —
+`apps/idp/test/knows-people-not-loans.test.ts` holds both halves. It is a workspace
+member (#187), so deleting it means deleting the directory and running `bun install`
+to drop it from the root lockfile.
 
 Two places reference it and both are configuration rather than code:
 
@@ -553,7 +555,6 @@ bun test packages/governance-core/test/no-app-dependencies.test.ts \
 
 ```sh
 bun install
-bun install --cwd apps/idp          # not optional; see the README
 cp .env.example .env                # then fill it in
 
 bun run typecheck

@@ -42,10 +42,9 @@ function isGoverned(manifest: Manifest): boolean {
 /**
  * A stand-in for a system outside the template — `apps/idp`, the enterprise's
  * identity provider (#36). A forker deletes it and points at their own, so it
- * neither depends on anything under `packages/` nor is depended on. It is not
- * a workspace member either (it needs zod 4, which the root override forbids),
- * but this sweep reads directories rather than the workspace list, so it has
- * to be exempted here by the same kind of flag.
+ * neither depends on anything under `packages/` nor is depended on. It has
+ * been a workspace member since #187, and this sweep reads directories rather
+ * than the workspace list anyway, so it is exempted by the same kind of flag.
  */
 function isExternal(manifest: Manifest): boolean {
   return manifest.cg?.external === true;

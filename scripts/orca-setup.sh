@@ -4,12 +4,13 @@
 # Two jobs:
 #   1. Claim a block of ports no other live worktree holds, and write them to
 #      an untracked .env.local.
-#   2. Install dependencies — BOTH of them. apps/idp is not a workspace member.
+#   2. Install dependencies. One `bun install` at the root covers every
+#      workspace, apps/idp included since #187.
 #
 # Wire it up in the Orca app: Repo settings -> hooks -> setup script:
 #   bash scripts/orca-setup.sh
 # Set the repo's setup policy to wait-for-setup, not start-immediately: an
-# agent that begins before the installs finish runs `bun test` against a
+# agent that begins before the install finishes runs `bun test` against a
 # half-installed tree, gets "Cannot find module 'better-auth'", reads it as a
 # broken repo, and starts fixing what is not wrong.
 #
@@ -151,14 +152,6 @@ write_service_env idp "$IDP"
 if command -v bun >/dev/null 2>&1; then
   echo "orca-setup: bun install"
   bun install
-  # apps/idp is excluded from the root workspace: Better Auth 1.7 needs zod 4
-  # and the root manifest pins zod 3 for the Arcade/Mastra path. Bun applies
-  # root overrides workspace-wide and ignores nested ones, so it installs on
-  # its own. Skip this and `bun test` dies on "Cannot find module 'better-auth'".
-  if [ -f "$WORKTREE/apps/idp/package.json" ]; then
-    echo "orca-setup: bun install --cwd apps/idp"
-    bun install --cwd "$WORKTREE/apps/idp"
-  fi
 fi
 
 echo "orca-setup: ready — ports $BASE-$((BASE + BLOCK - 1)) (web $WEB, hooks $HOOKS, loan-app $LOAN, idp $IDP)"

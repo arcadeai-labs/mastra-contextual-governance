@@ -148,16 +148,9 @@ Requires [Bun](https://bun.sh) 1.3.14, and [uv](https://docs.astral.sh/uv/) for 
 Python toolkits.
 
 ```sh
-bun install
-bun install --cwd apps/idp   # ⚠️ not optional — see below
+bun install                  # one install, every workspace — apps/idp included
 cp .env.example .env         # then fill it in; every variable is documented in place
 ```
-
-> ⚠️ **`bun install` at the root is not enough.** `apps/idp` is outside the workspace:
-> Better Auth 1.7 needs zod 4 and the root manifest pins every workspace to zod 3 for the
-> Arcade and Mastra path. Skip the second install and `bun test` fails with
-> `Cannot find module 'better-auth'` and the repo looks broken on a fresh clone. It is
-> not.
 
 ```sh
 bun run typecheck        # tsc --noEmit across every workspace

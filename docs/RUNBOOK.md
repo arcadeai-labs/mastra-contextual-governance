@@ -25,12 +25,10 @@ arrive on stage with a system that looks fine and is not:
 ## 0. Before anything, once per machine
 
     bun install
-    bun install --cwd apps/idp     # not optional
 
-`apps/idp` is outside the workspace on purpose — Better Auth needs zod 4 and the root
-manifest pins zod 3 for the Arcade and Mastra path — so a fresh clone needs **two**
-installs. Skip the second and `bun test` fails with `Cannot find module 'better-auth'`
-and the repo looks broken. It is not. `DESIGN.md` has the full argument.
+One install at the root covers every workspace, `apps/idp` included. Until #187 the
+IdP sat outside the workspace and needed a second `bun install --cwd apps/idp`; that
+step is gone, and a leftover `apps/idp/bun.lock` in an old checkout is stale.
 
 Addresses and secrets: `.env.example` documents every variable. The four Render
 hostnames are **not in git** and cannot be derived — `onrender.com` subdomains are

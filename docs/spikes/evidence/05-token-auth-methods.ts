@@ -21,10 +21,9 @@
  * `apps/idp/src/fixtures/people.json`, and deletes all of it afterwards. Nothing
  * it touches is live and nothing it needs is secret.
  *
- * The one prerequisite is `apps/idp`'s own dependencies: it is not a workspace
- * member (Better Auth needs zod 4, the root manifest pins zod 3), so a bare
- * `bun install` at the root is not enough — `bun install --cwd apps/idp`. This
- * script says so rather than failing with a module-resolution error.
+ * The one prerequisite is `apps/idp`'s dependencies, which the root
+ * `bun install` provides since #187. This script says so rather than failing
+ * with a module-resolution error.
  *
  * Why a live IdP cannot answer this: it validates the authorization code **before**
  * the client, so a probe with a junk code returns `invalid_grant / invalid code`
@@ -51,8 +50,7 @@ async function main() {
   if (!(await Bun.file(join(IDP_DIR, "node_modules", "better-auth", "package.json")).exists())) {
     console.error(
       "apps/idp's dependencies are not installed.\n" +
-        "  It is not a workspace member — Better Auth needs zod 4 and the root manifest pins zod 3 —\n" +
-        "  so a root `bun install` does not reach it. Run:  bun install --cwd apps/idp",
+        "  Run `bun install` at the repo root; it covers apps/idp.",
     );
     process.exit(2);
   }

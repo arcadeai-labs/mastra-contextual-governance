@@ -25,17 +25,11 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      # apps/idp is not a workspace member — it stands in for the enterprise
-      # IdP and needs zod 4, which the root override forbids — so it installs
-      # and typechecks on its own. `bun test` below still finds its tests.
-      - name: Install apps/idp
-        run: bun install --frozen-lockfile --cwd apps/idp
-
+      # One install covers every workspace. apps/idp joined the workspace in
+      # #187, so its separate install and typecheck steps are gone: the root
+      # install reaches it and `bun run typecheck` filters over it.
       - name: Typecheck
         run: bun run typecheck
-
-      - name: Typecheck apps/idp
-        run: bun run --cwd apps/idp typecheck
 
       # The hook contract is generated from a vendored copy of Arcade's OpenAPI
       # document. `bun test` catches a stale committed file too, but this step
