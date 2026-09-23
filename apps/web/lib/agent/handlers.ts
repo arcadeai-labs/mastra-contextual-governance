@@ -94,7 +94,7 @@ import { serverFault } from "./fault.ts";
 import { CHAT_PAGE, liveGatewayToken, refreshedGatewayToken, GATEWAY_START_PATH,
   SIGNIN_PATH } from "../identity/handlers.ts";
 import { mcpUrl, probeGatewayToken } from "../identity/gateway.ts";
-import { gatewayClient, governedToolset, SERVER_KEY } from "./tools.ts";
+import { gatewayClient, governedToolset } from "./tools.ts";
 import { createNativeElicitationBridge } from "./native-elicitation.ts";
 import { gatewayTokenRejected, readSession, writeSession, type Session } from "../identity/session.ts";
 import { runTurn, type Streamable } from "./run.ts";
@@ -263,8 +263,8 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
       gatewayId: config.identity.gatewayId,
       token: bearer,
       timeoutMs: MCP_TIMEOUT_MS,
+      inputRequests: nativeElicitation.handle,
     });
-    await client.elicitation.onRequest(SERVER_KEY, nativeElicitation.handle);
 
     // One round trip, before the toolset, to find out whether the gateway still
     // takes this bearer — because `listToolsets()` will not say (#94, and
@@ -315,8 +315,8 @@ export async function chat(request: Request, options: ChatOptions = {}): Promise
         gatewayId: config.identity.gatewayId,
         token: bearer,
         timeoutMs: MCP_TIMEOUT_MS,
+        inputRequests: nativeElicitation.handle,
       });
-      await client.elicitation.onRequest(SERVER_KEY, nativeElicitation.handle);
       probe = await probeGatewayToken(gatewayUrl, bearer);
       if (probe.outcome === "rejected") {
         await client.disconnect().catch(() => undefined);

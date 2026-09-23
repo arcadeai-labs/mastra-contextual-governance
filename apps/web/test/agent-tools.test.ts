@@ -283,6 +283,72 @@ describe("native MCP URL elicitation", () => {
     }
   });
 
+  test("the gateway sees the legacy handshake: initialize, and no server/discover probe", async () => {
+    // `@mastra/mcp` 2 speaks MCP 2026-07-28 and, unless the revision is pinned,
+    // opens with a `server/discover` probe (#187). `gatewayClient` pins
+    // `legacy` so Arcade's gateway sees what 1.x sent. The control is an
+    // unpinned client against the same stub: without it, "no probe" would be
+    // true of a library that never probes and prove nothing about the pin.
+    const methods = (seen: string[]) =>
+      Bun.serve({
+        port: 0,
+        async fetch(request) {
+          if (request.method !== "POST") return new Response(null, { status: 405 });
+          const message = (await request.json()) as { id?: unknown; method?: string };
+          seen.push(message.method ?? "?");
+          if (message.method?.startsWith("notifications/")) return new Response(null, { status: 202 });
+          if (message.method === "initialize") {
+            return Response.json({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: {
+                protocolVersion: "2025-06-18",
+                capabilities: { tools: { listChanged: false } },
+                serverInfo: { name: "handshake-test", version: "0.1.0" },
+              },
+            });
+          }
+          if (message.method === "tools/list") {
+            return Response.json({ jsonrpc: "2.0", id: message.id, result: { tools: [] } });
+          }
+          return Response.json({
+            jsonrpc: "2.0",
+            id: message.id ?? null,
+            error: { code: -32601, message: "Method not found" },
+          });
+        },
+      });
+
+    const pinnedSeen: string[] = [];
+    const pinnedGateway = methods(pinnedSeen);
+    const pinned = (await import("../lib/agent/tools.ts")).gatewayClient({
+      arcadeApiUrl: `http://localhost:${pinnedGateway.port}`,
+      gatewayId: "handshake-test",
+      token: "synthetic-token",
+    });
+    const controlSeen: string[] = [];
+    const controlGateway = methods(controlSeen);
+    const { MCPClient } = await import("@mastra/mcp");
+    const control = new MCPClient({
+      id: `control-${crypto.randomUUID()}`,
+      servers: { arcade: { url: new URL(`http://localhost:${controlGateway.port}/mcp/handshake-test`) } },
+    });
+    try {
+      await pinned.listToolsetsWithErrors();
+      await control.listToolsetsWithErrors();
+
+      expect(pinnedSeen[0]).toBe("initialize");
+      expect(pinnedSeen).toContain("tools/list");
+      expect(pinnedSeen).not.toContain("server/discover");
+      expect(controlSeen).toContain("server/discover");
+    } finally {
+      await pinned.disconnect().catch(() => undefined);
+      await control.disconnect().catch(() => undefined);
+      pinnedGateway.stop(true);
+      controlGateway.stop(true);
+    }
+  });
+
   test("a structured -32042 failure becomes an authorization card, not a fault", async () => {
     const events: ChatEvent[] = [];
     const agent: Streamable = {

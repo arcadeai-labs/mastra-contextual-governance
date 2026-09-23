@@ -9,7 +9,8 @@
  * token was not, and one click on `/api/arcade/start` was the whole fix.
  *
  * The cause is measured in the first `describe` below and it is not ours:
- * `@mastra/mcp` 1.17.3 does not throw when a server refuses the bearer.
+ * `@mastra/mcp` 1.17.3 does not throw when a server refuses the bearer, and
+ * neither does 2.0.0 (#187).
  * `listToolsets()` **resolves**, with `{}`, because the connection failure is
  * logged per server and dropped. So "your token is dead" and "your toolkit name
  * is wrong" arrive as the same value, and one of the two messages gets printed
@@ -246,16 +247,18 @@ describe("the cause, measured rather than assumed", () => {
       refusing.stop();
     }
 
-    // …but when the streamable POST fails any other way the client falls back
-    // to SSE, no `UnauthorizedError` is ever raised, and the auth state stays
-    // `undefined`. This shape is the one the live cg-web log shows, down to
-    // "Could not connect to server with any available HTTP transport".
+    // …but when the streamable POST fails any other way, no `UnauthorizedError`
+    // is ever raised and the auth state stays `undefined`. This shape is the one
+    // the live cg-web log showed, down to "Could not connect to server with any
+    // available HTTP transport". Under `@mastra/mcp` 1.x the client then fell
+    // back to SSE with a `GET`; 2.0 removed that transport (#187), so the POST
+    // is the only request and its failure is the whole answer.
     const dead = startGateway("405-everywhere");
     const b = gatewayClient({ arcadeApiUrl: dead.url, gatewayId: GATEWAY_ID, token: TOKEN, timeoutMs: 5_000 });
     try {
       await b.listToolsets();
       expect(b.getServerAuthState(SERVER_KEY)).toBeUndefined();
-      expect(dead.seen).toContain(`GET /mcp/${GATEWAY_ID}`);
+      expect(new Set(dead.seen)).toEqual(new Set([`POST /mcp/${GATEWAY_ID}`]));
     } finally {
       await b.disconnect().catch(() => undefined);
       dead.stop();

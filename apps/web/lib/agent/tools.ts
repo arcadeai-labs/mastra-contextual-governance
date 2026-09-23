@@ -25,6 +25,7 @@
 import { MCPClient } from "@mastra/mcp";
 
 import { mcpUrl } from "../identity/gateway.ts";
+import type { NativeElicitationBridge } from "./native-elicitation.ts";
 
 /** The server key this client files the gateway under. One server, one key. */
 export const SERVER_KEY = "arcade";
@@ -95,7 +96,16 @@ export interface GatewayToolsOptions {
   token: string;
   /** Milliseconds for a single MCP request. */
   timeoutMs?: number;
+  /**
+   * Where a native URL elicitation goes: the request-scoped bridge's `handle`.
+   * Absent for a page-load listing, which has no turn to pause, and then every
+   * request is cancelled — see {@link gatewayClient}.
+   */
+  inputRequests?: NativeElicitationBridge["handle"];
 }
+
+/** A page-load listing's answer to an elicitation: nothing is accepted implicitly. */
+const cancelElicitation: NativeElicitationBridge["handle"] = async () => ({ action: "cancel" });
 
 /**
  * A client for one request, carrying one persona's token.
@@ -106,6 +116,24 @@ export interface GatewayToolsOptions {
  * persona to ask for tools in a process would get the first persona's
  * connection — the exact "collapses every tool call onto whoever signed in
  * last" failure #75 named, arriving by a different route.
+ *
+ * ## What `@mastra/mcp` 2 changed here (#187)
+ *
+ * - **The elicitation handler is configuration.** 1.x registered it after
+ *   construction with `client.elicitation.onRequest()`; 2.0 removed that and
+ *   takes `inputRequests` in the server config instead, and it refuses to
+ *   construct a client that advertises `elicitation` without one. So the
+ *   bridge comes in through {@link GatewayToolsOptions.inputRequests}, and a
+ *   listing with no bridge gets a handler that cancels. The wire capability is
+ *   `{ elicitation: { url: {} } }` on every client exactly as before; the only
+ *   difference is that a page-load listing now answers an elicitation with
+ *   `cancel` where 1.x's SDK answered `-32601` for want of a handler.
+ * - **The protocol revision is pinned to `legacy`.** 2.0 speaks MCP 2026-07-28
+ *   and, unpinned, probes every server with `server/discover` before falling
+ *   back. Pinned, the gateway sees the `initialize` handshake 1.x sent and no
+ *   new request. Revisit when Arcade's gateway advertises 2026-07-28.
+ * - **No HTTP+SSE fallback.** A streamable POST that fails is the failure; 1.x
+ *   then tried a `GET`. `test/gateway-token-rejected.test.tsx` records both.
  */
 export function gatewayClient(options: GatewayToolsOptions): MCPClient {
   return new MCPClient({
@@ -116,9 +144,11 @@ export function gatewayClient(options: GatewayToolsOptions): MCPClient {
         // The static auth provider. `token()` is called before every request
         // and returns what this browser's session holds.
         authProvider: { token: async () => options.token },
-        // MCP URL elicitation is client-advertised. The request-scoped handler
-        // is registered by the chat route before this client connects.
+        // MCP URL elicitation is client-advertised, and 2.0 accepts the
+        // capability only alongside the handler that answers it.
         capabilities: { elicitation: { url: {} } },
+        inputRequests: ({ params }) => (options.inputRequests ?? cancelElicitation)(params),
+        protocolVersion: "legacy",
         // Default, stated: a spec-compliant `isError: true` result is raised on
         // Mastra's failed-tool-call path carrying the server's text, which is
         // how the hook's remediation instruction reaches the model at all.

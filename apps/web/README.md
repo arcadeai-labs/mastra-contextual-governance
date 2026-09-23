@@ -1015,7 +1015,9 @@ way in the wrong direction.
 
 ### A rejected gateway token, and why it is asked about first (#94)
 
-`@mastra/mcp` 1.17.3 does **not** throw when the gateway refuses the bearer.
+`@mastra/mcp` 1.17.3 does **not** throw when the gateway refuses the bearer, and 2.0.0
+does not either (#187; the first test in `test/gateway-token-rejected.test.tsx` still
+pins it).
 `listToolsets()` resolves, with `{}`, because the connection failure is logged
 per server and dropped — so a dead token and a mistyped `ARCADE_LOAN_TOOLKIT`
 arrive as the same value. Live on 2026-09-14 that produced *"The gateway
