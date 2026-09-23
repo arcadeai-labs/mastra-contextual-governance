@@ -170,16 +170,17 @@ describe("consumable without a build step", () => {
   });
 });
 
-describe("Zod 3", () => {
-  it("resolves zod 3, not 4", () => {
-    // Zod 4 changes internals the Arcade/Mastra path does not support yet, so
-    // the root manifest overrides every transitive copy to one 3.x version.
-    expect(zodVersion.startsWith("3.")).toBe(true);
+describe("Zod 4", () => {
+  it("resolves zod 4", () => {
+    // The zod 3 pin blocked `@mastra/mcp` 2, whose MCP SDK requires zod ^4.2,
+    // and kept Better Auth out of the workspace (#187). The root manifest now
+    // overrides every transitive copy to one exact 4.x version.
+    expect(zodVersion.startsWith("4.")).toBe(true);
   });
 
   it("pins the same zod version the rest of the repo pins", () => {
     const pinned = readJson(join(REPO_ROOT, "package.json")).overrides?.zod;
-    expect(pinned).toMatch(/^3\./);
+    expect(pinned).toMatch(/^4\.\d+\.\d+$/);
     expect(readJson(join(PACKAGE_ROOT, "package.json")).dependencies?.zod).toBe(pinned);
   });
 });

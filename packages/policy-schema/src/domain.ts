@@ -15,7 +15,7 @@
  *
  * Every object here is `.strict()` — the opposite of the generated hook
  * contract next door, and for the opposite reason. Those payloads are Arcade's
- * and may grow; these are ours and may not. Zod 3 strips unknown keys by
+ * and may grow; these are ours and may not. Zod strips unknown keys by
  * default, so a misspelled field in a policy row would parse cleanly and
  * evaluate as though it had never been written: a rule narrower than intended
  * becomes a blanket rule, and a constraint someone thought they had applied is
@@ -48,7 +48,7 @@ export const Timestamp = z.string().datetime();
 export type Timestamp = z.infer<typeof Timestamp>;
 
 /** A tool input map, exactly as it arrives on a hook payload. */
-export const Inputs = z.record(z.unknown());
+export const Inputs = z.record(z.string(), z.unknown());
 export type Inputs = z.infer<typeof Inputs>;
 
 /**
@@ -93,7 +93,7 @@ export const Subject = z
      */
     clearance: z.number().nonnegative(),
     /** Extension point for forkers: any additional attributes rules can match on. */
-    attributes: z.record(z.unknown()).default({}),
+    attributes: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();
 export type Subject = z.infer<typeof Subject>;

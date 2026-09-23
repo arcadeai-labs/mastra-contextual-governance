@@ -78,7 +78,7 @@ const seedSubjectSchema = z
 const fixtureSchema = z
   .object({
     "//": z.array(z.string()).optional(),
-    catalogue: z.record(z.record(z.array(z.string()))),
+    catalogue: z.record(z.string(), z.record(z.string(), z.array(z.string()))),
     subjects: z.array(seedSubjectSchema).min(1),
     policy_rules: z.array(z.unknown()),
     output_rules: z.array(z.unknown()),

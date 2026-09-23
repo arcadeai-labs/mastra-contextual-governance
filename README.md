@@ -701,10 +701,10 @@ alone (#123).
 
 ## Two things that will bite you
 
-**Zod is pinned to 3.25.76.** Zod 4 changes internals the Arcade/Mastra path does not
-support yet, so the root manifest carries an `overrides` entry holding every workspace to
-the same 3.x. Do not bump it without checking the Arcade SDK first. This pin is also why
-`apps/idp` is outside the workspace.
+**Zod is pinned to 4.6.5.** The root manifest carries an `overrides` entry holding every
+workspace, and every transitive copy, to that one exact version, so `bun pm ls --all` shows
+a single zod. Bump it in the override and in each workspace's `dependencies` together;
+`packages/policy-schema/test/consumable.test.ts` fails if they disagree.
 
 **`packages/governance-core` must not depend on any app.** That boundary is what makes
 this template forkable, and it is enforced by a test rather than a convention:

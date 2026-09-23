@@ -24,7 +24,7 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "ws": "^8.21.0",
-    "zod": "3.25.76"
+    "zod": "4.6.5"
   },
   "//gc": "`@cg/governance-core` is a devDependency, not a dependency: nothing the deployed service renders or routes imports it. The one importer is `scripts/gateway-stand-in.ts`, a local fixture a forker deletes, which needs #9's `routeApproval` — the same module `tools/approvals` is checked against — so the offline run routes an escalation by the real rule rather than by a second copy of it. A dependency edge from the governed UI to the control plane's engine is exactly what this repo keeps refusing; a dev-only edge from a stand-in is not that.",
   "devDependencies": {

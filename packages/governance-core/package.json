@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@cg/policy-schema": "workspace:*",
-    "zod": "3.25.76"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",

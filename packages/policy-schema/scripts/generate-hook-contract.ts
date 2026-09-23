@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Generates `src/generated/hook-contract.ts` — Zod 3 schemas for Arcade's hook
+ * Generates `src/generated/hook-contract.ts` — Zod schemas for Arcade's hook
  * webhook contract — from the vendored OpenAPI document in `vendor/`.
  *
  * Why generate rather than hand-write: this is somebody else's contract. A
@@ -75,7 +75,7 @@ function refName(ref: string, pointer: string): string {
  * `.passthrough()` on every object, deliberately.
  *
  * These schemas sit on the boundary with a beta contract that Arcade extends
- * without asking us. Zod 3 strips unknown keys by default, which would mean a
+ * without asking us. Zod strips unknown keys by default, which would mean a
  * field Arcade adds is dropped between `parse()` and the audit log — data loss
  * that looks like nothing at all. Tolerating unknown keys is the documented
  * posture for a consumer of someone else's evolving payload.
@@ -124,9 +124,12 @@ function objectExpression(
   if (properties.length === 0) {
     // A free-form map: `additionalProperties: true` (or absent) means unknown
     // values, `additionalProperties: {schema}` constrains them.
-    if (additional === undefined || additional === true) return "z.record(z.unknown())";
+    // Zod 4 takes the key schema explicitly; JSON object keys are always strings.
+    if (additional === undefined || additional === true) {
+      return "z.record(z.string(), z.unknown())";
+    }
     if (additional === false) return "z.object({}).strict()";
-    return `z.record(${expressionFor(additional, `${pointer}/additionalProperties`, indent)})`;
+    return `z.record(z.string(), ${expressionFor(additional, `${pointer}/additionalProperties`, indent)})`;
   }
 
   if (additional !== undefined) {

@@ -1,6 +1,6 @@
 # @cg/policy-schema
 
-The frozen contract every other slice builds against. Zod 3 schemas, consumed as
+The frozen contract every other slice builds against. Zod 4 schemas, consumed as
 TypeScript source — no build step.
 
 ```ts
@@ -49,7 +49,7 @@ See `vendor/README.md` for the pin and how to move it.
 ## Five choices worth knowing about
 
 **Generated objects are `.passthrough()`; ours are `.strict()`.** Opposite settings, opposite
-reasons. Arcade's payloads may grow, and Zod 3 strips unknown keys by default — a new field
+reasons. Arcade's payloads may grow, and Zod strips unknown keys by default — a new field
 would vanish between `parse()` and the audit log, invisibly. Our policy rows may not grow: a
 misspelled field there would parse cleanly and evaluate as though it had never been written,
 turning a rule narrower than intended into a blanket rule. Strict makes that a parse error at

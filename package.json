@@ -22,11 +22,11 @@
     "typescript": "^5.9.2"
   },
   "//": [
-    "zod is pinned to 3.x on purpose — see DESIGN.md and .env.example. Zod 4 changes internals that the Arcade/Mastra path does not support yet.",
+    "zod is pinned to one exact 4.x version, repo-wide, by the override below. The old 3.x pin (#28) guarded an Arcade TypeScript SDK this repo never depended on, and by #187 it blocked @mastra/mcp 2, whose MCP SDK requires zod ^4.2. One version everywhere is the point: two zods in one process disagree about instanceof.",
     "apps/idp is excluded from the workspace on purpose: it stands in for the enterprise IdP and Better Auth needs zod 4, which the override below forbids. It has its own lockfile — see apps/idp/package.json.",
     "dev:idp-stub keeps `--cwd apps/loan-app` because that is where the stub lives, but it binds IDP_PUBLIC_HOST's port, not the PORT in that directory's .env.local — which is the loan API's. See #56 and the comment at the top of apps/loan-app/scripts/dev-idp.ts; apps/loan-app/test/dev-idp-port.test.ts fails if it goes back to PORT."
   ],
   "overrides": {
-    "zod": "3.25.76"
+    "zod": "4.6.5"
   }
 }

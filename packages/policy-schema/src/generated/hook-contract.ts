@@ -70,7 +70,7 @@ export const ToolVersionInfoMetadata = z
     classification: ToolClassification.optional(),
     behavior: ToolBehavior.optional(),
     /** Arbitrary additional metadata (e.g., {"IdP": "entra_id"}) */
-    extras: z.record(z.unknown()).optional(),
+    extras: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 export type ToolVersionInfoMetadata = z.infer<typeof ToolVersionInfoMetadata>;
@@ -95,9 +95,9 @@ export const OAuth2Details = z
     /** OAuth scopes (always available from token response) */
     scopes: z.array(z.string()).optional(),
     /** Access token claims (only present when token is a JWT; absent for opaque tokens) */
-    at: z.record(z.unknown()).optional(),
+    at: z.record(z.string(), z.unknown()).optional(),
     /** User information from oauth2 provider */
-    user_info: z.record(z.unknown()).optional(),
+    user_info: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 export type OAuth2Details = z.infer<typeof OAuth2Details>;
@@ -119,7 +119,7 @@ export const ToolContext = z
     /** Required secrets (key only, no values) */
     secrets: z.array(z.string()).optional(),
     /** Arbitrary metadata from tool */
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
     /** User ID for access checks */
     user_id: z.string().optional(),
   })
@@ -133,7 +133,7 @@ export const PreHookRequest = z
     execution_id: z.string(),
     tool: ToolInfo,
     /** Tool inputs (name -> value) */
-    inputs: z.record(z.unknown()),
+    inputs: z.record(z.string(), z.unknown()),
     context: ToolContext,
   })
   .passthrough();
@@ -143,9 +143,9 @@ export type PreHookRequest = z.infer<typeof PreHookRequest>;
 export const PreHookOverride = z
   .object({
     /** Override tool inputs */
-    inputs: z.record(z.unknown()).optional(),
+    inputs: z.record(z.string(), z.unknown()).optional(),
     /** Override secrets */
-    secrets: z.array(z.record(z.string())).optional(),
+    secrets: z.array(z.record(z.string(), z.string())).optional(),
   })
   .passthrough();
 export type PreHookOverride = z.infer<typeof PreHookOverride>;
@@ -172,7 +172,7 @@ export const PostHookRequest = z
     execution_id: z.string(),
     tool: ToolInfo,
     /** Tool inputs (name -> value) */
-    inputs: z.record(z.unknown()).optional(),
+    inputs: z.record(z.string(), z.unknown()).optional(),
     /** Whether the tool succeeded */
     success: z.boolean().optional(),
     /** The tool's output value (any JSON type — string, number, object, array, etc.) */
@@ -261,13 +261,13 @@ export const ToolkitInfo = z
      * Map of tool name to array of tool version info (there may be multiple versions
      * of tools)
      */
-    tools: z.record(z.array(ToolVersionInfo)).optional(),
+    tools: z.record(z.string(), z.array(ToolVersionInfo)).optional(),
   })
   .passthrough();
 export type ToolkitInfo = z.infer<typeof ToolkitInfo>;
 
 /** Map of a group of tools */
-export const Toolkits = z.record(ToolkitInfo);
+export const Toolkits = z.record(z.string(), ToolkitInfo);
 export type Toolkits = z.infer<typeof Toolkits>;
 
 /** Access-hook request from engine to hook server */
