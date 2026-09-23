@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "The loan tools — search_loans, get_loan, approve_loan, deny_loan — as stateless clients of apps/loan-app's HTTP API."
 requires-python = ">=3.11"
 dependencies = [
-    "arcade-mcp-server>=1.28.0,<2.0.0",
+    "arcade-mcp-server>=1.32.0,<2.0.0",
     "httpx>=0.28.0,<1.0.0",
 ]
 

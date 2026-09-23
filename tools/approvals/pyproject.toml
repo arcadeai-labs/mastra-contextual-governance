@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "The human-in-the-loop toolkit — request_approval and decide — routing deterministically and posting Slack Block Kit as the requester."
 requires-python = ">=3.11"
 dependencies = [
-    "arcade-mcp-server>=1.28.0,<2.0.0",
+    "arcade-mcp-server>=1.32.0,<2.0.0",
     "httpx>=0.28.0,<1.0.0",
 ]
 
