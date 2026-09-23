@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
-    "typescript": "^5.9.2"
+    "typescript": "^7.0.2"
   },
   "//": [
     "zod is pinned to one exact 4.x version, repo-wide, by the override below. The old 3.x pin (#28) guarded an Arcade TypeScript SDK this repo never depended on, and by #187 it blocked @mastra/mcp 2, whose MCP SDK requires zod ^4.2. One version everywhere is the point: two zods in one process disagree about instanceof.",
