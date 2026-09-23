@@ -9,7 +9,7 @@ dist/
 build/
 *.tsbuildinfo
 
-# env
+# env — per-worktree ports, written by scripts/orca-setup.sh
 .env
 .env.local
 .env.*.local
@@ -19,8 +19,15 @@ build/
 *.db-journal
 *.sqlite
 
-# local agent scratch — see prompts/README.md
-prompts/
+# Orca — role prompts in .orca/ are committed and public-safe. Everything under
+# local/ is machine-specific: env.md holds the Orca repo UUID and Run id,
+# human/ is the operator's gate briefs, state/ is the driver's journal and DAG.
+.orca/local/
+
+# local agent config
+.claude/settings.local.json
+.claude/worktrees/
+.mcp.json
 
 # os
 .DS_Store

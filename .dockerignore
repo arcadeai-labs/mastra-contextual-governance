@@ -23,7 +23,7 @@ build
 *.sqlite
 
 # local agent scratch
-prompts/
+.orca/local/
 
 docs
 tools
