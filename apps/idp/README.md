@@ -3,7 +3,8 @@
 **This is a demo fixture standing in for the enterprise's real IdP** — the same category
 of thing as the persona switcher. A forker deletes this directory and points Arcade at
 their Okta. Nothing else in the template depends on it, and it depends on nothing else in
-the template: it is not a workspace member, and it knows people, not loans and not policy.
+the template: it declares nothing under `packages/`, nothing declares it, and it knows
+people, not loans and not policy.
 
 Bun on Render, [Better Auth](https://www.better-auth.com) with the
 [`@better-auth/oauth-provider`](https://www.better-auth.com/docs/plugins/oauth-provider)
@@ -498,7 +499,7 @@ the client id, the re-seeded people signing in again, idempotence and both refus
 ## Running it
 
 ```sh
-bun install --cwd apps/idp     # own lockfile — see below
+bun install                    # at the repo root — see below
 bun run dev:idp                # :8083
 curl localhost:8083/health
 ```
@@ -588,14 +589,18 @@ blank, which is all SQLite reads) is pinned to the SHA-256 of the same payload t
 the Git object, and the table set it must and must not contain is spelled out so a digest
 mismatch says what moved. Editing the header is free; editing a line of SQL is not.
 
-### Why it is not a workspace member
+### A workspace member, and still separable
 
-Two reasons, both in `package.json`. It stands in for a system outside the template, so a
-forker deletes it without touching anything else. And Better Auth 1.7 requires zod 4,
-while the root manifest pins every workspace's zod to 3.x for the Arcade/Mastra path — Bun
-applies that override to the whole workspace and ignores nested ones, so inside the
-workspace Better Auth cannot boot. The root `workspaces` list excludes `apps/idp` and this
-directory carries its own `bun.lock`.
+Until #187 this directory sat outside the root workspace with its own `bun.lock`, because
+Better Auth 1.7 requires zod 4 and the root manifest pinned every workspace to zod 3. The
+root now pins zod 4, so the IdP installs from the root lockfile like everything else and a
+fresh clone needs one `bun install`.
+
+What membership does not change is the boundary. It stands in for a system outside the
+template, so a forker deletes it without touching anything else: it declares no `@cg/*`
+dependency, and no other workspace declares or imports it.
+`test/knows-people-not-loans.test.ts` checks both, where the old workspace exclusion used
+to make the second one true by construction.
 
 ## Environment
 

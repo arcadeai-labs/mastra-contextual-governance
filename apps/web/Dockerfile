@@ -12,6 +12,7 @@ COPY package.json bun.lock tsconfig.base.json ./
 # --frozen-lockfile resolves the whole workspace, so every member's manifest
 # has to be present even though only apps/web gets built here.
 COPY apps/hooks/package.json ./apps/hooks/
+COPY apps/idp/package.json ./apps/idp/
 COPY apps/loan-app/package.json ./apps/loan-app/
 COPY packages ./packages
 COPY apps/web ./apps/web

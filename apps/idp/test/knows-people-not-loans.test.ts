@@ -58,8 +58,39 @@ describe("apps/idp knows people, not loans", () => {
     expect(manifest.cg?.external).toBe(true);
   });
 
-  test("is not a member of the root workspace", async () => {
-    const root = await Bun.file(join(ROOT, "..", "..", "package.json")).json();
-    expect(root.workspaces).toContain("!apps/idp");
+  /**
+   * The other half. Until #187 this service sat outside the root workspace,
+   * which made depending on it impossible by construction. It is a member now,
+   * so the rule has to be stated: no other workspace declares it, and no other
+   * workspace's source imports it by name or by relative path.
+   */
+  test("nothing else in the template depends on it", async () => {
+    const REPO = join(ROOT, "..", "..");
+    const name = (await Bun.file(join(ROOT, "package.json")).json()).name as string;
+
+    const manifests: string[] = [];
+    for await (const path of new Glob("{apps,packages}/*/package.json").scan(REPO)) {
+      if (path !== "apps/idp/package.json") manifests.push(path);
+    }
+    // Vacuous if the scan found nothing to check.
+    expect(manifests.length).toBeGreaterThan(0);
+
+    const declaring = [];
+    for (const path of manifests) {
+      const manifest = await Bun.file(join(REPO, path)).json();
+      if (name in { ...manifest.dependencies, ...manifest.devDependencies }) declaring.push(path);
+    }
+    expect(declaring).toEqual([]);
+
+    const importing = [];
+    let scanned = 0;
+    const specifier = new RegExp(`from\\s+["'](${name}(/[^"']*)?|[^"']*apps/idp/[^"']*|(\\.\\./)+idp/[^"']*)["']`);
+    for await (const path of new Glob("{apps,packages}/*/{src,lib,app,scripts}/**/*.{ts,tsx}").scan(REPO)) {
+      if (path.startsWith("apps/idp/")) continue;
+      scanned += 1;
+      if (specifier.test(stripComments(await Bun.file(join(REPO, path)).text()))) importing.push(path);
+    }
+    expect(scanned).toBeGreaterThan(0);
+    expect(importing).toEqual([]);
   });
 });

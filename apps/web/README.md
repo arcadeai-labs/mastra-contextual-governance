@@ -283,8 +283,8 @@ Two steps are not environment variables on this service:
 
 ### Running the identity locally
 
-Two terminals, plus whatever port this worktree owns. `apps/idp` needs its own install
-(`bun install --cwd apps/idp`) — see `DESIGN.md`.
+Two terminals, plus whatever port this worktree owns. The root `bun install` covers
+`apps/idp` too.
 
 ```sh
 # Terminal 1 — the identity provider, with client C
@@ -1015,7 +1015,9 @@ way in the wrong direction.
 
 ### A rejected gateway token, and why it is asked about first (#94)
 
-`@mastra/mcp` 1.17.3 does **not** throw when the gateway refuses the bearer.
+`@mastra/mcp` 1.17.3 does **not** throw when the gateway refuses the bearer, and 2.0.0
+does not either (#187; the first test in `test/gateway-token-rejected.test.tsx` still
+pins it).
 `listToolsets()` resolves, with `{}`, because the connection failure is logged
 per server and dropped — so a dead token and a mistyped `ARCADE_LOAN_TOOLKIT`
 arrive as the same value. Live on 2026-09-14 that produced *"The gateway
@@ -1402,8 +1404,7 @@ PORT=4402 HOOKS_PUBLIC_HOST=localhost:4401 bun run --cwd apps/web arcade-stand-i
 
 Leave `PORT` off and it binds `:0` and tells you what it got.
 
-**Terminal 3 — the identity provider.** Needs its own install
-(`bun install --cwd apps/idp`) — see `DESIGN.md`. `IDP_OAUTH_CLIENTS=web` mints
+**Terminal 3 — the identity provider.** `IDP_OAUTH_CLIENTS=web` mints
 client C; the redirect URI is the web app's callback and must match it exactly.
 
 ```sh

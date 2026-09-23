@@ -14,7 +14,7 @@
     "generate:check": "bun scripts/generate-schema.ts --check"
   },
   "//": [
-    "Not a workspace member — the root manifest excludes apps/idp and this directory carries its own bun.lock. Two reasons. First, this service stands in for the enterprise's real identity provider: a forker deletes the directory and points Arcade at their Okta, so nothing in the template may depend on it and it must depend on nothing in the template. Second, Better Auth 1.7 requires zod 4, and the root manifest's `overrides` pins every workspace's zod to 3.x for the Arcade/Mastra path; Bun applies overrides to the whole workspace and ignores nested ones, so inside the workspace Better Auth cannot boot. Install with `bun install --cwd apps/idp`.",
+    "A workspace member since #187, installed by the root `bun install` against the root lockfile. It used to sit outside the workspace with its own bun.lock, because Better Auth needs zod 4 and the root pinned zod 3; the root now pins zod 4. What has not changed: this service stands in for the enterprise's real identity provider, and a forker deletes the directory and points Arcade at their Okta, so nothing in the template may depend on it and it must depend on nothing in the template. `test/knows-people-not-loans.test.ts` holds both halves.",
     "`external: true` is read by packages/policy-schema's workspace sweep, which otherwise requires every app to declare @cg/policy-schema. This one must not: it knows people, not policy."
   ],
   "cg": {
@@ -23,7 +23,7 @@
   "dependencies": {
     "@better-auth/oauth-provider": "1.7.2",
     "better-auth": "1.7.2",
-    "zod": "^4.3.6"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",

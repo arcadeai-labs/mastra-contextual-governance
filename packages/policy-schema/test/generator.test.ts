@@ -39,12 +39,12 @@ describe("type mapping", () => {
     [
       "free-form object",
       { type: "object", additionalProperties: true },
-      "z.record(z.unknown())",
+      "z.record(z.string(), z.unknown())",
     ],
     [
       "map with a typed value",
       { type: "object", additionalProperties: { type: "string" } },
-      "z.record(z.string())",
+      "z.record(z.string(), z.string())",
     ],
     [
       "array of maps",
@@ -52,7 +52,7 @@ describe("type mapping", () => {
         type: "array",
         items: { type: "object", additionalProperties: { type: "string" } },
       },
-      "z.array(z.record(z.string()))",
+      "z.array(z.record(z.string(), z.string()))",
     ],
   ];
 
@@ -127,7 +127,7 @@ describe("references", () => {
       Leaf: { type: "string" },
     });
     expect(emitted).toContain("export const ViaArray = z.array(Leaf);");
-    expect(emitted).toContain("export const ViaMap = z.record(Leaf);");
+    expect(emitted).toContain("export const ViaMap = z.record(z.string(), Leaf);");
     expect(emitted.indexOf("export const Leaf")).toBeLessThan(
       emitted.indexOf("export const ViaArray"),
     );

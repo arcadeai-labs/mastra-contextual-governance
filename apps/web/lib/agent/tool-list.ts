@@ -265,11 +265,9 @@ async function listWith<T>(
     gatewayId: config.identity.gatewayId,
     token,
     timeoutMs: options.timeoutMs ?? LIST_TIMEOUT_MS,
+    ...(options.nativeElicitation === undefined ? {} : { inputRequests: options.nativeElicitation.handle }),
   });
   try {
-    if (options.nativeElicitation !== undefined) {
-      await client.elicitation.onRequest(SERVER_KEY, options.nativeElicitation.handle);
-    }
     const advertised = await advertise(client, config, token);
     if (advertised.kind === "rejected") {
       return { outcome: "rejected", status: advertised.status, surface: { tools: advertised.answer, inside: null } };

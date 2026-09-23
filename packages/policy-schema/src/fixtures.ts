@@ -66,7 +66,7 @@ export type Overrides<S extends z.ZodTypeAny> = DeepPartial<z.input<S>>;
  * `/post` fixture's `output` with a clean object and silently retaining the
  * default's `identifier` and injected `notes` underneath produces a fixture
  * that contradicts its own description, and a UI snapshot taken against it
- * bakes the contradiction in. These keys are all `z.record(z.unknown())` or
+ * bakes the contradiction in. These keys are all `z.record(z.string(), z.unknown())` or
  * `z.unknown()` in the schemas — free-form by construction, so there is no
  * field structure to merge into.
  */

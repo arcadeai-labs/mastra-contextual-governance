@@ -14,8 +14,7 @@
  * `./fixtures.ts` builds valid instances of both, for tests and for the UI lane
  * working against a control plane that is not running yet.
  *
- * Zod 3, pinned at the repo root. Zod 4 changes internals the Arcade/Mastra
- * path does not support yet.
+ * Zod 4, pinned to one exact version at the repo root (#187).
  */
 import type { z } from "zod";
 

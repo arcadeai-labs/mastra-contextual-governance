@@ -1,8 +1,9 @@
 /**
  * The native MCP URL-elicitation seam.
  *
- * The installed MCP client (via @mastra/mcp 1.17.3) can advertise the URL
- * capability and receive `elicitation/create` requests. A request-scoped
+ * The installed MCP client (via @mastra/mcp 2) advertises the URL capability
+ * and hands `elicitation/create` requests to the `inputRequests` handler it
+ * was constructed with — see `tools.ts::gatewayClient`. A request-scoped
  * bridge captures only URL-mode requests, emits them through the chat event
  * stream, and returns `cancel` immediately. The browser cannot answer an
  * in-flight MCP request from a separate HTTP POST without process-global

@@ -16,7 +16,7 @@
     "fetch": "bun scripts/generate-hook-contract.ts --fetch"
   },
   "dependencies": {
-    "zod": "3.25.76"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",
