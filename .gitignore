@@ -9,6 +9,16 @@ dist/
 build/
 *.tsbuildinfo
 
+# Next 16 writes these itself (#190). next-env.d.ts differs between `next dev`
+# and `next build`, and Next's docs say to ignore it; `next typegen` in
+# apps/web's typecheck script regenerates it. AGENTS.md and CLAUDE.md are
+# written by `next dev` whenever it detects an AI agent running it.
+apps/web/next-env.d.ts
+apps/web/AGENTS.md
+apps/web/CLAUDE.md
+# apps/web/test/dev-port.test.ts's throwaway Next project, removed after the run.
+apps/web/.test-fixtures/
+
 # env — per-worktree ports, written by scripts/orca-setup.sh
 .env
 .env.local

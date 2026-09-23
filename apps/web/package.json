@@ -8,7 +8,7 @@
     "gateway-stand-in": "bun scripts/gateway-stand-in.ts",
     "build": "next build",
     "start": "bun scripts/next.ts start",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "verify:standalone": "bun scripts/verify-standalone.ts",
     "test": "bun test"
   },
@@ -20,7 +20,7 @@
     "@mastra/core": "^1.69.0",
     "@mastra/mcp": "^2.0.0",
     "ai": "^7.0.112",
-    "next": "^15.5.4",
+    "next": "^16.3.6",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "ws": "^8.21.0",

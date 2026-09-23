@@ -27,7 +27,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const WEB_ROOT = join(import.meta.dir, "..");
@@ -70,7 +69,16 @@ test("the packaged dev script binds the PORT in the service's own .env.local", a
   const dev = web.scripts?.dev;
   expect(dev).toBeString();
 
-  project = mkdtempSync(join(tmpdir(), "cg-web-dev-port-"));
+  // Inside this package rather than under the OS temp dir (#190). Next 16's
+  // `next dev` is Turbopack, which refuses a `node_modules` symlink pointing
+  // out of its root — "Symlink [project]/node_modules is invalid, it points out
+  // of the filesystem root" — and a root has to contain the project, so no
+  // `turbopack.root` can reach back from `/tmp` to this repo. Here the root it
+  // infers from the repo's `bun.lock` contains both ends of the symlink below.
+  // `.test-fixtures/` is gitignored, and `afterAll` removes the project.
+  const fixtures = join(WEB_ROOT, ".test-fixtures");
+  mkdirSync(fixtures, { recursive: true });
+  project = mkdtempSync(join(fixtures, "dev-port-"));
 
   // The smallest thing Next will serve, plus the real launcher and the real
   // `dev` script string. Copying the script rather than importing it keeps the
@@ -92,6 +100,17 @@ test("the packaged dev script binds the PORT in the service's own .env.local", a
 
   // Next, React and the rest, resolved the way the real service resolves them.
   symlinkSync(join(WEB_ROOT, "node_modules"), join(project, "node_modules"));
+
+  // Left to infer it, Turbopack takes `apps/web` as this fixture's root. It
+  // then cannot follow `apps/web/node_modules/next` out to the repo's Bun store
+  // ("Could not find the Next.js package"), and every request answers 500.
+  // `apps/web` itself has no such problem: `outputFileTracingRoot` in its
+  // `next.config.ts` names the repo root. This names the same root. It is
+  // legal only because the project now sits inside it.
+  writeFileSync(
+    join(project, "next.config.mjs"),
+    `export default { turbopack: { root: ${JSON.stringify(REPO_ROOT)} } };\n`,
+  );
 
   // Two variables are dropped rather than set.
   //

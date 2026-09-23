@@ -4,6 +4,12 @@ const config: NextConfig = {
   // Render runs this service from a Dockerfile; standalone keeps the runtime
   // image to the server plus only the dependencies it actually traced.
   output: "standalone",
+  // `next dev` only, and only the loopback address (#190). Next 16 answers 403
+  // to a `/_next/*` request from any origin but `localhost`, so a page opened
+  // at `http://127.0.0.1:<port>` never gets its client chunks and never
+  // hydrates. Every browser test in `test/` opens the app that way. Next 15
+  // only warned. The production server (`server.js`) ignores this option.
+  allowedDevOrigins: ["127.0.0.1"],
   // The monorepo root, so tracing picks up files linked from packages/.
   outputFileTracingRoot: new URL("../../", import.meta.url).pathname,
   // `ws` by hand, because tracing cannot find it on its own (#92).
@@ -27,6 +33,14 @@ const config: NextConfig = {
   //
   // `scripts/verify-standalone.ts` is what holds this honest. It drives the
   // built image, and `--image <a pre-fix tag>` makes it go red.
+  //
+  // Since Next 16 (#190) the build is Turbopack, not webpack, and the paragraph
+  // above describes webpack. Measured on macOS under Next 16.3: Turbopack
+  // inlines `ws` into the server chunks, so they contain no `require("ws")`
+  // and no external except Node builtins and Next's own modules. The include
+  // stays anyway. The Alpine image's chat route has not been measured under
+  // Turbopack, and if a future build leaves `ws` external again, this line is
+  // what keeps that require resolvable.
   //
   // `public/**/*` on `/`, because the standalone tree does not carry it either
   // (#177). Next's own docs say to copy `public` beside `.next/static` in the
